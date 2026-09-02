@@ -4,56 +4,17 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>MP Health Procurement Solution — Prototype</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
   <link rel="stylesheet" href="css/main.css">
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
 </head>
 <body>
 
-  <!-- ==================== LOGIN PAGE ==================== -->
-  <div class="login-page" id="loginPage">
-    <header class="login-header">
-      <div class="brand-logo">
-        <div class="brand-icon"><i class="fa-solid fa-hospital"></i></div>
-        <div class="brand-text">
-          <h1>MP Health Procurement</h1>
-          <p>Public-Sector Drug &amp; Medical Procurement Lifecycle</p>
-        </div>
-      </div>
-      <div class="feature-pill"><i class="fa-solid fa-flag"></i> India Public Sector · GFR 2017 Compliant</div>
-    </header>
-
-    <section class="login-hero">
-      <div class="hero-title">
-        <h2>Transparent. Traceable. Impactful.</h2>
-        <p>End-to-end procurement from need identification to payment — covering Drugs, Equipment, Services, Consumables &amp; Civil Works</p>
-      </div>
-
-      <div class="login-cards">
-        <div class="login-card gov" onclick="loginAs('gov')">
-          <div class="login-card-icon"><i class="fa-solid fa-landmark"></i></div>
-          <h3>Resource Manager</h3>
-          <p>Government / Super Admin portal — manage procurement lifecycle, approve demands, evaluate bids, monitor vendor performance and analytics.</p>
-          <button class="btn-enter">Enter Government Portal →</button>
-        </div>
-        <div class="login-card vendor" onclick="loginAs('vendor')">
-          <div class="login-card-icon"><i class="fa-solid fa-building"></i></div>
-          <h3>Vendor / Bidder</h3>
-          <p>Register, discover tenders, submit bids, manage contracts, track deliveries, invoices and performance scores.</p>
-          <button class="btn-enter">Enter Vendor Portal →</button>
-        </div>
-      </div>
-
-      <div class="login-features">
-        <div class="feature-pill"><i class="fa-solid fa-chart-line"></i> Interactive Analytics Dashboard</div>
-        <div class="feature-pill"><i class="fa-solid fa-arrows-rotate"></i> 13-Stage Procurement Lifecycle</div>
-        <div class="feature-pill"><i class="fa-solid fa-star"></i> Weighted Vendor Scoring</div>
-        <div class="feature-pill"><i class="fa-solid fa-lock"></i> Commercial Bid Sealing</div>
-        <div class="feature-pill"><i class="fa-solid fa-boxes-stacked"></i> Demand Optimization</div>
-        <div class="feature-pill"><i class="fa-solid fa-bell"></i> Real-time Alerts</div>
-      </div>
-    </section>
-  </div>
+  <!-- ==================== AUTH PAGE ==================== -->
+  <div class="auth-page" id="authPage"></div>
 
   <!-- ==================== MAIN APP ==================== -->
   <div class="app" id="app">
@@ -68,7 +29,7 @@
       </div>
       <nav class="sidebar-nav" id="sidebarNav"></nav>
       <div class="sidebar-footer">
-        <button class="btn-logout" onclick="logout()"><i class="fa-solid fa-right-from-bracket"></i> Switch Portal</button>
+        <button class="btn-logout" onclick="logout()"><i class="fa-solid fa-right-from-bracket"></i> Logout</button>
       </div>
     </aside>
 
@@ -116,6 +77,27 @@
     </div>
   </div>
 
+  <!-- Government Notices Modal (shown on website / login page load) -->
+  <div class="notice-overlay" id="noticeOverlay" aria-hidden="true">
+    <div class="notice-modal" role="dialog" aria-modal="true" aria-labelledby="noticeModalTitle">
+      <div class="notice-modal-header">
+        <div class="notice-modal-brand">
+          <div class="notice-modal-icon"><i class="fa-solid fa-bullhorn"></i></div>
+          <div>
+            <p class="notice-modal-eyebrow">Government of Madhya Pradesh</p>
+            <h2 id="noticeModalTitle">Official Notices</h2>
+          </div>
+        </div>
+        <button type="button" class="modal-close" onclick="closeNoticeModal()" aria-label="Close notices"><i class="fa-solid fa-xmark"></i></button>
+      </div>
+      <div class="notice-modal-body" id="noticeModalBody"></div>
+      <div class="notice-modal-footer">
+        <button type="button" class="btn btn-outline" id="noticeAckAllBtn" onclick="acknowledgeAllNotices()">Acknowledge All</button>
+        <button type="button" class="btn btn-primary" id="noticeContinueBtn" onclick="closeNoticeModal()">Continue to Sign In</button>
+      </div>
+    </div>
+  </div>
+
   <!-- Drill-Down Modal -->
   <div class="modal-overlay" id="modalOverlay">
     <div class="modal">
@@ -130,6 +112,7 @@
   <script src="js/data.js"></script>
   <script src="js/dropdown.js"></script>
   <script src="js/charts.js"></script>
+  <script src="js/auth.js"></script>
   <script src="js/app.js"></script>
 </body>
 </html>

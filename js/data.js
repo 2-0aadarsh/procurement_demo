@@ -194,6 +194,66 @@ const ALERTS_VENDOR = [
   { id: 4, type: 'approval', title: 'LOA Received', msg: 'TND-2026-MP-0038 - Letter of Award issued', date: '2026-08-29', impact: 'Submit PBG within 15 days', action: 'Acknowledge LOA', unread: true }
 ];
 
+/** Official notices pushed from Government / Resource Manager to Vendor portal — shown as load-time modal */
+const GOV_NOTICES = [
+  {
+    id: 'GN-2026-041',
+    priority: 'critical',
+    category: 'Corrigendum',
+    title: 'Corrigendum — Essential Medicines Rate Contract',
+    msg: 'BOQ quantity and technical specs updated for Paracetamol 500mg under TND-2026-MP-0042. Vendors must revise sealed bids before the extended deadline.',
+    date: '2026-09-01',
+    time: '11:20 IST',
+    from: 'Procurement Cell, MP Health',
+    ref: 'TND-2026-MP-0042',
+    actionLabel: 'Open Tender Discovery',
+    actionPage: 'tenders',
+    unread: true
+  },
+  {
+    id: 'GN-2026-038',
+    priority: 'high',
+    category: 'Deadline',
+    title: 'Bid Closing Reminder — CT Scanner Procurement',
+    msg: 'TND-2026-MP-0055 closes on 05 Sep 2026, 17:00 IST. Incomplete technical or financial bids will be rejected without further notice.',
+    date: '2026-09-02',
+    time: '09:00 IST',
+    from: 'Tender Management Unit',
+    ref: 'TND-2026-MP-0055',
+    actionLabel: 'Go to Bid Submission',
+    actionPage: 'bids',
+    unread: true
+  },
+  {
+    id: 'GN-2026-035',
+    priority: 'high',
+    category: 'Award',
+    title: 'Letter of Award Issued',
+    msg: 'LOA issued for Hospital Linen Supply (TND-2026-MP-0038). Acknowledge LOA and submit Performance Bank Guarantee within 15 calendar days.',
+    date: '2026-08-29',
+    time: '16:45 IST',
+    from: 'Contract Award Committee',
+    ref: 'LOA-2026-0038',
+    actionLabel: 'View Contracts',
+    actionPage: 'contracts',
+    unread: true
+  },
+  {
+    id: 'GN-2026-029',
+    priority: 'medium',
+    category: 'Compliance',
+    title: 'Certificate Renewal Advisory',
+    msg: 'ISO 13485 certificate for MediSupply India Pvt Ltd expires in 22 days. Upload renewed certificate under Registration / KYC to avoid eligibility blocks.',
+    date: '2026-08-28',
+    time: '10:15 IST',
+    from: 'Vendor Registry',
+    ref: 'KYC-CERT-13485',
+    actionLabel: 'Open Registration',
+    actionPage: 'registration',
+    unread: false
+  }
+];
+
 const TENDERS = [
   { id: 'TND-2026-MP-0042', title: 'Essential Medicines Rate Contract', category: 'Drugs', value: '₹12.5 Cr', status: 'Evaluation', bids: 8, deadline: '2026-09-15' },
   { id: 'TND-2026-MP-0055', title: 'CT Scanner Procurement', category: 'Equipment', value: '₹3.2 Cr', status: 'Open', bids: 4, deadline: '2026-09-05' },

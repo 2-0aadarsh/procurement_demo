@@ -49,6 +49,11 @@ function initCustomSelects() {
   });
 }
 
+function getCustomSelectValue(id) {
+  const wrapper = document.querySelector(`.custom-select[data-select-id="${id}"]`);
+  return wrapper?.querySelector('.custom-select-value')?.textContent?.trim() || '';
+}
+
 function closeAllSelects() {
   document.querySelectorAll('.custom-select.open').forEach(w => {
     w.classList.remove('open');

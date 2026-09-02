@@ -1,6 +1,7 @@
 /* MP Health Procurement - Main Application Logic */
 
 let currentRole = null;
+let authUser = null;
 let currentPage = 'dashboard';
 let currentCategory = 'All';
 let currentPeriod = 'year';
@@ -10,11 +11,13 @@ let pageStack = [];
 let tenderStatusFilter = 'all'; // 'all' | 'open' | 'evaluation' | 'draft'
 let pipelinePage = 1;
 const PIPELINE_PAGE_SIZE = 10;
+let noticesShownThisSession = false;
 
 // ========== LOGIN ==========
-function loginAs(role) {
+function completeAuthLogin(role, user) {
   currentRole = role;
-  document.getElementById('loginPage').style.display = 'none';
+  authUser = user;
+  closeNoticeModal();
   const app = document.getElementById('app');
   app.classList.add('active');
   app.classList.toggle('gov-app', role === 'gov');
@@ -31,13 +34,30 @@ function loginAs(role) {
 
 function logout() {
   currentRole = null;
+  authUser = null;
   currentPage = 'dashboard';
   currentWorkflowStep = null;
   pageStack = [];
+  noticesShownThisSession = false;
+  resetGovNoticesForDemo();
   document.getElementById('app').classList.remove('active', 'gov-app', 'vendor-app');
-  document.getElementById('loginPage').style.display = 'flex';
+  document.getElementById('authPage').style.display = 'flex';
+  if (typeof clearAuthSession === 'function') clearAuthSession();
+  if (typeof initAuth === 'function') initAuth();
   closeAlertPanel();
+  closeNoticeModal();
   closeModal();
+  // Show official notices again on the login screen
+  requestAnimationFrame(() => {
+    setTimeout(() => showGovNoticesOnWebsiteLoad(true), 400);
+  });
+}
+
+function resetGovNoticesForDemo() {
+  if (typeof GOV_NOTICES === 'undefined') return;
+  GOV_NOTICES.forEach(n => {
+    n.unread = n.id !== 'GN-2026-029';
+  });
 }
 
 // ========== NAVIGATION ==========
@@ -62,7 +82,7 @@ function renderSidebar() {
   nav.innerHTML = html;
 
   const brandSub = document.getElementById('sidebarBrandSub');
-  brandSub.textContent = currentRole === 'gov' ? 'Resource Manager' : 'Vendor Portal';
+  brandSub.textContent = authUser?.title || (currentRole === 'gov' ? 'Resource Manager' : 'Vendor Portal');
 }
 
 function getTenderPageSubtitle() {
@@ -127,7 +147,12 @@ function renderTopbar() {
   if (currentPage === 'workflow') updateWorkflowSubtitle();
   else subtitle.textContent = t[1];
 
-  if (currentRole === 'gov') {
+  if (authUser) {
+    userName.textContent = authUser.role === 'vendor' && authUser.vendorId
+      ? authUser.vendorId
+      : authUser.name;
+    userAvatar.textContent = authUser.avatar || (authUser.role === 'gov' ? 'RM' : 'VS');
+  } else if (currentRole === 'gov') {
     userName.textContent = 'Resource Manager';
     userAvatar.textContent = 'RM';
   } else {
@@ -1554,6 +1579,133 @@ function closeAlertPanel() {
   document.getElementById('alertPanel')?.classList.remove('open');
 }
 
+// ========== GOV NOTICES (website load — before login) ==========
+function getPublicGovNotices() {
+  if (typeof GOV_NOTICES === 'undefined') return [];
+  // Public broadcast: show all active notices (prefer unread first)
+  return [...GOV_NOTICES].sort((a, b) => {
+    const rank = { critical: 0, high: 1, medium: 2 };
+    if (!!b.unread !== !!a.unread) return a.unread ? -1 : 1;
+    return (rank[a.priority] ?? 9) - (rank[b.priority] ?? 9);
+  });
+}
+
+function getUnreadGovNotices() {
+  return (typeof GOV_NOTICES !== 'undefined' ? GOV_NOTICES : []).filter(n => n.unread);
+}
+
+function isUserLoggedIn() {
+  return !!currentRole && document.getElementById('app')?.classList.contains('active');
+}
+
+/** Show official government notices on the login / landing page */
+function showGovNoticesOnWebsiteLoad(force = false) {
+  if (!force && noticesShownThisSession) return;
+  const notices = getPublicGovNotices();
+  if (!notices.length) return;
+  noticesShownThisSession = true;
+  openNoticeModal(notices);
+}
+
+function openNoticeModal(notices) {
+  const overlay = document.getElementById('noticeOverlay');
+  const body = document.getElementById('noticeModalBody');
+  if (!overlay || !body) return;
+
+  const list = notices || getPublicGovNotices();
+  const critical = list.filter(n => n.priority === 'critical').length;
+  const unread = list.filter(n => n.unread).length;
+  const loggedIn = isUserLoggedIn();
+
+  const continueBtn = document.getElementById('noticeContinueBtn');
+  if (continueBtn) {
+    continueBtn.textContent = loggedIn ? 'Continue to Dashboard' : 'Continue to Sign In';
+  }
+
+  body.innerHTML = `
+    <div class="notice-summary">
+      <div class="notice-summary-text">
+        <strong>${list.length} official notice${list.length === 1 ? '' : 's'}</strong> from the Government / Resource Manager
+        ${critical ? `<span class="notice-critical-chip">${critical} critical</span>` : ''}
+        ${unread ? `<span class="notice-unread-chip">${unread} new</span>` : ''}
+      </div>
+      <p>${loggedIn
+        ? 'Please review these official communications. You can reopen them anytime from the notification bell.'
+        : 'These government announcements are shown to all visitors. Sign in to take action on tenders, bids, or contracts.'}</p>
+    </div>
+    <div class="notice-list">
+      ${list.map(n => renderNoticeCard(n, loggedIn)).join('')}
+    </div>
+  `;
+
+  overlay.classList.add('open');
+  overlay.setAttribute('aria-hidden', 'false');
+  document.body.style.overflow = 'hidden';
+}
+
+function renderNoticeCard(n, loggedIn) {
+  const priorityClass = n.priority === 'critical' ? 'critical' : n.priority === 'high' ? 'high' : 'medium';
+  const canAct = loggedIn && n.actionPage;
+  return `<article class="notice-card notice-card--${priorityClass}${n.unread ? '' : ' notice-card--read'}" data-notice-id="${n.id}">
+    <div class="notice-card-top">
+      <span class="notice-priority notice-priority--${priorityClass}">${n.priority}</span>
+      <span class="notice-category">${n.category}</span>
+      ${n.unread ? '<span class="notice-new-dot">New</span>' : ''}
+      <span class="notice-ref">${n.ref}</span>
+    </div>
+    <h3 class="notice-card-title">${n.title}</h3>
+    <p class="notice-card-msg">${n.msg}</p>
+    <div class="notice-card-meta">
+      <span><i class="fa-solid fa-building-columns"></i> ${n.from}</span>
+      <span><i class="fa-regular fa-calendar"></i> ${n.date} · ${n.time}</span>
+    </div>
+    <div class="notice-card-actions">
+      ${n.unread ? `<button type="button" class="btn btn-outline btn-sm" onclick="acknowledgeNotice('${n.id}')">Mark as read</button>` : ''}
+      ${canAct
+        ? `<button type="button" class="btn btn-primary btn-sm" onclick="actOnNotice('${n.id}','${n.actionPage}')">${n.actionLabel || 'Open'}</button>`
+        : `<span class="notice-signin-hint"><i class="fa-solid fa-lock"></i> Sign in to act on this notice</span>`}
+    </div>
+  </article>`;
+}
+
+function acknowledgeNotice(id) {
+  const notice = GOV_NOTICES.find(n => n.id === id);
+  if (notice) notice.unread = false;
+
+  const related = ALERTS_VENDOR.find(a => a.unread && (
+    (notice?.ref && a.msg.includes(notice.ref.split('-').pop())) ||
+    a.title.toLowerCase().includes((notice?.category || '').toLowerCase())
+  ));
+  if (related) related.unread = false;
+
+  if (isUserLoggedIn()) renderTopbar();
+  openNoticeModal(getPublicGovNotices());
+}
+
+function acknowledgeAllNotices() {
+  GOV_NOTICES.forEach(n => { n.unread = false; });
+  ALERTS_VENDOR.forEach(a => { a.unread = false; });
+  if (isUserLoggedIn()) renderTopbar();
+  closeNoticeModal();
+}
+
+function actOnNotice(id, page) {
+  if (!isUserLoggedIn()) {
+    closeNoticeModal();
+    return;
+  }
+  acknowledgeNotice(id);
+  closeNoticeModal();
+  if (page) navigateTo(page);
+}
+
+function closeNoticeModal() {
+  const overlay = document.getElementById('noticeOverlay');
+  overlay?.classList.remove('open');
+  overlay?.setAttribute('aria-hidden', 'true');
+  document.body.style.overflow = '';
+}
+
 function renderAlerts() {
   const list = document.getElementById('alertList');
   const alerts = currentRole === 'gov' ? ALERTS_GOV : ALERTS_VENDOR;
@@ -1599,11 +1751,22 @@ function closeModal() {
 }
 
 function bindPageEvents() {
+  if (window.__mphPageEventsBound) return;
+  window.__mphPageEventsBound = true;
+
   document.getElementById('modalOverlay')?.addEventListener('click', e => {
     if (e.target.id === 'modalOverlay') closeModal();
   });
+  document.getElementById('noticeOverlay')?.addEventListener('click', e => {
+    if (e.target.id === 'noticeOverlay') closeNoticeModal();
+  });
   document.addEventListener('keydown', e => {
-    if (e.key === 'Escape' && document.getElementById('modalOverlay')?.classList.contains('open')) {
+    if (e.key !== 'Escape') return;
+    if (document.getElementById('noticeOverlay')?.classList.contains('open')) {
+      closeNoticeModal();
+      return;
+    }
+    if (document.getElementById('modalOverlay')?.classList.contains('open')) {
       closeModal();
     }
   });
@@ -1611,5 +1774,9 @@ function bindPageEvents() {
 
 // ========== INIT ==========
 document.addEventListener('DOMContentLoaded', () => {
-  document.getElementById('loginPage').style.display = 'flex';
+  document.getElementById('authPage').style.display = 'flex';
+  initAuth();
+  bindPageEvents();
+  // Official gov notices appear on the login page as soon as the website loads
+  setTimeout(() => showGovNoticesOnWebsiteLoad(), 450);
 });
