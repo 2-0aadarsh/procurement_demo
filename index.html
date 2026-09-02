@@ -1,0 +1,135 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>MP Health Procurement Solution — Prototype</title>
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+  <link rel="stylesheet" href="css/main.css">
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+</head>
+<body>
+
+  <!-- ==================== LOGIN PAGE ==================== -->
+  <div class="login-page" id="loginPage">
+    <header class="login-header">
+      <div class="brand-logo">
+        <div class="brand-icon"><i class="fa-solid fa-hospital"></i></div>
+        <div class="brand-text">
+          <h1>MP Health Procurement</h1>
+          <p>Public-Sector Drug &amp; Medical Procurement Lifecycle</p>
+        </div>
+      </div>
+      <div class="feature-pill"><i class="fa-solid fa-flag"></i> India Public Sector · GFR 2017 Compliant</div>
+    </header>
+
+    <section class="login-hero">
+      <div class="hero-title">
+        <h2>Transparent. Traceable. Impactful.</h2>
+        <p>End-to-end procurement from need identification to payment — covering Drugs, Equipment, Services, Consumables &amp; Civil Works</p>
+      </div>
+
+      <div class="login-cards">
+        <div class="login-card gov" onclick="loginAs('gov')">
+          <div class="login-card-icon"><i class="fa-solid fa-landmark"></i></div>
+          <h3>Resource Manager</h3>
+          <p>Government / Super Admin portal — manage procurement lifecycle, approve demands, evaluate bids, monitor vendor performance and analytics.</p>
+          <button class="btn-enter">Enter Government Portal →</button>
+        </div>
+        <div class="login-card vendor" onclick="loginAs('vendor')">
+          <div class="login-card-icon"><i class="fa-solid fa-building"></i></div>
+          <h3>Vendor / Bidder</h3>
+          <p>Register, discover tenders, submit bids, manage contracts, track deliveries, invoices and performance scores.</p>
+          <button class="btn-enter">Enter Vendor Portal →</button>
+        </div>
+      </div>
+
+      <div class="login-features">
+        <div class="feature-pill"><i class="fa-solid fa-chart-line"></i> Interactive Analytics Dashboard</div>
+        <div class="feature-pill"><i class="fa-solid fa-arrows-rotate"></i> 13-Stage Procurement Lifecycle</div>
+        <div class="feature-pill"><i class="fa-solid fa-star"></i> Weighted Vendor Scoring</div>
+        <div class="feature-pill"><i class="fa-solid fa-lock"></i> Commercial Bid Sealing</div>
+        <div class="feature-pill"><i class="fa-solid fa-boxes-stacked"></i> Demand Optimization</div>
+        <div class="feature-pill"><i class="fa-solid fa-bell"></i> Real-time Alerts</div>
+      </div>
+    </section>
+  </div>
+
+  <!-- ==================== MAIN APP ==================== -->
+  <div class="app" id="app">
+    <!-- Sidebar -->
+    <aside class="sidebar" id="sidebar">
+      <div class="sidebar-brand">
+        <div class="brand-icon"><i class="fa-solid fa-hospital"></i></div>
+        <div>
+          <h2>MP Health Procurement</h2>
+          <span id="sidebarBrandSub">Resource Manager</span>
+        </div>
+      </div>
+      <nav class="sidebar-nav" id="sidebarNav"></nav>
+      <div class="sidebar-footer">
+        <button class="btn-logout" onclick="logout()"><i class="fa-solid fa-right-from-bracket"></i> Switch Portal</button>
+      </div>
+    </aside>
+
+    <!-- Main Content -->
+    <div class="main-content">
+      <header class="topbar">
+        <div class="topbar-row">
+          <div class="topbar-context">
+            <button class="btn-back hidden" id="btnBack" onclick="goBack()" title="Go back" aria-label="Go back">
+              <i class="fa-solid fa-arrow-left"></i>
+            </button>
+            <nav class="breadcrumb" id="breadcrumb" aria-label="Breadcrumb"></nav>
+          </div>
+          <div class="topbar-actions">
+            <button class="alert-btn" onclick="toggleAlertPanel()" title="Notifications">
+              <i class="fa-solid fa-bell"></i>
+              <span class="sup-badge" id="alertBadge">7</span>
+            </button>
+            <div class="user-chip">
+              <div class="user-avatar" id="userAvatar">RM</div>
+              <span id="userName">Resource Manager</span>
+            </div>
+          </div>
+        </div>
+        <div class="topbar-heading">
+          <div class="page-heading">
+            <h1 id="pageTitle">Analytics Dashboard</h1>
+            <p id="pageSubtitle">Real-time procurement insights &amp; KPIs</p>
+          </div>
+          <div class="page-meta" id="pageMeta"></div>
+        </div>
+      </header>
+
+      <div id="categoryBarSlot" class="category-bar-slot hidden" aria-hidden="true"></div>
+      <main class="page-content" id="pageContent"></main>
+    </div>
+
+    <!-- Alert Panel -->
+    <div class="alert-panel" id="alertPanel">
+      <div class="alert-panel-header">
+        <h3><i class="fa-solid fa-bell"></i> Notifications <span class="sup-badge sm" id="alertPanelBadge"></span></h3>
+        <button class="modal-close" onclick="closeAlertPanel()"><i class="fa-solid fa-xmark"></i></button>
+      </div>
+      <div class="alert-list" id="alertList"></div>
+    </div>
+  </div>
+
+  <!-- Drill-Down Modal -->
+  <div class="modal-overlay" id="modalOverlay">
+    <div class="modal">
+      <div class="modal-header">
+        <h2 id="modalTitle">Details</h2>
+        <button class="modal-close" onclick="closeModal()"><i class="fa-solid fa-xmark"></i></button>
+      </div>
+      <div class="modal-body" id="modalBody"></div>
+    </div>
+  </div>
+
+  <script src="js/data.js"></script>
+  <script src="js/dropdown.js"></script>
+  <script src="js/charts.js"></script>
+  <script src="js/app.js"></script>
+</body>
+</html>
