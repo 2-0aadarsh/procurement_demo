@@ -27,11 +27,37 @@ function scaleData(data, category = 'All') {
   return data.map(v => Math.round(v * w * 10) / 10);
 }
 
+/** Resolve chart labels/data for last-10-year explorer (focus year + granularity) */
+function resolveChartSeries(metricKey, period = 'year') {
+  const series = CHART_DATA[metricKey]?.[period] || CHART_DATA[metricKey]?.year;
+  if (!series) return { labels: [], data: [] };
+  const focus = typeof analyticsFocusYear !== 'undefined' ? analyticsFocusYear : 'all';
+  if (period === 'year' && focus && focus !== 'all') {
+    const idx = series.labels.indexOf(focus);
+    if (idx >= 0) {
+      return { labels: [series.labels[idx]], data: [series.data[idx]] };
+    }
+  }
+  // For quarter/month with a focus FY, lightly scale data as a FY-specific snapshot
+  if (period !== 'year' && focus && focus !== 'all') {
+    const yearSeries = CHART_DATA[metricKey]?.year;
+    const idx = yearSeries ? yearSeries.labels.indexOf(focus) : -1;
+    const base = yearSeries && idx >= 0 ? yearSeries.data[idx] : null;
+    const latest = yearSeries ? yearSeries.data[yearSeries.data.length - 1] : 1;
+    const factor = base && latest ? base / latest : 1;
+    return {
+      labels: series.labels,
+      data: series.data.map(v => Math.round(v * factor * 10) / 10)
+    };
+  }
+  return { labels: [...series.labels], data: [...series.data] };
+}
+
 function initSpendChart(period = 'year', category = 'All') {
   destroyChart('spend');
   const ctx = document.getElementById('chartSpend');
   if (!ctx) return;
-  const d = CHART_DATA.spend[period];
+  const d = resolveChartSeries('spend', period);
   charts.spend = new Chart(ctx, {
     type: 'bar',
     data: {
@@ -53,7 +79,7 @@ function initProcurementChart(period = 'year', category = 'All') {
   destroyChart('procurement');
   const ctx = document.getElementById('chartProcurement');
   if (!ctx) return;
-  const d = CHART_DATA.procurement[period];
+  const d = resolveChartSeries('procurement', period);
   charts.procurement = new Chart(ctx, {
     type: 'line',
     data: {
@@ -77,7 +103,7 @@ function initVendorPerfChart(period = 'year', category = 'All') {
   destroyChart('vendorPerf');
   const ctx = document.getElementById('chartVendorPerf');
   if (!ctx) return;
-  const d = CHART_DATA.vendorPerf[period];
+  const d = resolveChartSeries('vendorPerf', period);
   charts.vendorPerf = new Chart(ctx, {
     type: 'line',
     data: {
@@ -100,7 +126,7 @@ function initSavingsChart(period = 'year', category = 'All') {
   destroyChart('savings');
   const ctx = document.getElementById('chartSavings');
   if (!ctx) return;
-  const d = CHART_DATA.savings[period];
+  const d = resolveChartSeries('savings', period);
   charts.savings = new Chart(ctx, {
     type: 'bar',
     data: {
@@ -184,7 +210,15 @@ function initCategoryChart(highlightCategory = 'All') {
           }
         }
       },
-      cutout: '60%'
+      cutout: '60%',
+      onClick: (e, elements) => {
+        if (!elements.length) {
+          if (typeof openCategorySpendDetail === 'function') openCategorySpendDetail(highlightCategory === 'All' ? null : highlightCategory);
+          return;
+        }
+        const label = labels[elements[0].index];
+        if (typeof openCategorySpendDetail === 'function') openCategorySpendDetail(label);
+      }
     }
   });
 }
@@ -279,6 +313,7 @@ function chartOptions(unit) {
   return {
     responsive: true,
     maintainAspectRatio: false,
+    layout: { padding: { top: 18 } },
     plugins: {
       legend: { display: false },
       tooltip: {
@@ -287,6 +322,10 @@ function chartOptions(unit) {
         cornerRadius: 8,
         titleFont: { size: 12 },
         bodyFont: { size: 11 }
+      },
+      valueLabels: {
+        enabled: true,
+        unit
       }
     },
     scales: {
@@ -301,10 +340,49 @@ function chartOptions(unit) {
       if (elements.length > 0) {
         const chart = e.chart;
         const label = chart.data.labels[elements[0].index];
-        openDrillDown('chart', `${chart.data.datasets[0].label}: ${label}`, `Detailed breakdown for ${label}. Click through to transaction-level data.`);
+        const series = chart.data.datasets[0].label || 'Trend';
+        if (typeof openChartPeriodDetail === 'function') {
+          openChartPeriodDetail(series, label);
+        } else {
+          openDrillDown('chart', `${series}: ${label}`, `Detailed breakdown for ${label}.`);
+        }
       }
     }
   };
+}
+
+/** Draw numeric values above bar / line points */
+const valueLabelsPlugin = {
+  id: 'valueLabels',
+  afterDatasetsDraw(chart) {
+    const conf = chart.options.plugins?.valueLabels;
+    if (!conf || conf.enabled === false) return;
+    const { ctx } = chart;
+    const unit = conf.unit || '';
+    chart.data.datasets.forEach((dataset, datasetIndex) => {
+      const meta = chart.getDatasetMeta(datasetIndex);
+      if (meta.hidden) return;
+      meta.data.forEach((element, index) => {
+        const raw = dataset.data[index];
+        if (raw == null) return;
+        const { x, y } = element.tooltipPosition();
+        const text = unit === '₹ Cr'
+          ? String(raw)
+          : (Number.isInteger(raw) ? String(raw) : Number(raw).toFixed(1));
+        ctx.save();
+        ctx.font = '600 11px Plus Jakarta Sans, sans-serif';
+        ctx.fillStyle = '#0f172a';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'bottom';
+        ctx.fillText(text, x, y - 6);
+        ctx.restore();
+      });
+    });
+  }
+};
+
+if (typeof Chart !== 'undefined') {
+  try { Chart.register(valueLabelsPlugin); } catch (_) { /* already registered */ }
 }
 
 function refreshAllCharts(period = 'year', category = 'All') {
@@ -313,9 +391,209 @@ function refreshAllCharts(period = 'year', category = 'All') {
   initVendorPerfChart(period, category);
   initSavingsChart(period, category);
   initCategoryChart(category);
+  initAnalyticsCompareChart(category);
+}
+
+function initAnalyticsCompareChart(category = 'All') {
+  destroyChart('analyticsCompare');
+  const ctx = document.getElementById('chartAnalyticsCompare');
+  if (!ctx) return;
+
+  const mode = typeof analyticsCompareMode !== 'undefined' ? analyticsCompareMode : 'vendor';
+  if (mode === 'item') {
+    const items = CHART_DATA.itemCompare;
+    charts.analyticsCompare = new Chart(ctx, {
+      type: 'bar',
+      data: {
+        labels: items.labels,
+        datasets: [
+          { label: 'Quality', data: scaleData(items.quality, category), backgroundColor: chartColors.primary + 'cc', borderRadius: 6 },
+          { label: 'Lead Time', data: scaleData(items.leadTime, category), backgroundColor: chartColors.teal + 'cc', borderRadius: 6 },
+          { label: 'Cost', data: scaleData(items.cost, category), backgroundColor: chartColors.orange + 'cc', borderRadius: 6 }
+        ]
+      },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        layout: { padding: { top: 16 } },
+        plugins: {
+          legend: { position: 'top', labels: { font: { size: 11, weight: '600' } } },
+          tooltip: { backgroundColor: '#1e293b', padding: 12, cornerRadius: 8 },
+          valueLabels: { enabled: false }
+        },
+        scales: {
+          x: { grid: { display: false }, ticks: { font: { size: 11 } } },
+          y: { beginAtZero: true, max: 100, grid: { color: '#e2e8f0' }, ticks: { font: { size: 11 } } }
+        }
+      }
+    });
+    return;
+  }
+
+  const vendors = typeof filterByCategory === 'function' ? filterByCategory(VENDORS) : VENDORS;
+  const list = vendors.length ? vendors.slice(0, 6) : VENDORS.slice(0, 6);
+  charts.analyticsCompare = new Chart(ctx, {
+    type: 'bar',
+    data: {
+      labels: list.map(v => v.name.replace(' India Pvt Ltd', '').replace(' Solutions', '').replace(' Distributors', '')),
+      datasets: [
+        { label: 'Quality', data: list.map(v => v.quality), backgroundColor: chartColors.primary + 'cc', borderRadius: 6 },
+        { label: 'Lead Time', data: list.map(v => v.leadTime), backgroundColor: chartColors.teal + 'cc', borderRadius: 6 },
+        { label: 'Cost', data: list.map(v => v.cost), backgroundColor: chartColors.orange + 'cc', borderRadius: 6 },
+        { label: 'Overall', data: list.map(v => v.overall), backgroundColor: chartColors.green + 'cc', borderRadius: 6 }
+      ]
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      plugins: {
+        legend: { position: 'top', labels: { font: { size: 11, weight: '600' } } },
+        tooltip: { backgroundColor: '#1e293b', padding: 12, cornerRadius: 8 }
+      },
+      scales: {
+        x: { grid: { display: false }, ticks: { font: { size: 10 } } },
+        y: { beginAtZero: true, max: 100, grid: { color: '#e2e8f0' }, ticks: { font: { size: 11 } } }
+      }
+    }
+  });
 }
 
 function initVendorCharts(category = 'All') {
   initCategoryChart(category);
   initVendorTrendChart();
+}
+
+function countBy(items, keyFn) {
+  const map = {};
+  items.forEach(item => {
+    const k = keyFn(item);
+    map[k] = (map[k] || 0) + 1;
+  });
+  return map;
+}
+
+function initVendorReportCharts(category = 'All') {
+  const tenders = category === 'All' ? TENDERS : TENDERS.filter(t => t.category === category);
+  const bids = category === 'All' ? BIDS : BIDS.filter(b => b.category === category);
+  const deliveries = category === 'All' ? DELIVERIES : DELIVERIES.filter(d => d.category === category);
+  const completed = typeof vendorStageState !== 'undefined' ? vendorStageState.completed : {};
+
+  // Tender status bar
+  destroyChart('vendorTenderStatus');
+  const tenderCtx = document.getElementById('chartVendorTenderStatus');
+  if (tenderCtx) {
+    const byStatus = countBy(tenders, t => t.status);
+    const labels = Object.keys(byStatus);
+    charts.vendorTenderStatus = new Chart(tenderCtx, {
+      type: 'bar',
+      data: {
+        labels,
+        datasets: [{
+          label: 'Tenders',
+          data: labels.map(l => byStatus[l]),
+          backgroundColor: labels.map((_, i) => chartColors.palette[i % chartColors.palette.length] + 'cc'),
+          borderColor: labels.map((_, i) => chartColors.palette[i % chartColors.palette.length]),
+          borderWidth: 2,
+          borderRadius: 6
+        }]
+      },
+      options: chartOptions('Count')
+    });
+  }
+
+  // Bid mix doughnut
+  destroyChart('vendorBidMix');
+  const bidCtx = document.getElementById('chartVendorBidMix');
+  if (bidCtx) {
+    const byStatus = countBy(bids, b => b.status);
+    const labels = Object.keys(byStatus).length ? Object.keys(byStatus) : ['No bids'];
+    const data = Object.keys(byStatus).length ? labels.map(l => byStatus[l]) : [1];
+    charts.vendorBidMix = new Chart(bidCtx, {
+      type: 'doughnut',
+      data: {
+        labels,
+        datasets: [{
+          data,
+          backgroundColor: chartColors.palette.slice(0, labels.length),
+          borderWidth: 0,
+          hoverOffset: 6
+        }]
+      },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        plugins: {
+          legend: { position: 'right', labels: { font: { size: 11, weight: '600' }, padding: 10 } },
+          tooltip: { backgroundColor: '#1e293b', padding: 12, cornerRadius: 8 }
+        },
+        cutout: '58%'
+      }
+    });
+  }
+
+  // Delivery / payment stacked-like grouped bar
+  destroyChart('vendorDeliveryPay');
+  const delCtx = document.getElementById('chartVendorDeliveryPay');
+  if (delCtx) {
+    const grnAccepted = deliveries.filter(d => d.grn === 'Accepted').length;
+    const grnPending = deliveries.filter(d => d.grn !== 'Accepted').length;
+    const paid = deliveries.filter(d => d.payment === 'Paid').length;
+    const processing = deliveries.filter(d => d.payment === 'Processing').length;
+    const unpaid = deliveries.filter(d => d.payment === '—' || !d.payment || (d.payment !== 'Paid' && d.payment !== 'Processing')).length;
+    charts.vendorDeliveryPay = new Chart(delCtx, {
+      type: 'bar',
+      data: {
+        labels: ['GRN Accepted', 'GRN Pending', 'Payment Paid', 'Payment Processing', 'Payment Pending'],
+        datasets: [{
+          label: 'Count',
+          data: [grnAccepted, grnPending, paid, processing, unpaid],
+          backgroundColor: [
+            chartColors.green + 'cc',
+            chartColors.orange + 'cc',
+            chartColors.teal + 'cc',
+            chartColors.blue + 'cc',
+            chartColors.red + 'cc'
+          ],
+          borderRadius: 6,
+          borderWidth: 0
+        }]
+      },
+      options: chartOptions('Count')
+    });
+  }
+
+  // Performance score radar removed from My Reports (available on Performance Score page)
+
+  // Lifecycle completion
+  destroyChart('vendorLifecycle');
+  const lifeCtx = document.getElementById('chartVendorLifecycle');
+  if (lifeCtx) {
+    const labels = ['Reg', 'KYC', 'Approval', 'Bid', 'Award', 'Contract', 'Delivery', 'Invoice', 'Payment'];
+    const data = labels.map((_, i) => (completed[i + 1] ? 100 : (i + 1 === (typeof getVendorActiveStageId === 'function' ? getVendorActiveStageId() : 4) ? 45 : 0)));
+    charts.vendorLifecycle = new Chart(lifeCtx, {
+      type: 'bar',
+      data: {
+        labels,
+        datasets: [{
+          label: 'Completion %',
+          data,
+          backgroundColor: data.map(v => v === 100 ? chartColors.green + 'cc' : v > 0 ? chartColors.blue + 'cc' : '#cbd5e1'),
+          borderRadius: 6,
+          borderWidth: 0
+        }]
+      },
+      options: {
+        ...chartOptions('%'),
+        scales: {
+          x: { grid: { display: false }, ticks: { font: { size: 11 } } },
+          y: {
+            beginAtZero: true,
+            max: 100,
+            grid: { color: '#e2e8f0' },
+            ticks: { font: { size: 11 }, callback: v => v + '%' }
+          }
+        }
+      }
+    });
+  }
 }

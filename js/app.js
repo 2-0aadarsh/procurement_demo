@@ -5,6 +5,8 @@ let authUser = null;
 let currentPage = 'dashboard';
 let currentCategory = 'All';
 let currentPeriod = 'year';
+let analyticsFocusYear = 'all'; // 'all' | FY label e.g. 'FY25-26'
+let analyticsCompareMode = 'vendor'; // 'vendor' | 'item'
 let currentWorkflowStep = null;
 let alertPanelOpen = false;
 let pageStack = [];
@@ -12,6 +14,184 @@ let tenderStatusFilter = 'all'; // 'all' | 'open' | 'evaluation' | 'draft'
 let pipelinePage = 1;
 const PIPELINE_PAGE_SIZE = 10;
 let noticesShownThisSession = false;
+let workQueueFilter = 'all';
+let activeSlaThreadId = 'SLA-2026-014';
+
+/** Prototype "today" — used for deadline countdown (DD-MM-YYYY: 03-09-2026) */
+const APP_TODAY = '2026-09-03';
+
+/** Vendor workflow runtime state (prototype) */
+const vendorStageState = {
+  completed: { 1: true, 2: true, 3: true, 4: false, 5: false, 6: false, 7: false, 8: false, 9: false },
+  locked: { 4: false },
+  uploads: {
+    kyc: [],
+    approvalLetter: null,
+    technicalDocs: [],
+    financialDocs: [],
+    pbg: null,
+    deliveryProof: null
+  },
+  bid: {
+    tenderId: '',
+    emdStatus: '',
+    deadline: '',
+    submitted: false,
+    ocrReady: false
+  },
+  award: {
+    tenderId: 'TND-2026-MP-0038',
+    title: 'Hospital Linen Supply',
+    loaStatus: 'Issued',
+    loaDate: '29-08-2026',
+    pbgDue: '13-09-2026',
+    value: '₹85 L',
+    acknowledged: false
+  },
+  contract: {
+    id: '',
+    pbgStatus: '',
+    pbgAmount: '',
+    contractStatus: '',
+    pbgSubmitted: false,
+    signed: false,
+    pbgOcr: null,
+    contractOcr: null,
+    bank: '',
+    bgRef: '',
+    validUntil: ''
+  },
+  delivery: {
+    challan: '',
+    vehicle: '',
+    dispatchDate: '',
+    expectedDate: '',
+    coldChain: 'No',
+    remarks: '',
+    status: '',
+    updated: false,
+    ocrReady: false,
+    fileName: null
+  },
+  invoice: {
+    number: '',
+    grn: '',
+    amount: '',
+    status: '',
+    submitted: false,
+    ocrReady: false,
+    fileName: null
+  },
+  payment: {
+    status: 'Awaiting Processing',
+    timeline: 'Within 45 days of invoice acceptance',
+    bank: 'HDFC Bank - ****4567',
+    lastUpdate: '—',
+    milestones: [
+      { label: 'Invoice submitted', done: false },
+      { label: 'Three-way match (PO / GRN / Invoice)', done: false },
+      { label: 'Finance verification', done: false },
+      { label: 'Payment released', done: false }
+    ]
+  }
+};
+
+/** Vendor Profile & KYC page state */
+const vendorProfileState = {
+  editing: false,
+  company: 'MediSupply India Pvt Ltd',
+  vendorId: 'VND-MP-000123',
+  gstin: '23AABCM1234A1Z5',
+  pan: 'AABCM1234A',
+  drugLicense: 'DL-MH-2024-0892',
+  drugExpiry: '15-03-2027',
+  iso: 'Certified',
+  isoNote: 'Expires in 22 days',
+  bank: 'HDFC Bank - ****4567',
+  pendingEdit: null
+};
+
+function maskSensitiveValue(value) {
+  if (!value) return '₹ ●●●';
+  return String(value).replace(/[\d.,]+/g, '●●●');
+}
+
+function reqLabel(text) {
+  return `${text} <span class="req-star" title="Required">*</span>`;
+}
+
+function showWfAlert(message, type = 'error') {
+  openModal(
+    type === 'error' ? 'Cannot proceed' : 'Notice',
+    `<div class="wf-inline-alert wf-inline-alert--${type}">
+      <i class="fa-solid fa-${type === 'error' ? 'circle-exclamation' : 'circle-check'}"></i>
+      <div><p>${message}</p></div>
+    </div>`,
+    { wide: false }
+  );
+}
+
+function syncVendorWorkflowStatuses() {
+  if (currentRole !== 'vendor') return;
+  VENDOR_WORKFLOW.forEach(s => {
+    if (vendorStageState.completed[s.id]) s.status = 'done';
+    else if (s.id === getVendorActiveStageId()) s.status = 'active';
+    else s.status = 'pending';
+  });
+}
+
+function getVendorActiveStageId() {
+  for (let i = 1; i <= 9; i++) {
+    if (!vendorStageState.completed[i]) return i;
+  }
+  return 9;
+}
+
+function getWorkflowProgressStep() {
+  if (currentRole === 'vendor') {
+    syncVendorWorkflowStatuses();
+    return getVendorActiveStageId();
+  }
+  const steps = getWorkflowSteps();
+  const active = steps.find(s => s.status === 'active');
+  if (active) return active.id;
+  const done = steps.filter(s => s.status === 'done').length;
+  return done > 0 ? Math.min(done, steps.length) : 1;
+}
+
+function parseISODate(value) {
+  if (!value) return null;
+  const raw = String(value).trim();
+  // Already DD-MM-YYYY
+  if (/^\d{2}-\d{2}-\d{4}$/.test(raw)) {
+    const [d, m, y] = raw.split('-').map(Number);
+    return new Date(y, m - 1, d);
+  }
+  // YYYY-MM-DD (optionally with time)
+  const m = raw.match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if (m) return new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]));
+  const dt = new Date(raw);
+  return Number.isNaN(dt.getTime()) ? null : dt;
+}
+
+/** Format date as DD-MM-YYYY */
+function formatDateDMY(value) {
+  const dt = parseISODate(value);
+  if (!dt) return value || '';
+  const dd = String(dt.getDate()).padStart(2, '0');
+  const mm = String(dt.getMonth() + 1).padStart(2, '0');
+  const yyyy = dt.getFullYear();
+  return `${dd}-${mm}-${yyyy}`;
+}
+
+/** Calendar days from APP_TODAY to deadline (date-only) */
+function daysUntilDeadline(deadline) {
+  const today = parseISODate(APP_TODAY);
+  const end = parseISODate(deadline);
+  if (!today || !end) return null;
+  const ms = end.setHours(0, 0, 0, 0) - today.setHours(0, 0, 0, 0);
+  return Math.round(ms / (1000 * 60 * 60 * 24));
+}
 
 // ========== LOGIN ==========
 function completeAuthLogin(role, user) {
@@ -30,6 +210,20 @@ function completeAuthLogin(role, user) {
   renderSidebar();
   renderTopbar();
   navigateTo('dashboard', true);
+}
+
+function confirmLogout() {
+  openModal('Confirm Logout', `
+    <div class="logout-confirm">
+      <div class="logout-confirm-icon"><i class="fa-solid fa-right-from-bracket"></i></div>
+      <p class="logout-confirm-text">Are you sure you want to logout?</p>
+      <p class="logout-confirm-hint">You will need to sign in again to access the portal.</p>
+      <div class="logout-confirm-actions">
+        <button type="button" class="btn btn-outline" onclick="closeModal()">Cancel</button>
+        <button type="button" class="btn btn-danger" onclick="logout()">Logout</button>
+      </div>
+    </div>
+  `);
 }
 
 function logout() {
@@ -61,6 +255,55 @@ function resetGovNoticesForDemo() {
 }
 
 // ========== NAVIGATION ==========
+function getVendorNavBadgeInfo(pageId) {
+  switch (pageId) {
+    case 'workflow': {
+      const pending = [4, 5, 6, 7, 8, 9].filter(id => !vendorStageState.completed[id]).length;
+      return { count: pending, title: `${pending} lifecycle stage(s) still open` };
+    }
+    case 'registration':
+      return { count: 1, title: '1 profile item needs attention (ISO expiry reminder)' };
+    case 'tenders': {
+      const open = TENDERS.filter(t => t.status === 'Open').length;
+      return { count: open, title: `${open} open tender(s) available to review` };
+    }
+    case 'bids': {
+      const active = BIDS.length;
+      return { count: active, title: `${active} bid(s) in your bid book` };
+    }
+    case 'clarifications': {
+      const pending = CLARIFICATIONS.filter(c => c.status === 'Pending' || c.status === 'Corrigendum Issued').length;
+      const total = CLARIFICATIONS.length;
+      return { count: pending || total, title: pending ? `${pending} clarification(s) needing attention` : `${total} clarification(s)` };
+    }
+    case 'contracts': {
+      const n = CONTRACTS.length;
+      return { count: n, title: `${n} active contract(s) / PO(s)` };
+    }
+    case 'delivery': {
+      const pendingPay = DELIVERIES.filter(d => d.grn !== 'Accepted' || d.payment === 'Processing' || d.payment === '—').length;
+      return { count: pendingPay || DELIVERIES.length, title: `${pendingPay || DELIVERIES.length} delivery / invoice item(s) to track` };
+    }
+    case 'reports':
+      return { count: 2, title: '2 downloadable report packs available' };
+    case 'work-queue': {
+      const unread = VENDOR_WORK_QUEUE.filter(a => a.unread).length;
+      return { count: unread || VENDOR_WORK_QUEUE.length, title: `${unread} unread alert(s) in work queue` };
+    }
+    case 'sla-desk': {
+      const open = SLA_THREADS.filter(t => t.status !== 'Resolved').length;
+      return { count: open, title: `${open} open SLA communication thread(s)` };
+    }
+    default:
+      return { count: 0, title: '' };
+  }
+}
+
+function getNavBadgeInfo(item) {
+  if (currentRole === 'vendor') return getVendorNavBadgeInfo(item.id);
+  return { count: item.badge || 0, title: item.badge ? `${item.badge} item(s)` : '' };
+}
+
 function renderSidebar() {
   const nav = document.getElementById('sidebarNav');
   const navItems = currentRole === 'gov' ? NAV_GOV : NAV_VENDOR;
@@ -69,10 +312,11 @@ function renderSidebar() {
     if (item.section) {
       html += `<div class="nav-section">${item.section}</div>`;
     } else {
-      const badge = item.badge > 0
-        ? `<span class="nav-badge">${item.badge}</span>`
+      const info = getNavBadgeInfo(item);
+      const badge = info.count > 0
+        ? `<span class="nav-badge" title="${info.title}">${info.count}</span>`
         : '';
-      html += `<a class="nav-item ${currentPage === item.id ? 'active' : ''}" data-page="${item.id}" onclick="navigateTo('${item.id}')">
+      html += `<a class="nav-item ${currentPage === item.id ? 'active' : ''}" data-page="${item.id}" onclick="navigateTo('${item.id}')" ${info.title ? `title="${info.title}"` : ''}>
         <span class="nav-icon"><i class="fa-solid ${item.icon}"></i></span>
         <span class="nav-label">${item.label}</span>
         ${badge}
@@ -87,7 +331,7 @@ function renderSidebar() {
 
 function getTenderPageSubtitle() {
   const labels = {
-    open: 'Open tenders — accepting bids',
+    open: 'Open tenders',
     evaluation: 'Tenders under technical & commercial evaluation',
     draft: 'Draft tenders — preparation in progress',
     all: 'Browse and track procurement opportunities'
@@ -124,16 +368,22 @@ function renderTopbar() {
   const alertBadge = document.getElementById('alertBadge');
 
   const pageTitles = {
-    dashboard: ['Analytics Dashboard', 'Real-time procurement insights & KPIs'],
+    dashboard: currentRole === 'vendor'
+      ? ['My Dashboard', 'Your procurement activity at a glance']
+      : ['Analytics Dashboard', 'Real-time procurement insights & KPIs'],
+    'work-queue': ['Alerts & Work Queue', 'Prioritized actions by severity, owner, due date and record type'],
+    'sla-desk': ['SLA Communication', 'Escalate and resolve issues with government officers as per SLA hierarchy'],
     workflow: ['Procurement Lifecycle', ''],
     'vendor-reg': ['Vendor Registration', 'Review and approve vendor onboarding requests'],
     sourcing: ['Sourcing & Award', 'Technical and commercial evaluation'],
     'master-data': ['Master Data & Workflow', 'Categories, items, and workflow configuration'],
     tor: ['TOR Coverage & Red Flags', 'Terms of Reference compliance monitoring'],
     'vendor-matrix': ['Vendor Performance Matrix', 'Weighted scoring and vendor ranking'],
-    reports: ['Reports & Analytics', 'Comparative analytics and trend reports'],
+    reports: currentRole === 'vendor'
+      ? ['My Reports', 'Bid participation, contract execution & downloadable analytics']
+      : ['Reports & Analytics', 'Comparative analytics and trend reports'],
     settings: ['Settings & Branding', 'Organization name, logo, and configuration'],
-    registration: ['Registration & KYC', 'Complete your vendor profile and verification'],
+    registration: ['Profile & KYC', 'Complete your vendor profile and verification'],
     tenders: ['Tender Discovery', getTenderPageSubtitle()],
     bids: ['Bid Submission', 'Prepare and submit technical & financial bids'],
     clarifications: ['Clarifications', 'Pre-bid queries and corrigenda tracking'],
@@ -292,7 +542,9 @@ function getPageRenderer() {
     clarifications: renderClarifications,
     contracts: renderContracts,
     delivery: renderDelivery,
-    performance: renderPerformance
+    performance: renderPerformance,
+    'work-queue': renderWorkQueue,
+    'sla-desk': renderSlaDesk
   };
   return pages[currentPage] || renderDashboard;
 }
@@ -344,7 +596,10 @@ function finishPageInit() {
     }, 100);
   }
   if (currentPage === 'reports') {
-    setTimeout(() => refreshAllCharts(currentPeriod, currentCategory), 100);
+    setTimeout(() => {
+      if (currentRole === 'vendor') initVendorReportCharts(currentCategory);
+      else refreshAllCharts(currentPeriod, currentCategory);
+    }, 100);
   }
   if (currentPage === 'vendor-matrix') {
     setTimeout(() => initVendorTrendChart(filterByCategory(VENDORS)), 100);
@@ -369,12 +624,32 @@ function filterByCategory(items, field = 'category') {
 }
 
 function categoryBadgeHint() {
-  if (currentRole === 'vendor') {
-    return 'Badge count = open + evaluation + draft tenders + active bids + active contracts in that category';
+  if (currentPage === 'tenders' && tenderStatusFilter !== 'all') {
+    return `Badge count = ${tenderStatusFilter} tenders in that category (matches the list below)`;
+  }
+  if (currentPage === 'tenders') {
+    return 'Badge count = tenders in that category on this page';
+  }
+  if (currentPage === 'contracts') {
+    return 'Badge count = contracts in that category on this page';
+  }
+  if (currentPage === 'bids') {
+    return 'Badge count = your bids in that category on this page';
+  }
+  if (currentPage === 'delivery') {
+    return 'Badge count = deliveries in that category on this page';
+  }
+  if (currentPage === 'clarifications') {
+    return 'Badge count = clarifications in that category on this page';
+  }
+  if (currentPage === 'dashboard') {
+    if (currentRole === 'vendor') {
+      return 'Badge count = open + evaluation + draft tenders + active bids + active contracts in that category';
+    }
+    return 'Badge count = Open Tenders + Pending Approvals + Payment Delays for that category';
   }
   const hints = {
     dashboard: 'Active tender count per category on this page',
-    tenders: 'Tender count per category on this page',
     bids: 'Your bid count per category',
     contracts: 'Active contract count per category'
   };
@@ -417,23 +692,57 @@ function categoryBar() {
   </div>`;
 }
 
+function getGovDashboardActionCounts(cat) {
+  const tenders = cat === 'All' ? TENDERS : TENDERS.filter(t => t.category === cat);
+  const open = tenders.filter(t => ['Open', 'Evaluation', 'Draft'].includes(t.status)).length;
+  const pendingList = typeof PENDING_APPROVALS !== 'undefined'
+    ? (cat === 'All' ? PENDING_APPROVALS : PENDING_APPROVALS.filter(r => r.category === cat))
+    : [];
+  const delayList = typeof PAYMENT_DELAYS !== 'undefined'
+    ? (cat === 'All' ? PAYMENT_DELAYS : PAYMENT_DELAYS.filter(r => r.category === cat))
+    : [];
+  const pending = pendingList.length || (cat === 'All' ? 8 : Math.max(1, Math.round(8 * (CATEGORY_WEIGHTS[cat] ?? 1))));
+  const delays = delayList.length || Math.max(1, Math.round(6 * (CATEGORY_WEIGHTS[cat] ?? 1)));
+  return { open, pending, delays, sum: open + pending + delays };
+}
+
 function getCategoryItemCount(cat) {
+  // Always prefer page-local counts so Contracts/Bids/etc. are not polluted by dashboard totals
+  if (currentPage === 'tenders') {
+    return filterTendersByStatus(TENDERS.filter(t => t.category === cat)).length;
+  }
+  if (currentPage === 'contracts') {
+    return CONTRACTS.filter(c => c.category === cat).length;
+  }
+  if (currentPage === 'bids') {
+    return BIDS.filter(b => b.category === cat).length;
+  }
+  if (currentPage === 'delivery') {
+    return DELIVERIES.filter(d => d.category === cat).length;
+  }
+  if (currentPage === 'clarifications') {
+    return CLARIFICATIONS.filter(c => c.category === cat).length;
+  }
+  if (currentPage === 'vendor-reg') {
+    return VENDOR_REGISTRATIONS.filter(r => r.category === cat).length;
+  }
+  if (currentPage === 'sourcing') {
+    return TENDERS.filter(t => t.category === cat).length;
+  }
+  if (currentPage === 'tor') {
+    return TOR_ENTRIES.filter(t => t.category === cat).length;
+  }
+  if (currentPage === 'vendor-matrix') {
+    return VENDORS.filter(v => v.category === cat).length;
+  }
+  if (currentPage === 'dashboard') {
+    if (currentRole === 'vendor') return getVendorCategoryBadgeCount(cat);
+    return getGovDashboardActionCounts(cat).sum;
+  }
   if (currentRole === 'vendor') {
     return getVendorCategoryBadgeCount(cat);
   }
-  const map = {
-    'vendor-reg': () => VENDOR_REGISTRATIONS.filter(r => r.category === cat).length,
-    sourcing: () => TENDERS.filter(t => t.category === cat).length,
-    tenders: () => TENDERS.filter(t => t.category === cat).length,
-    bids: () => BIDS.filter(b => b.category === cat).length,
-    contracts: () => CONTRACTS.filter(c => c.category === cat).length,
-    clarifications: () => CLARIFICATIONS.filter(c => c.category === cat).length,
-    delivery: () => DELIVERIES.filter(d => d.category === cat).length,
-    tor: () => TOR_ENTRIES.filter(t => t.category === cat).length,
-    'vendor-matrix': () => VENDORS.filter(v => v.category === cat).length,
-    dashboard: () => TENDERS.filter(t => t.category === cat && ['Open', 'Evaluation', 'Draft'].includes(t.status)).length
-  };
-  return (map[currentPage] || (() => TENDERS.filter(t => t.category === cat).length))();
+  return TENDERS.filter(t => t.category === cat).length;
 }
 
 function emptyTableRow(cols, msg) {
@@ -624,7 +933,7 @@ function renderTenderPipeline(tenders) {
         <thead><tr><th>Tender ID</th><th>Title</th><th>Category</th><th>Deadline</th><th>Status</th><th>Action</th></tr></thead>
         <tbody>
           ${paged.items.length ? paged.items.map(t => `<tr onclick="openDrillDown('tender','${t.id}','${t.title} - ${t.category}. Value: ${t.value}. Status: ${t.status}.')">
-            <td><strong>${t.id}</strong></td><td>${t.title}</td><td>${t.category}</td><td>${t.deadline}</td>
+            <td><strong>${t.id}</strong></td><td>${t.title}</td><td>${t.category}</td><td>${formatDateDMY(t.deadline)}</td>
             <td><span class="badge badge-${tenderBadgeClass(t.status)}">${t.status}</span></td>
             <td><button class="btn btn-outline" style="padding:0.3rem 0.6rem;font-size:0.75rem">${pipelineActionLabel(t.status)}</button></td>
           </tr>`).join('') : emptyTableRow(6, 'No tenders in pipeline for this category.')}
@@ -642,8 +951,47 @@ function setPipelinePage(page) {
 }
 
 function timeToggle() {
-  return `<div class="time-toggle">
-    ${['year', 'quarter', 'month'].map(p => `<button class="time-btn ${currentPeriod === p ? 'active' : ''}" onclick="setPeriod('${p}')">${p.charAt(0).toUpperCase() + p.slice(1)}</button>`).join('')}
+  return `<div class="time-toggle" role="group" aria-label="Time granularity">
+    ${['year', 'quarter', 'month'].map(p => `<button type="button" class="time-btn ${currentPeriod === p ? 'active' : ''}" onclick="setPeriod('${p}')">${p.charAt(0).toUpperCase() + p.slice(1)}</button>`).join('')}
+  </div>`;
+}
+
+function renderAnalyticsFilterBar() {
+  const fyOptions = typeof ANALYTICS_FY_OPTIONS !== 'undefined' ? ANALYTICS_FY_OPTIONS : ['all'];
+  const years = fyOptions.filter(y => y !== 'all');
+  return `<div class="analytics-filter">
+    <div class="analytics-filter-intro">
+      <div class="analytics-filter-icon"><i class="fa-solid fa-chart-line"></i></div>
+      <div>
+        <h3>Performance Matrix Explorer</h3>
+        <p>Explore the last 10 financial years. Pick Year / Quarter / Month, focus a FY, then switch Vendor-wise or Item-wise comparison — category tabs above still drive the action-queue totals.</p>
+      </div>
+    </div>
+    <div class="analytics-filter-controls">
+      <div class="analytics-control">
+        <span class="analytics-control-label">Granularity</span>
+        ${timeToggle()}
+      </div>
+      <div class="analytics-control">
+        <span class="analytics-control-label">Focus year</span>
+        <label class="analytics-select-wrap">
+          <select id="analyticsFocusYear" onchange="setAnalyticsFocusYear(this.value)" aria-label="Focus financial year">
+            ${fyOptions.map(y => `<option value="${y}" ${analyticsFocusYear === y ? 'selected' : ''}>${y === 'all' ? 'All 10 years' : y}</option>`).join('')}
+          </select>
+        </label>
+      </div>
+      <div class="analytics-control">
+        <span class="analytics-control-label">Compare by</span>
+        <div class="analytics-segment" role="group" aria-label="Comparison mode">
+          <button type="button" class="analytics-seg-btn ${analyticsCompareMode === 'vendor' ? 'active' : ''}" onclick="setAnalyticsCompareMode('vendor')"><i class="fa-solid fa-users"></i> Vendor-wise</button>
+          <button type="button" class="analytics-seg-btn ${analyticsCompareMode === 'item' ? 'active' : ''}" onclick="setAnalyticsCompareMode('item')"><i class="fa-solid fa-boxes-stacked"></i> Item-wise</button>
+        </div>
+      </div>
+    </div>
+    <div class="analytics-fy-chips" role="group" aria-label="Quick year select">
+      <button type="button" class="analytics-fy-chip ${analyticsFocusYear === 'all' ? 'active' : ''}" onclick="setAnalyticsFocusYear('all')">All 10 yrs</button>
+      ${years.map(y => `<button type="button" class="analytics-fy-chip ${analyticsFocusYear === y ? 'active' : ''}" onclick="setAnalyticsFocusYear('${y}')">${y.replace('FY', '')}</button>`).join('')}
+    </div>
   </div>`;
 }
 
@@ -654,75 +1002,102 @@ function renderDashboard() {
 }
 
 function renderGovDashboard() {
-  const tenders = filterByCategory(TENDERS);
   const vendors = filterByCategory(VENDORS);
-  const regs = filterByCategory(VENDOR_REGISTRATIONS);
   const weight = CATEGORY_WEIGHTS[currentCategory];
-  const openTenders = tenders.filter(t => ['Open', 'Evaluation', 'Draft'].includes(t.status)).length;
+  const actions = getGovDashboardActionCounts(currentCategory);
   const spend = Math.round(215 * weight * 10) / 10;
-  const pending = Math.round(18 * weight) || (currentCategory === 'All' ? 18 : Math.max(regs.length, 1));
-  const delays = Math.max(1, Math.round(6 * weight));
   const avgScore = vendors.length
     ? (vendors.reduce((s, v) => s + v.overall, 0) / vendors.length).toFixed(1)
     : '—';
+  const compareTitle = analyticsCompareMode === 'vendor' ? 'Vendor-wise Comparison' : 'Item-wise Comparison';
+  const metricAvgs = getCategoryMetricAverages(vendors);
 
   return `
     <div class="sticky-banner">
       <span class="banner-icon"><i class="fa-solid fa-triangle-exclamation"></i></span>
       <div><strong>Restrictive Notice:</strong> Vendor VND-MP-001345 suspended pending compliance review. <a href="#" onclick="navigateTo('tor');return false" style="color:#e65100;font-weight:600">View Details →</a></div>
     </div>
-    <div class="kpi-grid">
-      <div class="kpi-card blue" onclick="openDrillDown('kpi','Open Tenders','${openTenders} active tenders${currentCategory !== 'All' ? ' in ' + currentCategory : ''}.')">
-        <div class="kpi-label">Open Tenders</div>
-        <div class="kpi-value">${openTenders}</div>
-        <div class="kpi-change up">↑ 12% vs last quarter</div>
-      </div>
-      <div class="kpi-card green" onclick="openDrillDown('kpi','Procurement Spend','₹${spend} Cr spend${currentCategory !== 'All' ? ' for ' + currentCategory : ''}.')">
-        <div class="kpi-label">Procurement Spend</div>
-        <div class="kpi-value">₹${spend} Cr</div>
-        <div class="kpi-change up">↑ 8.2% YoY</div>
-      </div>
-      <div class="kpi-card orange" onclick="openDrillDown('kpi','Pending Approvals','${pending} PRs awaiting approval.')">
-        <div class="kpi-label">Pending Approvals</div>
-        <div class="kpi-value">${pending}</div>
-        <div class="kpi-change down">↓ 3 resolved today</div>
-      </div>
-      <div class="kpi-card red" onclick="openDrillDown('kpi','Payment Delays','${delays} invoices delayed.')">
-        <div class="kpi-label">Payment Delays</div>
-        <div class="kpi-value">${delays}</div>
-        <div class="kpi-change down">↑ 2 new this week</div>
-      </div>
-      <div class="kpi-card teal" onclick="openDrillDown('kpi','Vendor Performance','Average score: ${avgScore}.')">
-        <div class="kpi-label">Avg Vendor Score</div>
-        <div class="kpi-value">${avgScore}</div>
-        <div class="kpi-change up">↑ 3.2 pts YoY</div>
+
+    <div class="kpi-section">
+      <div class="kpi-section-label"><i class="fa-solid fa-bolt"></i> Action queue <span class="kpi-section-sum">Tab total = ${actions.sum}</span></div>
+      <div class="kpi-grid kpi-grid--actions">
+        <div class="kpi-card blue" onclick="openGovKpiDetail('openTenders')">
+          <div class="kpi-label">Open Tenders</div>
+          <div class="kpi-value">${actions.open}</div>
+          <div class="kpi-change up">↑ 12% vs last quarter</div>
+        </div>
+        <div class="kpi-card orange" onclick="openGovKpiDetail('pendingApprovals')">
+          <div class="kpi-label">Pending Approvals</div>
+          <div class="kpi-value">${actions.pending}</div>
+          <div class="kpi-change down">↓ 3 resolved today</div>
+        </div>
+        <div class="kpi-card red" onclick="openGovKpiDetail('paymentDelays')">
+          <div class="kpi-label">Payment Delays</div>
+          <div class="kpi-value">${actions.delays}</div>
+          <div class="kpi-change down">↑ 2 new this week</div>
+        </div>
       </div>
     </div>
-    <div class="flex items-center gap-1 mb-2" style="justify-content:flex-end">${timeToggle()}</div>
+
+    <div class="kpi-section">
+      <div class="kpi-section-label"><i class="fa-solid fa-chart-pie"></i> Performance metrics</div>
+      <div class="kpi-grid kpi-grid--metrics">
+        <div class="kpi-card green" onclick="openGovKpiDetail('procurementSpend')">
+          <div class="kpi-label">Procurement Spend</div>
+          <div class="kpi-value">₹${spend} Cr</div>
+          <div class="kpi-change up">↑ 8.2% YoY</div>
+        </div>
+        <div class="kpi-card teal" onclick="openGovKpiDetail('avgVendorScore')">
+          <div class="kpi-label">Avg Vendor Score</div>
+          <div class="kpi-value">${avgScore}</div>
+          <div class="kpi-change up">↑ 3.2 pts YoY</div>
+        </div>
+      </div>
+    </div>
+
+    ${renderAnalyticsFilterBar()}
+
     <div class="chart-grid">
-      <div class="chart-card" onclick="openDrillDown('chart','Spend Trends','Category-wise spend breakdown with district-level drill-down.')">
+      <div class="chart-card full">
+        <div class="chart-header">
+          <h3><i class="fa-solid fa-${analyticsCompareMode === 'vendor' ? 'users' : 'boxes-stacked'}"></i> ${compareTitle}</h3>
+          <span class="chart-subtitle">${analyticsFocusYear === 'all' ? 'Last 10 FYs' : analyticsFocusYear} · ${currentPeriod} view · ${currentCategory === 'All' ? 'All categories' : currentCategory}</span>
+        </div>
+        <div class="chart-container chart-container--tall"><canvas id="chartAnalyticsCompare"></canvas></div>
+      </div>
+      <div class="chart-card">
         <div class="chart-header"><h3><i class="fa-solid fa-chart-column"></i> Spend Trends (₹ Cr)</h3></div>
         <div class="chart-container"><canvas id="chartSpend"></canvas></div>
       </div>
-      <div class="chart-card" onclick="openDrillDown('chart','Procurement Trends','Tender count by category and evaluation stage.')">
+      <div class="chart-card">
         <div class="chart-header"><h3><i class="fa-solid fa-chart-line"></i> Procurement Trends</h3></div>
         <div class="chart-container"><canvas id="chartProcurement"></canvas></div>
       </div>
-      <div class="chart-card" onclick="openDrillDown('chart','Vendor Performance','Quarterly vendor performance score trends.')">
+      <div class="chart-card">
         <div class="chart-header"><h3><i class="fa-solid fa-star"></i> Vendor Performance Trends</h3></div>
         <div class="chart-container"><canvas id="chartVendorPerf"></canvas></div>
       </div>
-      <div class="chart-card" onclick="openDrillDown('chart','Savings Realization','Savings from demand optimization and L1 pricing.')">
+      <div class="chart-card">
         <div class="chart-header"><h3><i class="fa-solid fa-piggy-bank"></i> Savings Realization (₹ Cr)</h3></div>
         <div class="chart-container"><canvas id="chartSavings"></canvas></div>
       </div>
-      <div class="chart-card full" onclick="openDrillDown('chart','Category-wise Spend','Drill down to item-level spend by district and facility.')">
-        <div class="chart-header"><h3><i class="fa-solid fa-tags"></i> Category-wise Spend Distribution</h3><span class="chart-subtitle">% share of total spend</span></div>
+      <div class="chart-card full">
+        <div class="chart-header">
+          <h3><i class="fa-solid fa-chart-pie"></i> Category Distribution</h3>
+          <span class="chart-subtitle">Spend share (% of total) — click a slice for item &amp; district detail</span>
+        </div>
         <div class="chart-container sm"><canvas id="chartCategory"></canvas></div>
       </div>
     </div>
     <div class="score-weights">
-      ${SCORE_WEIGHTS.map(w => `<div class="weight-card"><div class="weight-pct">${w.weight}%</div><div class="weight-label">${w.label}</div></div>`).join('')}
+      ${PERF_METRICS.map(m => {
+        const avg = metricAvgs[m.key];
+        return `<div class="weight-card weight-card--clickable" onclick="openGovKpiDetail('metric:${m.key}')" title="View ${m.label} detail">
+          <div class="weight-pct">${avg}</div>
+          <div class="weight-label">${m.label}</div>
+          <div class="weight-meta">Avg score · weight ${m.weight}%</div>
+        </div>`;
+      }).join('')}
     </div>
     ${renderVendorTable()}
   `;
@@ -773,7 +1148,7 @@ function renderVendorDashboard() {
     ${renderPerformanceBreakdown(VENDORS[0])}
     <div class="chart-grid">
       <div class="chart-card full">
-        <div class="chart-header"><h3><i class="fa-solid fa-chart-pie"></i> Category Distribution</h3><span class="chart-subtitle">Spend share (% of total) — hover for details</span></div>
+        <div class="chart-header"><h3><i class="fa-solid fa-chart-pie"></i> Category Distribution</h3><span class="chart-subtitle">Spend share (% of total) — click a slice for item &amp; district detail</span></div>
         <div class="chart-container sm"><canvas id="chartCategory"></canvas></div>
       </div>
     </div>
@@ -786,7 +1161,7 @@ function renderVendorTable() {
   return `<div class="data-table-wrap">
     <div class="table-header"><h3>Vendor Performance Matrix ${currentCategory !== 'All' ? `— ${currentCategory}` : ''}</h3><button class="btn btn-outline" onclick="navigateTo('vendor-matrix')">Full Matrix →</button></div>
     <table class="data-table">
-      <thead><tr><th>Vendor ID</th><th>Name</th><th>Category</th><th>Quality (30%)</th><th>Lead Time (20%)</th><th>Cost (20%)</th><th>Regulatory (20%)</th><th>Satisfaction (10%)</th><th>Overall</th><th>Status</th></tr></thead>
+      <thead><tr><th>Vendor ID</th><th>Name</th><th>Category</th><th>Quality</th><th>Lead Time</th><th>Cost</th><th>Regulatory</th><th>Satisfaction</th><th>Overall</th><th>Status</th></tr></thead>
       <tbody>
         ${vendors.length ? vendors.map(v => `<tr onclick="openVendorDetail('${v.id}')">
           <td><strong>${v.id}</strong></td>
@@ -804,14 +1179,6 @@ function renderVendorTable() {
 // ========== WORKFLOW ==========
 function getWorkflowSteps() {
   return currentRole === 'gov' ? GOV_WORKFLOW : VENDOR_WORKFLOW;
-}
-
-function getWorkflowProgressStep() {
-  const steps = getWorkflowSteps();
-  const active = steps.find(s => s.status === 'active');
-  if (active) return active.id;
-  const done = steps.filter(s => s.status === 'done').length;
-  return done > 0 ? Math.min(done, steps.length) : 1;
 }
 
 function getWorkflowStepClasses(step, viewId) {
@@ -848,7 +1215,7 @@ function renderWorkflow() {
 
   return `
     <div class="wf-page-header">
-      <p class="wf-page-hint">${isGov ? '13 stages · click a step to navigate' : '12 stages · click any step to review or update'}</p>
+      <p class="wf-page-hint">${isGov ? '13 stages · click a step to navigate' : '9 stages · click any step to review or update'}</p>
       <button type="button" class="wf-guide-download" onclick="openLifecycleGuideModal()">
         <i class="fa-solid fa-book"></i>
         <span>Guide</span>
@@ -883,19 +1250,56 @@ function renderWorkflowViewBanner(step, progress) {
   </div>`;
 }
 
+function isVendorStageActionComplete(stageId) {
+  const s = vendorStageState;
+  switch (stageId) {
+    case 1: case 2: case 3: return !!s.completed[stageId];
+    case 4: return !!s.bid.submitted;
+    case 5: return !!s.award.acknowledged;
+    case 6: return !!s.contract.pbgSubmitted && !!s.contract.signed;
+    case 7: return !!s.delivery.updated;
+    case 8: return !!s.invoice.submitted;
+    case 9: return true;
+    default: return false;
+  }
+}
+
+function vendorCanAdvanceFrom(stageId) {
+  const progress = getVendorActiveStageId();
+  if (stageId < progress) return true;
+  if (stageId > progress) return false;
+  return isVendorStageActionComplete(stageId);
+}
+
+function vendorCanEditStage(stepId, progress) {
+  if (stepId > progress) return false;
+  if (stepId === 4 && vendorStageState.bid.submitted) return false;
+  if (stepId === 8 && vendorStageState.invoice.submitted) return false;
+  if (stepId === 7 && vendorStageState.delivery.updated && stepId < progress) return false;
+  return true;
+}
+
 function renderWorkflowStepNav(step, total) {
+  const nextDisabled = step.id >= total || (
+    currentRole === 'vendor' && !vendorCanAdvanceFrom(step.id)
+  );
+  const nextTitle = nextDisabled && currentRole === 'vendor' && step.id < total
+    ? 'Complete the required actions on this stage before moving ahead'
+    : '';
   return `<div class="wf-step-nav">
     <button type="button" class="btn btn-outline" onclick="goWorkflowStep(-1)" ${step.id <= 1 ? 'disabled' : ''}>
       <i class="fa-solid fa-arrow-left"></i> Previous Stage
     </button>
     <span class="wf-step-indicator">Stage ${step.id} of ${total}</span>
-    <button type="button" class="btn btn-outline" onclick="goWorkflowStep(1)" ${step.id >= total ? 'disabled' : ''}>
+    <button type="button" class="btn btn-outline" onclick="goWorkflowStep(1)" ${nextDisabled ? 'disabled' : ''} title="${nextTitle}">
       Next Stage <i class="fa-solid fa-arrow-right"></i>
     </button>
   </div>`;
 }
 
 function renderWorkflowChecklist(step) {
+  // Stage 1 gov: checklist replaced by API-populated Need Identification panel
+  if (currentRole === 'gov' && step.id === 1) return '';
   const checklist = currentRole === 'gov'
     ? GOV_STAGE_CHECKLIST[step.id]
     : VENDOR_STAGE_CHECKLIST[step.id];
@@ -906,8 +1310,229 @@ function renderWorkflowChecklist(step) {
   </div>`;
 }
 
+/** Simulated API fetch for Need Identification (Stage 1) */
+function getNeedIdentificationData() {
+  const base = typeof NEED_IDENTIFICATION_API !== 'undefined' ? NEED_IDENTIFICATION_API : null;
+  if (!base) return null;
+  // Light category-aware note for prototype; payload shape stays API-like
+  const cat = currentCategory;
+  return {
+    ...base,
+    meta: {
+      ...base.meta,
+      categoryFilter: cat,
+      displayNote: cat === 'All'
+        ? 'Showing consolidated requirements across all categories'
+        : `Filtered view emphasis: ${cat} formulary & related SKUs`
+    }
+  };
+}
+
+function needStatusBadge(status) {
+  const map = {
+    Adequate: 'success',
+    Low: 'warning',
+    Critical: 'danger',
+    Attention: 'warning',
+    Elevated: 'warning',
+    High: 'danger',
+    Medium: 'info',
+    Synced: 'success',
+    'Action Required': 'warning'
+  };
+  return map[status] || 'info';
+}
+
+function renderNeedIdentificationStage(canEdit = true) {
+  const data = getNeedIdentificationData();
+  if (!data) {
+    return `<div class="need-api-empty"><i class="fa-solid fa-plug-circle-xmark"></i><p>Need Identification API unavailable. Configure integration endpoint to auto-populate this stage.</p></div>`;
+  }
+  const { meta, stockLevels, patientLoad, diseaseBurden, gapAnalysis } = data;
+  const disabled = canEdit ? '' : ' disabled';
+  const blocks = [
+    { key: 'stock', icon: 'fa-boxes-stacked', color: 'blue', data: stockLevels,
+      metrics: [
+        { label: 'Fill rate', value: stockLevels.overallFillRate },
+        { label: 'Critical SKUs', value: stockLevels.criticalSkus },
+        { label: 'Below reorder', value: stockLevels.belowReorder },
+        { label: 'Days of cover', value: stockLevels.daysOfCover }
+      ] },
+    { key: 'patient', icon: 'fa-user-injured', color: 'teal', data: patientLoad,
+      metrics: [
+        { label: 'OPD / month', value: patientLoad.opdMonthly },
+        { label: 'IPD occupancy', value: patientLoad.ipdOccupancy },
+        { label: 'YoY growth', value: patientLoad.growthYoY },
+        { label: 'High-load sites', value: patientLoad.highLoadFacilities }
+      ] },
+    { key: 'disease', icon: 'fa-virus', color: 'orange', data: diseaseBurden,
+      metrics: [
+        { label: 'Top conditions', value: diseaseBurden.topConditions },
+        { label: 'Seasonal alert', value: diseaseBurden.seasonalAlert },
+        { label: 'Programme SKUs', value: diseaseBurden.programmeSkus },
+        { label: 'Risk score', value: diseaseBurden.riskScore }
+      ] },
+    { key: 'gap', icon: 'fa-chart-gantt', color: 'red', data: gapAnalysis,
+      metrics: [
+        { label: 'Net gap value', value: gapAnalysis.netGapValue },
+        { label: 'Line items', value: gapAnalysis.lineItems },
+        { label: 'Fulfill from stock', value: gapAnalysis.fulfillFromStock },
+        { label: 'Fresh procurement', value: gapAnalysis.freshProcurement }
+      ] }
+  ];
+
+  return `<div class="need-api">
+    <div class="need-api-banner">
+      <div class="need-api-banner-icon"><i class="fa-solid fa-cloud-arrow-down"></i></div>
+      <div class="need-api-banner-text">
+        <strong>Auto-populated via API integration</strong>
+        <p>Data synced from <strong>${meta.source}</strong> · Endpoint <code>${meta.endpoint}</code> · Last synced <strong>${meta.lastSynced}</strong></p>
+        <p class="need-api-meta-line">${meta.district} · ${meta.facilities} facilities · Period ${meta.assessmentPeriod} · ${meta.displayNote}</p>
+      </div>
+      <div class="need-api-banner-actions">
+        <span class="badge badge-${needStatusBadge(meta.status)}"><i class="fa-solid fa-check-double"></i> ${meta.status}</span>
+        <button type="button" class="btn btn-outline btn-sm" onclick="refreshNeedIdentificationApi()"${disabled}>
+          <i class="fa-solid fa-arrows-rotate"></i> Refresh API
+        </button>
+      </div>
+    </div>
+
+    <div class="need-metric-grid">
+      ${blocks.map(b => `
+        <button type="button" class="need-metric-card need-metric-card--${b.color}" onclick="scrollToNeedSection('${b.key}')">
+          <div class="need-metric-head">
+            <span class="need-metric-icon"><i class="fa-solid ${b.icon}"></i></span>
+            <span class="badge badge-${needStatusBadge(b.data.status)}">${b.data.status}</span>
+          </div>
+          <h4>${b.data.label}</h4>
+          <p>${b.data.summary}</p>
+          <div class="need-metric-stats">
+            ${b.metrics.map(m => `<div><span>${m.label}</span><strong>${m.value}</strong></div>`).join('')}
+          </div>
+        </button>`).join('')}
+    </div>
+
+    <div class="need-section" id="need-sec-stock">
+      <div class="need-section-head">
+        <h4><i class="fa-solid fa-boxes-stacked"></i> ${stockLevels.label}</h4>
+        <span class="meta-chip">Facility stock vs reorder point</span>
+      </div>
+      <div class="data-table-wrap need-table">
+        <table class="data-table">
+          <thead><tr><th>Facility</th><th>SKU / Item</th><th>On hand</th><th>Reorder point</th><th>Cover (days)</th><th>Status</th></tr></thead>
+          <tbody>
+            ${stockLevels.rows.map(r => `<tr>
+              <td><strong>${r.facility}</strong></td><td>${r.sku}</td>
+              <td>${r.onHand.toLocaleString('en-IN')}</td><td>${r.reorder.toLocaleString('en-IN')}</td>
+              <td>${r.coverDays}</td>
+              <td><span class="badge badge-${needStatusBadge(r.status)}">${r.status}</span></td>
+            </tr>`).join('')}
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <div class="need-section" id="need-sec-patient">
+      <div class="need-section-head">
+        <h4><i class="fa-solid fa-user-injured"></i> ${patientLoad.label}</h4>
+        <span class="meta-chip">OPD / IPD load by facility</span>
+      </div>
+      <div class="data-table-wrap need-table">
+        <table class="data-table">
+          <thead><tr><th>Facility</th><th>Type</th><th>OPD (month)</th><th>IPD bed occ.</th><th>Trend</th></tr></thead>
+          <tbody>
+            ${patientLoad.rows.map(r => `<tr>
+              <td><strong>${r.facility}</strong></td><td>${r.category}</td>
+              <td>${r.opd.toLocaleString('en-IN')}</td><td>${r.ipdBedOcc}</td><td>${r.trend}</td>
+            </tr>`).join('')}
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <div class="need-section" id="need-sec-disease">
+      <div class="need-section-head">
+        <h4><i class="fa-solid fa-virus"></i> ${diseaseBurden.label}</h4>
+        <span class="meta-chip">Programme-driven demand signals</span>
+      </div>
+      <div class="data-table-wrap need-table">
+        <table class="data-table">
+          <thead><tr><th>Condition / Programme</th><th>Cases</th><th>Trend</th><th>SKU focus</th><th>Priority</th></tr></thead>
+          <tbody>
+            ${diseaseBurden.rows.map(r => `<tr>
+              <td><strong>${r.condition}</strong></td><td>${r.cases}</td><td>${r.trend}</td>
+              <td>${r.skuFocus}</td>
+              <td><span class="badge badge-${needStatusBadge(r.priority)}">${r.priority}</span></td>
+            </tr>`).join('')}
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <div class="need-section" id="need-sec-gap">
+      <div class="need-section-head">
+        <h4><i class="fa-solid fa-chart-gantt"></i> ${gapAnalysis.label}</h4>
+        <span class="meta-chip">Net requirement after stock &amp; open PO · Est. savings ${gapAnalysis.estimatedSavings}</span>
+      </div>
+      <div class="data-table-wrap need-table">
+        <table class="data-table">
+          <thead><tr><th>Item</th><th>Required</th><th>Available</th><th>Open PO</th><th>Gap</th><th>Recommended action</th></tr></thead>
+          <tbody>
+            ${gapAnalysis.rows.map(r => `<tr>
+              <td><strong>${r.item}</strong></td><td>${r.required}</td><td>${r.available}</td>
+              <td>${r.openPo}</td><td><strong>${r.gap}</strong></td><td>${r.action}</td>
+            </tr>`).join('')}
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <div class="wf-actions mt-2">
+      <button class="btn btn-primary" onclick="saveWorkflowStage(1)"${disabled}>Confirm Need Assessment</button>
+      <button class="btn btn-outline" onclick="refreshNeedIdentificationApi()"${disabled}><i class="fa-solid fa-arrows-rotate"></i> Re-sync from API</button>
+      <button class="btn btn-outline" onclick="openLifecycleGuideModal(1)">Stage 1 Guide</button>
+      <button class="btn btn-outline" onclick="openAuditTrailModal()">Audit Trail</button>
+    </div>
+  </div>`;
+}
+
+function scrollToNeedSection(key) {
+  document.getElementById(`need-sec-${key}`)?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+}
+
+function refreshNeedIdentificationApi() {
+  const btn = document.querySelector('.need-api-banner-actions .btn');
+  if (btn) {
+    btn.disabled = true;
+    btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Syncing…';
+  }
+  // Prototype: simulate network latency then refresh panel with updated timestamp
+  setTimeout(() => {
+    if (typeof NEED_IDENTIFICATION_API !== 'undefined') {
+      const now = new Date();
+      const pad = n => String(n).padStart(2, '0');
+      NEED_IDENTIFICATION_API.meta.lastSynced =
+        `${pad(now.getDate())}-${pad(now.getMonth() + 1)}-${now.getFullYear()} ${pad(now.getHours())}:${pad(now.getMinutes())} IST`;
+      NEED_IDENTIFICATION_API.meta.status = 'Synced';
+    }
+    refreshWorkflowUI();
+    openModal('Need Identification API', `
+      <div class="kpi-detail">
+        <div class="tender-detail-stats tender-detail-stats--3">
+          <div class="tender-stat"><span>Source</span><strong>DHIS2 + e-Aushadhi</strong></div>
+          <div class="tender-stat"><span>Status</span><strong>200 OK</strong></div>
+          <div class="tender-stat"><span>Records</span><strong>4 domains</strong></div>
+        </div>
+        <p class="report-footnote"><i class="fa-solid fa-circle-check"></i> Stock levels, patient load, disease burden, and gap analysis refreshed successfully.</p>
+      </div>
+    `);
+  }, 650);
+}
+
 function renderWorkflowDetailPanel(step, progress, total) {
-  const canEdit = step.id <= progress;
+  const canEdit = currentRole === 'vendor'
+    ? vendorCanEditStage(step.id, progress)
+    : step.id <= progress;
   return `
     ${renderWorkflowViewBanner(step, progress)}
     <div class="wf-detail-header">
@@ -928,6 +1553,10 @@ function renderWorkflowDetail(step, canEdit = true) {
   const catNote = currentCategory !== 'All' ? ` — ${currentCategory} category` : '';
   const disabled = canEdit ? '' : ' disabled';
   const readonly = canEdit ? '' : ' readonly';
+
+  if (currentRole === 'gov' && step.id === 1) {
+    return renderNeedIdentificationStage(canEdit);
+  }
 
   if (currentRole === 'gov' && step.id === 4) {
     const regs = filterByCategory(VENDOR_REGISTRATIONS);
@@ -957,11 +1586,11 @@ function renderWorkflowDetail(step, canEdit = true) {
     const defaultCategory = regCategories.includes('Drugs') ? 'Drugs' : regCategories[0];
     const fieldLock = canEdit ? '' : ' readonly';
     return `<div class="form-grid wf-form-grid">
-      <div class="form-group"><label>Company Name</label><input type="text" placeholder="Enter registered company name" value="MediSupply India Pvt Ltd"${fieldLock}></div>
-      ${customSelectHTML('Category', 'regCategory', regCategories, defaultCategory)}
-      <div class="form-group"><label>GSTIN</label><input type="text" placeholder="e.g. 23AABCM1234A1Z5" value="23AABCM1234A1Z5"${fieldLock}></div>
-      <div class="form-group"><label>PAN</label><input type="text" placeholder="e.g. AABCM1234A" value="AABCM1234A"${fieldLock}></div>
-      <div class="form-group full"><label>Registered Address</label><input type="text" placeholder="Street, city, state, PIN code" value="Plot 12, Industrial Area, Bhopal, MP - 462001"${fieldLock}></div>
+      <div class="form-group"><label>${reqLabel('Company Name')}</label><input id="wf-reg-company" type="text" placeholder="Enter registered company name" value="MediSupply India Pvt Ltd"${fieldLock}></div>
+      ${customSelectHTML('Category', 'regCategory', regCategories, defaultCategory, true)}
+      <div class="form-group"><label>${reqLabel('GSTIN')}</label><input id="wf-reg-gstin" type="text" placeholder="e.g. 23AABCM1234A1Z5" value="23AABCM1234A1Z5"${fieldLock}></div>
+      <div class="form-group"><label>${reqLabel('PAN')}</label><input id="wf-reg-pan" type="text" placeholder="e.g. AABCM1234A" value="AABCM1234A"${fieldLock}></div>
+      <div class="form-group full"><label>${reqLabel('Registered Address')}</label><input id="wf-reg-address" type="text" placeholder="Street, city, state, PIN code" value="Plot 12, Industrial Area, Bhopal, MP - 462001"${fieldLock}></div>
     </div>
     <div class="wf-actions mt-2">
       <button class="btn btn-primary"${disabled} onclick="saveWorkflowStage(1)">Save Registration Details</button>
@@ -970,58 +1599,266 @@ function renderWorkflowDetail(step, canEdit = true) {
   }
 
   if (currentRole === 'vendor' && step.id === 2) {
-    return `<div class="form-grid">
-      <div class="form-group"><label>Bank Account</label><input type="text" value="HDFC Bank - ****4567 (Verified)"${readonly}></div>
-      <div class="form-group"><label>KYC Status</label><span class="badge badge-success">Verified</span></div>
-      <div class="form-group"><label>Drug License</label><input type="text" value="DL-MH-2024-0892"${readonly}></div>
-      <div class="form-group"><label>License Expiry</label><input type="text" value="2027-03-15"${readonly}></div>
-    </div>
-    <div class="wf-actions mt-2">
-      <button class="btn btn-primary"${disabled} onclick="saveWorkflowStage(2)">Update KYC Documents</button>
-      <button class="btn btn-outline" onclick="openWorkflowDocument('kyc-checklist')">KYC Checklist (PDF)</button>
-      <button class="btn btn-outline" onclick="openAuditTrailModal()">Audit Trail</button>
+    const kycDocs = vendorStageState.uploads.kyc;
+    const kycDone = kycDocs.length >= 3;
+    return `<div class="kyc-form">
+      <div class="form-grid wf-form-grid">
+        <div class="form-group"><label>${reqLabel('Account Holder Name')}</label><input id="wf-kyc-holder" type="text" value="MediSupply India Pvt Ltd"${readonly}></div>
+        <div class="form-group"><label>${reqLabel('Bank Name')}</label><input id="wf-kyc-bank" type="text" value="HDFC Bank"${readonly}></div>
+        <div class="form-group"><label>${reqLabel('Account Number')}</label><input id="wf-kyc-acct" type="text" value="****4567"${readonly}></div>
+        <div class="form-group"><label>${reqLabel('IFSC Code')}</label><input id="wf-kyc-ifsc" type="text" value="HDFC0001234"${readonly}></div>
+        <div class="form-group"><label>${reqLabel('Drug / Trade License No.')}</label><input id="wf-kyc-license" type="text" value="DL-MH-2024-0892"${readonly}></div>
+        <div class="form-group"><label>${reqLabel('License Expiry')}</label><input id="wf-kyc-expiry" type="text" value="15-03-2027" placeholder="DD-MM-YYYY"${readonly}></div>
+        <div class="form-group"><label>KYC Status</label><span class="badge ${kycDone ? 'badge-success' : 'badge-warning'}">${kycDone ? 'Documents Uploaded' : 'Pending Documents'}</span></div>
+        <div class="form-group"><label>Uploaded Documents</label><span class="wf-upload-count">${kycDocs.length ? kycDocs.map(d => d.name).join(', ') : 'None yet'}</span></div>
+      </div>
+      <div class="wf-doc-hint"><i class="fa-solid fa-circle-info"></i> Industry-standard KYC requires cancelled cheque / bank proof, PAN, address proof, and authorized signatory ID. Upload all mandatory documents below.</div>
+      <div class="wf-actions mt-2">
+        <button class="btn btn-primary"${disabled} onclick="openKycDocumentForm()">Update KYC Document Form</button>
+        <button class="btn btn-outline" onclick="openWorkflowDocument('kyc-checklist')">KYC Checklist (PDF)</button>
+      </div>
     </div>`;
   }
 
   if (currentRole === 'vendor' && step.id === 3) {
-    return `<div class="form-grid">
-      <div class="form-group"><label>Vendor Code</label><input type="text" value="VND-MP-000123" readonly></div>
-      <div class="form-group"><label>Code Status</label><span class="badge badge-success">Active</span></div>
-      <div class="form-group full"><label>Linked Categories</label><input type="text" value="Drugs, Consumables"${readonly}></div>
+    const letter = vendorStageState.uploads.approvalLetter;
+    return `<div class="form-grid wf-form-grid">
+      <div class="form-group"><label>${reqLabel('Vendor Code')}</label><input type="text" value="VND-MP-000123" readonly></div>
+      <div class="form-group"><label>Approval Status</label><span class="badge badge-success">Approved</span></div>
+      <div class="form-group"><label>${reqLabel('Approved On')}</label><input type="text" value="28-08-2026" readonly></div>
+      <div class="form-group"><label>${reqLabel('Approving Authority')}</label><input type="text" value="Vendor Registry, MP Health" readonly></div>
+      <div class="form-group full"><label>${reqLabel('Linked Categories')}</label><input type="text" value="Drugs, Consumables" readonly></div>
+      <div class="form-group full"><label>${reqLabel('Approval Letter')}</label>
+        <div class="wf-file-status">${letter ? `<i class="fa-solid fa-file-pdf"></i> ${letter.name} <span class="badge badge-success">Uploaded</span>` : '<span class="text-muted">No approval letter uploaded yet</span>'}</div>
+      </div>
     </div>
     <div class="wf-actions mt-2">
       <button class="btn btn-outline" onclick="navigateTo('registration')">Open Full Profile</button>
-      <button class="btn btn-outline" onclick="openWorkflowDocument('vendor-code-letter')">Download Code Letter</button>
+      <button class="btn btn-primary"${disabled} onclick="openApprovalLetterUpload()">Upload Approval Letter</button>
     </div>`;
   }
 
   if (currentRole === 'vendor' && step.id === 4) {
-    return `<div class="form-grid">
-      <div class="form-group"><label>Annual Turnover</label><input type="text" value="₹ 12.5 Cr (FY 2025-26)"${readonly}></div>
-      <div class="form-group"><label>Experience</label><input type="text" value="8 years — Govt. hospital supply"${readonly}></div>
-      <div class="form-group"><label>ISO 13485</label><span class="badge badge-success">Certified</span></div>
-      <div class="form-group"><label>Blacklist Status</label><span class="badge badge-success">Clear</span></div>
+    const s = vendorStageState;
+    const tech = s.uploads.technicalDocs;
+    const fin = s.uploads.financialDocs;
+    const locked = s.bid.submitted;
+    const btnDis = (!canEdit || locked) ? ' disabled' : '';
+    const ocr = s.bid.ocrReady;
+    return `<div class="wf-stage-note"><i class="fa-solid fa-circle-info"></i>
+      <div>Upload technical and financial bid documents. Tender reference and related bid details are extracted via OCR after upload — no manual tender reference entry.</div>
     </div>
-    <div class="wf-actions mt-2">
-      <button class="btn btn-primary"${disabled} onclick="saveWorkflowStage(4)">Update Eligibility Proofs</button>
-      <button class="btn btn-outline" onclick="openWorkflowDocument('compliance-matrix')">Compliance Matrix Template</button>
+    <div class="label-grid">
+      <div class="label-item"><span class="label-key">Tender Reference</span><span class="label-val">${ocr && s.bid.tenderId ? s.bid.tenderId : '— Pending OCR'}</span></div>
+      <div class="label-item"><span class="label-key">EMD Status</span><span class="label-val">${ocr && s.bid.emdStatus ? `<span class="badge badge-warning">${s.bid.emdStatus}</span>` : '— Pending OCR'}</span></div>
+      <div class="label-item"><span class="label-key">Bid Deadline</span><span class="label-val${ocr ? ' text-danger' : ''}">${ocr && s.bid.deadline ? s.bid.deadline : '— Pending OCR'}</span></div>
+      <div class="label-item"><span class="label-key">Bid Submission Status</span><span class="label-val"><span class="badge ${locked ? 'badge-success' : 'badge-warning'}">${locked ? 'Submitted — Locked' : 'Draft — Not Submitted'}</span></span></div>
+      <div class="label-item"><span class="label-key">${reqLabel('Technical Documents')}</span><span class="label-val">${tech.length ? tech.map(d => d.name).join(', ') : '<span class="text-muted">Not uploaded</span>'}</span></div>
+      <div class="label-item"><span class="label-key">${reqLabel('Financial Documents')}</span><span class="label-val">${fin.length ? fin.map(d => d.name).join(', ') : '<span class="text-muted">Not uploaded</span>'}</span></div>
+    </div>
+    ${locked ? '<div class="wf-lock-banner"><i class="fa-solid fa-lock"></i> Bid submitted successfully. Details are locked and cannot be changed.</div>' : ''}
+    <div class="wf-actions mt-2 wf-actions--stacked">
+      <div class="wf-actions-row">
+        <button class="btn btn-outline"${btnDis} onclick="openTechDocUpload()">Upload Technical Documents</button>
+        <button class="btn btn-outline"${btnDis} onclick="openFinDocUpload()">Upload Financial Documents</button>
+        <button class="btn btn-outline" onclick="openBidSubmissionGuide()">Bid Submission Guide</button>
+      </div>
+      <div class="wf-actions-row">
+        <button class="btn btn-primary"${btnDis} onclick="submitVendorBid()">Submit Bid</button>
+      </div>
     </div>`;
   }
 
   if (currentRole === 'vendor' && step.id === 5) {
-    return `<div class="form-grid">
-      <div class="form-group"><label>Tender Reference</label><input type="text" value="TND-2026-MP-0055" readonly></div>
-      ${customSelectHTML('Bid Status', 'bidStatus', ['Draft', 'Submitted'], 'Draft')}
-      ${customSelectHTML('Technical Bid', 'techBid', ['Complete', 'In Progress'], 'Complete')}
-      ${customSelectHTML('Financial Bid', 'finBid', ['Sealed - Not Submitted', 'Sealed - Submitted'], 'Sealed - Not Submitted')}
-      <div class="form-group"><label>EMD Status</label><span class="badge badge-warning">Pending - ₹3,20,000</span></div>
-      <div class="form-group"><label>Deadline</label><input type="text" value="2026-09-05 17:00 IST" readonly style="color:var(--danger);font-weight:600"></div>
+    const a = vendorStageState.award;
+    return `<div class="award-table-wrap">
+      <table class="data-table award-table">
+        <thead>
+          <tr><th>Field</th><th>Details</th></tr>
+        </thead>
+        <tbody>
+          <tr><td>Tender Reference</td><td><strong>${a.tenderId}</strong></td></tr>
+          <tr><td>Award Title</td><td>${a.title}</td></tr>
+          <tr><td>LOA Status</td><td><span class="badge badge-info">${a.loaStatus}</span></td></tr>
+          <tr><td>LOA Date</td><td>${a.loaDate}</td></tr>
+          <tr><td>PBG Due By</td><td><strong>${a.pbgDue}</strong></td></tr>
+          <tr><td>Award Value</td><td><span class="masked-value" title="Sensitive — masked">${maskSensitiveValue(a.value)}</span></td></tr>
+          <tr><td>Summary</td><td>Hospital Linen Supply — LOA issued; acknowledge within stipulated period</td></tr>
+          <tr><td>Acknowledgement</td><td><span class="badge ${a.acknowledged ? 'badge-success' : 'badge-warning'}">${a.acknowledged ? 'Acknowledged' : 'Pending Acknowledgement'}</span></td></tr>
+        </tbody>
+      </table>
     </div>
     <div class="wf-actions mt-2">
-      <button class="btn btn-primary"${disabled}>Submit Bid</button>
-      <button class="btn btn-outline"${disabled}>Upload Technical Documents</button>
-      <button class="btn btn-outline"${disabled}>Seal Financial Bid</button>
-      <button class="btn btn-outline" onclick="openWorkflowDocument('bid-submission-guide')">Bid Submission Guide</button>
+      <button class="btn btn-primary"${disabled || a.acknowledged ? ' disabled' : ''} onclick="acknowledgeLoa()">${a.acknowledged ? 'LOA Acknowledged' : 'Acknowledge LOA'}</button>
+      <button class="btn btn-outline" onclick="navigateTo('contracts')">View Award Details</button>
+    </div>`;
+  }
+
+  if (currentRole === 'vendor' && step.id === 6) {
+    const c = vendorStageState.contract;
+    const uploadDis = !canEdit;
+    const pbgReady = !!c.pbgSubmitted;
+    const signedReady = !!c.signed;
+    return `<div class="wf-stage-note"><i class="fa-solid fa-circle-info"></i>
+      <div>Upload PBG and signed contract documents. All fields below are read-only labels — values appear automatically after OCR extracts them from your uploads.</div>
+    </div>
+    <div class="ocr-panel">
+      <div class="ocr-panel-head">
+        <h4><i class="fa-solid fa-file-contract"></i> Contract &amp; PBG Details</h4>
+        <span class="badge ${signedReady ? 'badge-success' : pbgReady ? 'badge-info' : 'badge-muted'}">${signedReady ? 'OCR Complete' : pbgReady ? 'PBG Extracted' : 'Awaiting Upload'}</span>
+      </div>
+      <div class="label-grid">
+        ${ocrLabel('Contract ID', c.id)}
+        ${ocrLabel('PBG Status', c.pbgStatus ? `<span class="badge ${pbgReady ? 'badge-success' : 'badge-warning'}">${c.pbgStatus}</span>` : '', { html: true })}
+        ${ocrLabel('PBG Amount', c.pbgAmount)}
+        ${ocrLabel('Issuing Bank', c.bank)}
+        ${ocrLabel('BG / SFMS Reference', c.bgRef)}
+        ${ocrLabel('Valid Until', c.validUntil)}
+        ${ocrLabel('Contract Status', c.contractStatus ? `<span class="badge ${signedReady ? 'badge-success' : 'badge-info'}">${c.contractStatus}</span>` : '', { html: true })}
+        ${ocrLabel('PBG Document', vendorStageState.uploads.pbg?.name || '')}
+        ${ocrLabel('Signed Contract Document', c.contractOcr?.fileName || '')}
+      </div>
+    </div>
+    <div class="inline-upload-grid mt-2">
+      ${renderInlineUpload({
+        id: 'wfInlinePbg',
+        title: '1. Submit PBG Document',
+        hint: 'PDF / JPG · Max 10 MB — fills Contract ID, PBG Amount, Bank, BG Ref, Valid Until',
+        disabled: uploadDis || c.pbgSubmitted,
+        fileName: vendorStageState.uploads.pbg?.name,
+        onChange: 'handlePbgInlineUpload'
+      })}
+      ${renderInlineUpload({
+        id: 'wfInlineContract',
+        title: '2. Sign Contract (upload signed copy)',
+        hint: 'PDF / JPG · Max 10 MB — updates Contract Status after PBG OCR',
+        disabled: uploadDis || !c.pbgSubmitted || c.signed,
+        fileName: c.contractOcr?.fileName,
+        onChange: 'handleContractInlineUpload'
+      })}
+    </div>
+    ${!canEdit ? '<div class="wf-inline-alert wf-inline-alert--info mt-2"><i class="fa-solid fa-lock"></i><div><p>Complete Award Notification (Stage 5) to unlock contract uploads.</p></div></div>' : ''}`;
+  }
+
+  if (currentRole === 'vendor' && step.id === 7) {
+    const d = vendorStageState.delivery;
+    const uploadDis = !canEdit || d.updated;
+    return `<div class="wf-stage-note"><i class="fa-solid fa-circle-info"></i>
+      <div>Upload the delivery status document. Labels below stay visible at all times; OCR fills the values. Cold Chain Required remains selectable before and after upload.</div>
+    </div>
+    <div class="ocr-panel">
+      <div class="ocr-panel-head">
+        <h4><i class="fa-solid fa-truck"></i> Delivery Details</h4>
+        <span class="badge ${d.updated ? 'badge-success' : d.ocrReady ? 'badge-info' : 'badge-muted'}">${d.updated ? 'Saved' : d.ocrReady ? 'OCR Ready — Review &amp; Save' : 'Awaiting Upload'}</span>
+      </div>
+      <div class="label-grid">
+        ${ocrLabel('Delivery Challan No.', d.challan)}
+        ${ocrLabel('Dispatch Status', d.status ? `<span class="badge badge-info">${d.status}</span>` : '', { html: true })}
+        ${ocrLabel('Vehicle / LR No.', d.vehicle)}
+        ${ocrLabel('Dispatch Date', d.dispatchDate)}
+        ${ocrLabel('Expected Delivery Date', d.expectedDate)}
+        ${ocrLabel('Remarks', d.remarks)}
+        ${ocrLabel('Uploaded Document', d.fileName || '')}
+      </div>
+      <div class="ocr-panel-control">
+        ${customSelectHTML('Cold Chain Required', 'delColdChain', ['No', 'Yes'], d.coldChain || 'No', true)}
+      </div>
+    </div>
+    <div class="mt-2">
+      ${renderInlineUpload({
+        id: 'wfInlineDelivery',
+        title: 'Upload Delivery Status Document',
+        hint: 'Delivery challan / dispatch note · PDF / JPG — fills all delivery labels above via OCR',
+        disabled: uploadDis,
+        fileName: d.fileName,
+        onChange: 'handleDeliveryInlineUpload'
+      })}
+    </div>
+    ${!canEdit ? '<div class="wf-inline-alert wf-inline-alert--info mt-2"><i class="fa-solid fa-lock"></i><div><p>Complete Bid Submission through Contract Execution (Stages 4–6) to unlock delivery updates.</p></div></div>' : ''}
+    <div class="wf-actions mt-2">
+      <button class="btn btn-primary"${!canEdit || !d.ocrReady || d.updated ? ' disabled' : ''} onclick="saveDeliveryOcr()">Save Delivery Details</button>
+      <button class="btn btn-outline" onclick="navigateTo('delivery')">Open Delivery &amp; Invoices</button>
+    </div>`;
+  }
+
+  if (currentRole === 'vendor' && step.id === 8) {
+    const inv = vendorStageState.invoice;
+    const uploadDis = !canEdit || inv.submitted;
+    return `<div class="wf-stage-note"><i class="fa-solid fa-circle-info"></i>
+      <div>Attach delivery proof. Invoice labels below are always shown; OCR fills Invoice Number, GRN, Amount, and Status from the uploaded document.</div>
+    </div>
+    <div class="ocr-panel">
+      <div class="ocr-panel-head">
+        <h4><i class="fa-solid fa-file-invoice"></i> Invoice Details</h4>
+        <span class="badge ${inv.submitted ? 'badge-success' : inv.ocrReady ? 'badge-info' : 'badge-muted'}">${inv.submitted ? 'Submitted' : inv.ocrReady ? 'OCR Ready — Review &amp; Save' : 'Awaiting Upload'}</span>
+      </div>
+      <div class="label-grid">
+        ${ocrLabel('Invoice Number', inv.number)}
+        ${ocrLabel('GRN Reference', inv.grn)}
+        ${ocrLabel('Invoice Amount (₹)', inv.amount)}
+        ${ocrLabel('Invoice Status', inv.status ? `<span class="badge ${inv.submitted ? 'badge-success' : 'badge-info'}">${inv.status}</span>` : '', { html: true })}
+        ${ocrLabel('Delivery Proof Document', inv.fileName || vendorStageState.uploads.deliveryProof?.name || '')}
+      </div>
+    </div>
+    <div class="mt-2">
+      ${renderInlineUpload({
+        id: 'wfInlineInvoiceProof',
+        title: 'Attach Delivery Proof',
+        hint: 'Signed challan / GRN / acceptance proof · PDF / JPG — fills all invoice labels above via OCR',
+        disabled: uploadDis,
+        fileName: inv.fileName || vendorStageState.uploads.deliveryProof?.name,
+        onChange: 'handleInvoiceProofInlineUpload'
+      })}
+    </div>
+    ${!canEdit ? '<div class="wf-inline-alert wf-inline-alert--info mt-2"><i class="fa-solid fa-lock"></i><div><p>Complete earlier stages (especially Delivery) before submitting an invoice.</p></div></div>' : ''}
+    <div class="wf-actions mt-2">
+      <button class="btn btn-primary"${!canEdit || !inv.ocrReady || inv.submitted ? ' disabled' : ''} onclick="saveInvoiceOcr()">Save Invoice Details</button>
+    </div>`;
+  }
+
+  if (currentRole === 'vendor' && step.id === 9) {
+    const p = vendorStageState.payment;
+    const invDone = vendorStageState.invoice.submitted;
+    if (invDone) {
+      p.milestones[0].done = true;
+      p.status = p.status === 'Awaiting Processing' ? 'Under Verification' : p.status;
+      p.lastUpdate = p.lastUpdate === '—' ? formatDateDMY(APP_TODAY) : p.lastUpdate;
+    }
+    return `<div class="payment-track">
+      <div class="payment-track-header">
+        <div>
+          <h4>Payment Progress</h4>
+          <p>Monitor invoice-to-payment status for your awarded supplies</p>
+        </div>
+        <span class="badge badge-info">${p.status}</span>
+      </div>
+      <div class="payment-summary-grid">
+        <div class="payment-summary-card">
+          <span class="payment-summary-label">Bank Account</span>
+          <strong>${p.bank}</strong>
+        </div>
+        <div class="payment-summary-card">
+          <span class="payment-summary-label">Expected Timeline</span>
+          <strong>${p.timeline}</strong>
+        </div>
+        <div class="payment-summary-card">
+          <span class="payment-summary-label">Invoice</span>
+          <strong>${vendorStageState.invoice.number || '—'}</strong>
+        </div>
+        <div class="payment-summary-card">
+          <span class="payment-summary-label">Last Update</span>
+          <strong>${p.lastUpdate}</strong>
+        </div>
+      </div>
+      <ol class="payment-timeline">
+        ${p.milestones.map((m, i) => `<li class="${m.done ? 'done' : i === p.milestones.findIndex(x => !x.done) ? 'current' : ''}">
+          <span class="payment-tl-dot">${m.done ? '<i class="fa-solid fa-check"></i>' : (i + 1)}</span>
+          <span class="payment-tl-label">${m.label}</span>
+        </li>`).join('')}
+      </ol>
+      <div class="wf-actions mt-2">
+        <button class="btn btn-outline" onclick="refreshPaymentStatus()">Refresh Payment Status</button>
+      </div>
     </div>`;
   }
 
@@ -1036,8 +1873,429 @@ function renderWorkflowDetail(step, canEdit = true) {
   </div>`;
 }
 
+function completeVendorStage(id) {
+  vendorStageState.completed[id] = true;
+  syncVendorWorkflowStatuses();
+}
+
+function validateVendorStageFields(stageId) {
+  if (stageId === 1) {
+    const company = document.getElementById('wf-reg-company')?.value?.trim();
+    const gstin = document.getElementById('wf-reg-gstin')?.value?.trim();
+    const pan = document.getElementById('wf-reg-pan')?.value?.trim();
+    const address = document.getElementById('wf-reg-address')?.value?.trim();
+    const category = typeof getCustomSelectValue === 'function' ? getCustomSelectValue('regCategory') : 'Drugs';
+    if (!company || !gstin || !pan || !address || !category) {
+      return 'Please fill all mandatory fields marked with * (Company Name, Category, GSTIN, PAN, and Registered Address) before proceeding.';
+    }
+  }
+  if (stageId === 2) {
+    if (vendorStageState.uploads.kyc.length < 3) {
+      return 'Please complete the KYC Document Form and upload all mandatory documents (bank proof, ID proof, and license) before proceeding to the next stage.';
+    }
+  }
+  if (stageId === 3) {
+    if (!vendorStageState.uploads.approvalLetter) {
+      return 'Please upload the Approval Letter using “Upload Approval Letter” before moving to Bid Submission.';
+    }
+  }
+  if (stageId === 4) {
+    if (!vendorStageState.bid.submitted) {
+      return 'Submit your bid first. Upload Technical and Financial documents, then click Submit Bid. Next Stage unlocks only after a successful bid submission.';
+    }
+  }
+  if (stageId === 5) {
+    if (!vendorStageState.award.acknowledged) {
+      return 'Acknowledge the Letter of Award (LOA) before proceeding to Contract Execution.';
+    }
+  }
+  if (stageId === 6) {
+    if (!vendorStageState.contract.pbgSubmitted) {
+      return 'Upload the PBG document in the inline upload section. OCR must extract PBG details before you can continue.';
+    }
+    if (!vendorStageState.contract.signed) {
+      return 'Upload the signed contract document. Both PBG and signed contract must be processed via OCR before Delivery.';
+    }
+  }
+  if (stageId === 7) {
+    if (!vendorStageState.delivery.updated) {
+      return 'Upload the Delivery Status document, review OCR details, set Cold Chain Required, then click Save Delivery Details to unlock the next stage.';
+    }
+  }
+  if (stageId === 8) {
+    if (!vendorStageState.invoice.submitted) {
+      return 'Attach Delivery Proof, review OCR invoice details, then click Save Invoice Details to open Payment Tracking.';
+    }
+  }
+  return null;
+}
+
 function saveWorkflowStage(id) {
+  if (currentRole === 'vendor') {
+    if (id === 1) {
+      const msg = validateVendorStageFields(1);
+      if (msg) { showWfAlert(msg); return; }
+      completeVendorStage(1);
+    }
+    if (id === 2 && vendorStageState.uploads.kyc.length >= 3) completeVendorStage(2);
+    openDrillDown('workflow', `Stage ${id} Saved`, `Your changes for Stage ${id}: ${getWorkflowSteps().find(s => s.id === id)?.name || ''} have been saved.`);
+    refreshWorkflowUI();
+    return;
+  }
   openDrillDown('workflow', `Stage ${id} Saved`, `Your changes for Stage ${id}: ${getWorkflowSteps().find(s => s.id === id)?.name || ''} have been saved. You can return to any previous stage at any time to update details before final submission.`);
+}
+
+function renderUploadModalBody({ lead, acceptNote, inputId, requiredDocs }) {
+  const docs = requiredDocs?.length
+    ? `<ul class="upload-req-list">${requiredDocs.map(d => `<li><i class="fa-solid fa-file-circle-check"></i> ${d}</li>`).join('')}</ul>`
+    : '';
+  return `<div class="upload-modal">
+    <p class="upload-modal-lead">${lead}</p>
+    ${docs}
+    <div class="upload-dropzone" onclick="document.getElementById('${inputId}').click()">
+      <i class="fa-solid fa-cloud-arrow-up"></i>
+      <strong>Click to select file(s)</strong>
+      <span>${acceptNote || 'PDF, JPG, PNG · Max 10 MB each'}</span>
+      <input type="file" id="${inputId}" class="upload-file-input" accept=".pdf,.jpg,.jpeg,.png,.doc,.docx" multiple />
+    </div>
+    <div id="${inputId}-list" class="upload-file-list"></div>
+    <div class="upload-modal-actions">
+      <button type="button" class="btn btn-outline" onclick="closeModal()">Cancel</button>
+      <button type="button" class="btn btn-primary" id="${inputId}-confirm">Confirm Upload</button>
+    </div>
+  </div>`;
+}
+
+function renderInlineUpload({ id, title, hint, disabled, fileName, onChange }) {
+  return `<div class="inline-upload${disabled ? ' is-disabled' : ''}">
+    <div class="inline-upload-head">
+      <strong>${title}</strong>
+      ${fileName ? `<span class="badge badge-success"><i class="fa-solid fa-check"></i> ${fileName}</span>` : '<span class="badge badge-muted">No file</span>'}
+    </div>
+    <label class="inline-upload-zone" for="${id}">
+      <i class="fa-solid fa-cloud-arrow-up"></i>
+      <span class="inline-upload-title">${fileName ? 'Replace file' : 'Click to upload'}</span>
+      <span class="inline-upload-hint">${hint}</span>
+      <input type="file" id="${id}" accept=".pdf,.jpg,.jpeg,.png,.doc,.docx" ${disabled ? 'disabled' : ''} onchange="${onChange}(this)" />
+    </label>
+  </div>`;
+}
+
+/** Always-visible OCR field label (empty until document upload fills value) */
+function ocrLabel(label, value, opts = {}) {
+  const hasValue = value !== null && value !== undefined && String(value).trim() !== '';
+  const display = hasValue
+    ? (opts.html ? value : value)
+    : '<span class="ocr-pending">Awaiting OCR</span>';
+  return `<div class="label-item${hasValue ? ' is-filled' : ' is-pending'}">
+    <span class="label-key">${label}</span>
+    <span class="label-val">${display}</span>
+  </div>`;
+}
+
+function simulateOcrDelay(cb) {
+  setTimeout(() => {
+    cb();
+    refreshWorkflowUI();
+  }, 350);
+}
+
+function bindUploadModal(inputId, onConfirm) {
+  const input = document.getElementById(inputId);
+  const list = document.getElementById(`${inputId}-list`);
+  const confirmBtn = document.getElementById(`${inputId}-confirm`);
+  if (!input || !confirmBtn) return;
+
+  const refreshList = () => {
+    const files = Array.from(input.files || []);
+    list.innerHTML = files.length
+      ? files.map(f => `<div class="upload-file-item"><i class="fa-solid fa-file"></i> ${f.name} <span>(${Math.max(1, Math.round(f.size / 1024))} KB)</span></div>`).join('')
+      : '<p class="text-muted">No files selected yet.</p>';
+  };
+
+  input.addEventListener('change', refreshList);
+  refreshList();
+
+  confirmBtn.onclick = () => {
+    const files = Array.from(input.files || []);
+    if (!files.length) {
+      showWfAlert('Please select at least one file to upload.');
+      return;
+    }
+    const mapped = files.map(f => ({ name: f.name, size: f.size }));
+    closeModal();
+    onConfirm(mapped);
+    refreshWorkflowUI();
+  };
+}
+
+function openKycDocumentForm() {
+  openModal('KYC Document Form', renderUploadModalBody({
+    lead: 'Upload mandatory KYC documents as per vendor onboarding standards. All three categories below are required.',
+    acceptNote: 'PDF preferred · Max 10 MB per file',
+    inputId: 'wfUploadKyc',
+    requiredDocs: [
+      'Cancelled cheque / bank account proof',
+      'PAN card of entity / authorized signatory',
+      'Address proof & authorized signatory photo ID',
+      'Drug / trade license (category-specific)'
+    ]
+  }), { wide: true });
+  bindUploadModal('wfUploadKyc', (files) => {
+    vendorStageState.uploads.kyc = files;
+    if (files.length >= 3) completeVendorStage(2);
+    showWfAlert(`${files.length} KYC document(s) uploaded successfully.`, 'success');
+  });
+}
+
+function openApprovalLetterUpload() {
+  openModal('Upload Approval Letter', renderUploadModalBody({
+    lead: 'Upload the vendor approval / code assignment letter issued by the department.',
+    acceptNote: 'PDF only preferred · Max 10 MB',
+    inputId: 'wfUploadApproval',
+    requiredDocs: ['Signed Vendor Approval / Code Assignment Letter']
+  }), { wide: true });
+  const input = document.getElementById('wfUploadApproval');
+  if (input) input.removeAttribute('multiple');
+  bindUploadModal('wfUploadApproval', (files) => {
+    vendorStageState.uploads.approvalLetter = files[0];
+    completeVendorStage(3);
+    showWfAlert('Approval letter uploaded successfully.', 'success');
+  });
+}
+
+function openTechDocUpload() {
+  if (vendorStageState.bid.submitted) {
+    showWfAlert('Bid is already submitted and locked. Technical documents cannot be changed.');
+    return;
+  }
+  openModal('Upload Technical Documents', renderUploadModalBody({
+    lead: `Upload technical bid documents for ${vendorStageState.bid.tenderId} as mandated in the RFP.`,
+    inputId: 'wfUploadTech',
+    requiredDocs: [
+      'Technical compliance sheet / bid form',
+      'Product specifications & catalogues',
+      'Quality certifications (ISO / CDSCO / BIS as applicable)',
+      'Past performance / experience certificates'
+    ]
+  }), { wide: true });
+  bindUploadModal('wfUploadTech', (files) => {
+    vendorStageState.uploads.technicalDocs = files;
+    applyBidOcrFromUploads();
+    showWfAlert('Technical documents uploaded. OCR fields update when both packs are present.', 'success');
+  });
+}
+
+function openFinDocUpload() {
+  if (vendorStageState.bid.submitted) {
+    showWfAlert('Bid is already submitted and locked. Financial documents cannot be changed.');
+    return;
+  }
+  openModal('Upload Financial Documents', renderUploadModalBody({
+    lead: `Upload financial / commercial bid documents. Tender reference and EMD details are extracted via OCR.`,
+    inputId: 'wfUploadFin',
+    requiredDocs: [
+      'Price bid / BoQ (as per RFP format)',
+      'EMD / Bid security instrument proof',
+      'Turnover / audited financial statements (if required)',
+      'GST / tax declarations'
+    ]
+  }), { wide: true });
+  bindUploadModal('wfUploadFin', (files) => {
+    vendorStageState.uploads.financialDocs = files;
+    applyBidOcrFromUploads();
+    showWfAlert('Financial documents uploaded. OCR fields update when both packs are present.', 'success');
+  });
+}
+
+function applyBidOcrFromUploads() {
+  const tech = vendorStageState.uploads.technicalDocs;
+  const fin = vendorStageState.uploads.financialDocs;
+  if (!tech.length && !fin.length) return;
+  vendorStageState.bid.ocrReady = true;
+  vendorStageState.bid.tenderId = 'TND-2026-MP-0055';
+  vendorStageState.bid.emdStatus = 'Pending - ₹3,20,000';
+  vendorStageState.bid.deadline = '05-09-2026 17:00 IST';
+}
+
+function openBidSubmissionGuide() {
+  openModal('Bid Submission Guide — RFP Mandatory Documents', `
+    <div class="doc-modal">
+      <p class="doc-modal-lead">Mandatory technical and financial documents for the active tender as circulated in the RFP by the procuring agency. Tender reference is filled via OCR after you upload documents.</p>
+      <h4 class="upload-section-title">Technical Bid (mandatory)</h4>
+      <ul class="doc-checklist">
+        <li><i class="fa-solid fa-check"></i> Signed technical bid form &amp; compliance matrix</li>
+        <li><i class="fa-solid fa-check"></i> Product specifications matching tender schedule</li>
+        <li><i class="fa-solid fa-check"></i> Valid manufacturing / import / drug license</li>
+        <li><i class="fa-solid fa-check"></i> Quality certificates &amp; test reports (as listed in RFP)</li>
+        <li><i class="fa-solid fa-check"></i> Experience / past supply certificates</li>
+      </ul>
+      <h4 class="upload-section-title">Financial Bid (mandatory)</h4>
+      <ul class="doc-checklist">
+        <li><i class="fa-solid fa-check"></i> Price schedule / BoQ in prescribed format</li>
+        <li><i class="fa-solid fa-check"></i> EMD / bid security (₹3,20,000 for this tender)</li>
+        <li><i class="fa-solid fa-check"></i> Commercial terms acceptance letter</li>
+        <li><i class="fa-solid fa-check"></i> GSTIN &amp; PAN declarations</li>
+      </ul>
+      <div class="resource-note mt-2"><i class="fa-solid fa-triangle-exclamation"></i> Incomplete technical or financial packs may lead to bid rejection. Upload both packs, then submit the bid before the deadline.</div>
+    </div>
+  `, { wide: true });
+}
+
+function submitVendorBid() {
+  if (vendorStageState.bid.submitted) {
+    showWfAlert('Bid is already submitted and locked.');
+    return;
+  }
+  if (!vendorStageState.uploads.technicalDocs.length) {
+    showWfAlert('Upload Technical Documents before submitting the bid. See Bid Submission Guide for the RFP checklist.');
+    return;
+  }
+  if (!vendorStageState.uploads.financialDocs.length) {
+    showWfAlert('Upload Financial Documents before submitting the bid. See Bid Submission Guide for the RFP checklist.');
+    return;
+  }
+  vendorStageState.bid.submitted = true;
+  vendorStageState.locked[4] = true;
+  applyBidOcrFromUploads();
+  completeVendorStage(4);
+  showWfAlert('Bid submitted successfully. Bid details are now locked. You may proceed to the next stage.', 'success');
+  refreshWorkflowUI();
+}
+
+function acknowledgeLoa() {
+  vendorStageState.award.acknowledged = true;
+  vendorStageState.contract.pbgStatus = '';
+  vendorStageState.contract.contractStatus = '';
+  completeVendorStage(5);
+  showWfAlert('LOA acknowledged. Proceed to Contract Execution and upload PBG + signed contract documents.', 'success');
+  refreshWorkflowUI();
+}
+
+function handlePbgInlineUpload(input) {
+  const file = input?.files?.[0];
+  if (!file) return;
+  simulateOcrDelay(() => {
+    vendorStageState.uploads.pbg = { name: file.name, size: file.size };
+    vendorStageState.contract.pbgSubmitted = true;
+    vendorStageState.contract.id = 'CNT-2026-0089';
+    vendorStageState.contract.pbgAmount = '₹4,25,000 (5%)';
+    vendorStageState.contract.bank = 'HDFC Bank';
+    vendorStageState.contract.bgRef = 'BG-HDFC-2026-8891';
+    vendorStageState.contract.validUntil = '28-08-2027';
+    vendorStageState.contract.pbgStatus = 'Submitted — Under Verification';
+    vendorStageState.contract.contractStatus = 'Ready for Signed Contract Upload';
+    vendorStageState.contract.pbgOcr = { fileName: file.name };
+    showWfAlert('PBG document processed via OCR. Review extracted details, then upload the signed contract.', 'success');
+  });
+}
+
+function handleContractInlineUpload(input) {
+  const file = input?.files?.[0];
+  if (!file) return;
+  if (!vendorStageState.contract.pbgSubmitted) {
+    showWfAlert('Upload and process the PBG document first.');
+    return;
+  }
+  simulateOcrDelay(() => {
+    vendorStageState.contract.signed = true;
+    vendorStageState.contract.contractStatus = 'Executed';
+    vendorStageState.contract.contractOcr = { fileName: file.name };
+    completeVendorStage(6);
+    showWfAlert('Signed contract processed via OCR. You may proceed to Delivery.', 'success');
+  });
+}
+
+function handleDeliveryInlineUpload(input) {
+  const file = input?.files?.[0];
+  if (!file) return;
+  const cold = typeof getCustomSelectValue === 'function' ? getCustomSelectValue('delColdChain') : vendorStageState.delivery.coldChain;
+  simulateOcrDelay(() => {
+    vendorStageState.delivery = {
+      ...vendorStageState.delivery,
+      challan: 'CHL-2026-0456',
+      vehicle: 'MP-04-AB-2190 / LR-88912',
+      dispatchDate: '03-09-2026',
+      expectedDate: '06-09-2026',
+      remarks: 'Hospital Linen — Batch 3',
+      status: 'Dispatched',
+      coldChain: cold || 'No',
+      ocrReady: true,
+      updated: false,
+      fileName: file.name
+    };
+    showWfAlert('Delivery status document processed via OCR. Review the details, set Cold Chain if needed, then Save.', 'success');
+  });
+}
+
+function saveDeliveryOcr() {
+  const d = vendorStageState.delivery;
+  if (!d.ocrReady) {
+    showWfAlert('Upload a Delivery Status document first so OCR can populate the details.');
+    return;
+  }
+  const cold = typeof getCustomSelectValue === 'function' ? getCustomSelectValue('delColdChain') : d.coldChain;
+  d.coldChain = cold || 'No';
+  d.updated = true;
+  completeVendorStage(7);
+  showWfAlert('Delivery details saved. You may proceed to Invoice Submission.', 'success');
+  refreshWorkflowUI();
+}
+
+function handleInvoiceProofInlineUpload(input) {
+  const file = input?.files?.[0];
+  if (!file) return;
+  simulateOcrDelay(() => {
+    vendorStageState.uploads.deliveryProof = { name: file.name, size: file.size };
+    vendorStageState.invoice = {
+      ...vendorStageState.invoice,
+      number: 'INV-0892',
+      grn: 'GRN-2026-0311',
+      amount: '4,25,000',
+      status: 'OCR Ready — Confirm to Save',
+      submitted: false,
+      ocrReady: true,
+      fileName: file.name
+    };
+    showWfAlert('Delivery proof processed via OCR. Review invoice details, then Save.', 'success');
+  });
+}
+
+function saveInvoiceOcr() {
+  const inv = vendorStageState.invoice;
+  if (!inv.ocrReady) {
+    showWfAlert('Attach Delivery Proof first so OCR can populate invoice details.');
+    return;
+  }
+  inv.submitted = true;
+  inv.status = 'Submitted';
+  vendorStageState.payment.milestones[0].done = true;
+  vendorStageState.payment.status = 'Under Verification';
+  vendorStageState.payment.lastUpdate = formatDateDMY(APP_TODAY);
+  completeVendorStage(8);
+  showWfAlert('Invoice details saved. Payment Tracking is now available.', 'success');
+  refreshWorkflowUI();
+}
+
+function refreshPaymentStatus() {
+  const p = vendorStageState.payment;
+  if (vendorStageState.invoice.submitted) {
+    p.milestones[0].done = true;
+    if (!p.milestones[1].done) {
+      p.milestones[1].done = true;
+      p.status = 'Finance Verification';
+    } else if (!p.milestones[2].done) {
+      p.milestones[2].done = true;
+      p.status = 'Approved for Payment';
+    } else {
+      p.milestones[3].done = true;
+      p.status = 'Paid';
+      completeVendorStage(9);
+    }
+    p.lastUpdate = formatDateDMY(APP_TODAY);
+  }
+  showWfAlert(`Payment status refreshed: ${p.status}`, 'success');
+  refreshWorkflowUI();
 }
 
 function openWorkflowDocument(docId) {
@@ -1050,7 +2308,7 @@ function openWorkflowDocument(docId) {
     return;
   }
   if (docId === 'bid-submission-guide') {
-    openLifecycleGuideModal(5);
+    openBidSubmissionGuide();
     return;
   }
   if (docId.startsWith('stage-') && docId.endsWith('-guide')) {
@@ -1109,7 +2367,7 @@ function renderLifecycleGuideContent(highlightStage) {
     <div class="guide-modal-intro">
       <div class="guide-modal-intro-icon"><i class="fa-solid fa-book-open"></i></div>
       <div>
-        <p class="guide-modal-lead">${isGov ? 'Government procurement lifecycle — 13 stages from need identification to payment.' : 'Vendor lifecycle — 12 stages from registration to renewal or closure.'}</p>
+        <p class="guide-modal-lead">${isGov ? 'Government procurement lifecycle — 13 stages from need identification to payment.' : 'Vendor / Bidder lifecycle — 9 stages from registration to payment tracking.'}</p>
         <p class="guide-modal-meta">GFR 2017 compliant · Click any stage below for checklist and guidance · Your current progress: <strong>Stage ${progress}</strong></p>
       </div>
     </div>
@@ -1308,7 +2566,21 @@ function selectWorkflowStep(id) {
 function goWorkflowStep(delta) {
   const next = currentWorkflowStep + delta;
   const total = getWorkflowSteps().length;
-  if (next >= 1 && next <= total) selectWorkflowStep(next);
+  if (next < 1 || next > total) return;
+
+  if (currentRole === 'vendor' && delta > 0) {
+    const err = validateVendorStageFields(currentWorkflowStep);
+    if (err && currentWorkflowStep >= getVendorActiveStageId()) {
+      showWfAlert(err);
+      return;
+    }
+    if (!vendorCanAdvanceFrom(currentWorkflowStep)) {
+      showWfAlert(err || 'Complete the required actions on this stage before moving to the next stage.');
+      return;
+    }
+  }
+
+  selectWorkflowStep(next);
 }
 
 function returnToCurrentWorkflowStep() {
@@ -1421,12 +2693,285 @@ function renderVendorMatrix() {
 }
 
 function renderReports() {
+  if (currentRole === 'vendor') return renderVendorReports();
   return `<div class="flex items-center gap-1 mb-2" style="justify-content:flex-end">${timeToggle()}</div>
     <div class="chart-grid">
       <div class="chart-card"><div class="chart-header"><h3>Spend Trends</h3></div><div class="chart-container"><canvas id="chartSpend"></canvas></div></div>
       <div class="chart-card"><div class="chart-header"><h3>Savings Realization</h3></div><div class="chart-container"><canvas id="chartSavings"></canvas></div></div>
     </div>
     <p class="section-subtitle">Historical data for previous 4 financial years. Toggle Year / Quarter / Month views.</p>`;
+}
+
+function getVendorReportDataset(category = currentCategory) {
+  const tenders = category === 'All' ? TENDERS : TENDERS.filter(t => t.category === category);
+  const bids = category === 'All' ? BIDS : BIDS.filter(b => b.category === category);
+  const clarifications = category === 'All' ? CLARIFICATIONS : CLARIFICATIONS.filter(c => c.category === category);
+  const contracts = category === 'All' ? CONTRACTS : CONTRACTS.filter(c => c.category === category);
+  const deliveries = category === 'All' ? DELIVERIES : DELIVERIES.filter(d => d.category === category);
+  const vendor = VENDORS[0];
+
+  const stageProgress = [
+    { stage: 1, name: 'Registration', status: vendorStageState.completed[1] ? 'Completed' : 'Pending' },
+    { stage: 2, name: 'KYC Verification', status: vendorStageState.completed[2] ? 'Completed' : 'Pending' },
+    { stage: 3, name: 'Vendor Approval', status: vendorStageState.completed[3] ? 'Completed' : 'Pending' },
+    { stage: 4, name: 'Bid Submission', status: vendorStageState.completed[4] ? 'Completed' : 'In Progress' },
+    { stage: 5, name: 'Award Notification', status: vendorStageState.completed[5] ? 'Completed' : 'Upcoming' },
+    { stage: 6, name: 'Contract Execution', status: vendorStageState.completed[6] ? 'Completed' : 'Upcoming' },
+    { stage: 7, name: 'Delivery', status: vendorStageState.completed[7] ? 'Completed' : 'Upcoming' },
+    { stage: 8, name: 'Invoice Submission', status: vendorStageState.completed[8] ? 'Completed' : 'Upcoming' },
+    { stage: 9, name: 'Payment Tracking', status: vendorStageState.completed[9] ? 'Completed' : 'Upcoming' }
+  ];
+
+  return { tenders, bids, clarifications, contracts, deliveries, vendor, stageProgress, category };
+}
+
+function renderVendorReports() {
+  const ds = getVendorReportDataset();
+  const openTenders = ds.tenders.filter(t => t.status === 'Open').length;
+  const submittedBids = ds.bids.filter(b => b.status !== 'Draft').length;
+  const draftBids = ds.bids.filter(b => b.status === 'Draft').length;
+  const activeContracts = ds.contracts.length;
+  const paidDeliveries = ds.deliveries.filter(d => d.payment === 'Paid').length;
+  const completedStages = ds.stageProgress.filter(s => s.status === 'Completed').length;
+
+  return `<div class="vendor-reports">
+    <div class="report-toolbar">
+      <div>
+        <p class="report-toolbar-lead">Vendor analytics for <strong>${ds.vendor?.name || 'MediSupply India Pvt Ltd'}</strong> · ${ds.category === 'All' ? 'All categories' : ds.category}</p>
+        <p class="report-toolbar-meta">Generated ${formatDateDMY(APP_TODAY)} · VND-MP-000123</p>
+      </div>
+      <div class="report-toolbar-actions">
+        <button type="button" class="btn btn-outline" onclick="downloadVendorReportPack('excel')"><i class="fa-solid fa-file-excel"></i> Excel Pack</button>
+        <button type="button" class="btn btn-primary" onclick="downloadVendorReportPack('pdf')"><i class="fa-solid fa-file-pdf"></i> PDF Pack</button>
+      </div>
+    </div>
+
+    <div class="kpi-grid kpi-grid--vendor mb-2">
+      <div class="kpi-card blue"><div class="kpi-label">Tenders Visible</div><div class="kpi-value">${ds.tenders.length}</div><div class="kpi-change">Open: ${openTenders}</div></div>
+      <div class="kpi-card teal"><div class="kpi-label">Bids Submitted</div><div class="kpi-value">${submittedBids}</div><div class="kpi-change">Draft: ${draftBids}</div></div>
+      <div class="kpi-card orange"><div class="kpi-label">Active Contracts</div><div class="kpi-value">${activeContracts}</div><div class="kpi-change">Deliveries: ${ds.deliveries.length}</div></div>
+      <div class="kpi-card green"><div class="kpi-label">Lifecycle Progress</div><div class="kpi-value">${completedStages}/9</div><div class="kpi-change up">Stages completed</div></div>
+    </div>
+
+    <!-- Report 1: Bid Participation -->
+    <section class="report-section" id="reportBidParticipation">
+      <div class="report-section-header">
+        <div>
+          <span class="report-eyebrow">Report 01</span>
+          <h3>Bid Participation &amp; Clarifications</h3>
+          <p>Combines Tender Discovery, Bid Submission, and Clarifications across your bidder lifecycle.</p>
+        </div>
+        <div class="report-section-actions">
+          <button type="button" class="btn btn-outline btn-sm" onclick="downloadVendorReport('bid','excel')"><i class="fa-solid fa-file-excel"></i> Excel</button>
+          <button type="button" class="btn btn-outline btn-sm" onclick="downloadVendorReport('bid','pdf')"><i class="fa-solid fa-file-pdf"></i> PDF</button>
+        </div>
+      </div>
+      <div class="chart-grid">
+        <div class="chart-card">
+          <div class="chart-header"><h3>Tender Pipeline by Status</h3></div>
+          <div class="chart-container"><canvas id="chartVendorTenderStatus"></canvas></div>
+        </div>
+        <div class="chart-card">
+          <div class="chart-header"><h3>Bid Status Mix</h3></div>
+          <div class="chart-container"><canvas id="chartVendorBidMix"></canvas></div>
+        </div>
+      </div>
+      <div class="data-table-wrap mt-2">
+        <table class="data-table" id="tblBidParticipation">
+          <thead>
+            <tr><th>Tender</th><th>Category</th><th>Technical</th><th>Financial</th><th>EMD</th><th>Deadline</th><th>Status</th></tr>
+          </thead>
+          <tbody>
+            ${ds.bids.length ? ds.bids.map(b => `<tr>
+              <td><strong>${b.tenderId}</strong></td>
+              <td>${b.category}</td>
+              <td>${b.technical}</td>
+              <td>${b.financial}</td>
+              <td>${b.emd}</td>
+              <td>${formatDateDMY(b.deadline)}</td>
+              <td><span class="badge badge-${b.status === 'Draft' ? 'warning' : 'info'}">${b.status}</span></td>
+            </tr>`).join('') : emptyTableRow(7)}
+          </tbody>
+        </table>
+      </div>
+      <div class="data-table-wrap mt-2">
+        <table class="data-table" id="tblClarifications">
+          <thead><tr><th>Query ID</th><th>Tender</th><th>Category</th><th>Subject</th><th>Status</th></tr></thead>
+          <tbody>
+            ${ds.clarifications.length ? ds.clarifications.map(c => `<tr>
+              <td>${c.id}</td><td>${c.tenderId}</td><td>${c.category}</td><td>${c.subject}</td>
+              <td><span class="badge badge-${c.status === 'Answered' ? 'success' : c.status === 'Pending' ? 'warning' : 'info'}">${c.status}</span></td>
+            </tr>`).join('') : emptyTableRow(5)}
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- Report 2: Execution -->
+    <section class="report-section" id="reportExecution">
+      <div class="report-section-header">
+        <div>
+          <span class="report-eyebrow">Report 02</span>
+          <h3>Contract Execution &amp; Delivery Performance</h3>
+          <p>Combines Contracts &amp; POs, Delivery &amp; Invoices, and payment outcomes.</p>
+        </div>
+        <div class="report-section-actions">
+          <button type="button" class="btn btn-outline btn-sm" onclick="downloadVendorReport('execution','excel')"><i class="fa-solid fa-file-excel"></i> Excel</button>
+          <button type="button" class="btn btn-outline btn-sm" onclick="downloadVendorReport('execution','pdf')"><i class="fa-solid fa-file-pdf"></i> PDF</button>
+        </div>
+      </div>
+      <div class="chart-grid">
+        <div class="chart-card full">
+          <div class="chart-header"><h3>Delivery &amp; Payment Outcomes</h3></div>
+          <div class="chart-container"><canvas id="chartVendorDeliveryPay"></canvas></div>
+        </div>
+      </div>
+      <div class="data-table-wrap mt-2">
+        <table class="data-table" id="tblContracts">
+          <thead><tr><th>Contract ID</th><th>Tender</th><th>Category</th><th>Value</th><th>PBG</th><th>Delivery</th><th>Status</th></tr></thead>
+          <tbody>
+            ${ds.contracts.length ? ds.contracts.map(c => `<tr>
+              <td><strong>${c.id}</strong></td><td>${c.tenderId}</td><td>${c.category}</td><td>${c.value}</td>
+              <td>${c.pbg}</td><td>${c.delivery}</td>
+              <td><span class="badge badge-${c.status === 'In Progress' ? 'warning' : 'success'}">${c.status}</span></td>
+            </tr>`).join('') : emptyTableRow(7)}
+          </tbody>
+        </table>
+      </div>
+      <div class="data-table-wrap mt-2">
+        <table class="data-table" id="tblDeliveries">
+          <thead><tr><th>Delivery Challan ID</th><th>PO</th><th>Category</th><th>Items</th><th>GRN</th><th>Invoice</th><th>Payment</th></tr></thead>
+          <tbody>
+            ${ds.deliveries.length ? ds.deliveries.map(d => `<tr>
+              <td><strong>${d.id}</strong></td><td>${d.po}</td><td>${d.category}</td><td>${d.items}</td>
+              <td>${d.grn}</td><td>${d.invoice}</td><td>${d.payment}</td>
+            </tr>`).join('') : emptyTableRow(7)}
+          </tbody>
+        </table>
+      </div>
+      <p class="report-footnote"><i class="fa-solid fa-circle-info"></i> Paid deliveries in filter: <strong>${paidDeliveries}</strong> · Overall vendor score: <strong>${ds.vendor?.overall || 90.1}</strong></p>
+    </section>
+  </div>`;
+}
+
+function csvEscape(value) {
+  const s = String(value ?? '');
+  if (/[",\n]/.test(s)) return `"${s.replace(/"/g, '""')}"`;
+  return s;
+}
+
+function downloadCsv(filename, headers, rows) {
+  const lines = [
+    headers.map(csvEscape).join(','),
+    ...rows.map(r => r.map(csvEscape).join(','))
+  ];
+  const blob = new Blob(['\ufeff' + lines.join('\n')], { type: 'text/csv;charset=utf-8;' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename.endsWith('.csv') ? filename : `${filename}.csv`;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
+}
+
+function buildVendorReportTables(kind) {
+  const ds = getVendorReportDataset();
+  if (kind === 'bid') {
+    return {
+      title: 'Bid Participation & Clarifications',
+      sheets: [
+        {
+          name: 'Bids',
+          headers: ['Tender', 'Category', 'Technical', 'Financial', 'EMD', 'Deadline', 'Status'],
+          rows: ds.bids.map(b => [b.tenderId, b.category, b.technical, b.financial, b.emd, formatDateDMY(b.deadline), b.status])
+        },
+        {
+          name: 'Clarifications',
+          headers: ['Query ID', 'Tender', 'Category', 'Subject', 'Status'],
+          rows: ds.clarifications.map(c => [c.id, c.tenderId, c.category, c.subject, c.status])
+        }
+      ]
+    };
+  }
+  if (kind === 'execution') {
+    return {
+      title: 'Contract Execution & Delivery Performance',
+      sheets: [
+        {
+          name: 'Contracts',
+          headers: ['Contract ID', 'Tender', 'Category', 'Value', 'PBG', 'Delivery', 'Status'],
+          rows: ds.contracts.map(c => [c.id, c.tenderId, c.category, c.value, c.pbg, c.delivery, c.status])
+        },
+        {
+          name: 'Deliveries',
+          headers: ['Delivery Challan ID', 'PO', 'Category', 'Items', 'GRN', 'Invoice', 'Payment'],
+          rows: ds.deliveries.map(d => [d.id, d.po, d.category, d.items, d.grn, d.invoice, d.payment])
+        }
+      ]
+    };
+  }
+  return buildVendorReportTables('bid');
+}
+
+function downloadVendorReport(kind, format) {
+  const pack = buildVendorReportTables(kind);
+  const stamp = APP_TODAY.replace(/-/g, '');
+  if (format === 'excel') {
+    pack.sheets.forEach((sheet, i) => {
+      setTimeout(() => {
+        downloadCsv(`MPHP_${kind}_${sheet.name}_${stamp}.csv`, sheet.headers, sheet.rows);
+      }, i * 200);
+    });
+    showWfAlert(`${pack.title} exported as Excel-compatible CSV (${pack.sheets.length} file${pack.sheets.length > 1 ? 's' : ''}).`, 'success');
+    return;
+  }
+  openVendorReportPdf(pack);
+}
+
+function downloadVendorReportPack(format) {
+  ['bid', 'execution'].forEach((kind, i) => {
+    setTimeout(() => downloadVendorReport(kind, format), i * (format === 'excel' ? 500 : 350));
+  });
+}
+
+function openVendorReportPdf(pack) {
+  const ds = getVendorReportDataset();
+  const tablesHtml = pack.sheets.map(sheet => `
+    <h3 style="margin:18px 0 8px;font-size:14px;color:#0d47a1">${sheet.name}</h3>
+    <table style="width:100%;border-collapse:collapse;font-size:11px">
+      <thead>
+        <tr>${sheet.headers.map(h => `<th style="border:1px solid #cbd5e1;background:#f1f5f9;padding:6px 8px;text-align:left">${h}</th>`).join('')}</tr>
+      </thead>
+      <tbody>
+        ${sheet.rows.map(r => `<tr>${r.map(c => `<td style="border:1px solid #e2e8f0;padding:6px 8px">${c}</td>`).join('')}</tr>`).join('') || `<tr><td colspan="${sheet.headers.length}" style="padding:8px;color:#64748b">No records</td></tr>`}
+      </tbody>
+    </table>
+  `).join('');
+
+  const win = window.open('', '_blank', 'noopener,noreferrer,width=960,height=720');
+  if (!win) {
+    showWfAlert('Please allow pop-ups to download the PDF report.');
+    return;
+  }
+  win.document.write(`<!DOCTYPE html><html><head><title>${pack.title}</title>
+    <style>
+      body{font-family:'Segoe UI',Arial,sans-serif;color:#0f172a;padding:24px;margin:0}
+      h1{font-size:20px;margin:0 0 4px}
+      .meta{color:#64748b;font-size:12px;margin-bottom:16px}
+      .actions{margin:16px 0 20px}
+      .actions button{padding:8px 14px;border-radius:8px;border:1px solid #cbd5e1;background:#0d47a1;color:#fff;cursor:pointer;font-weight:600}
+      @media print{.actions{display:none} body{padding:0}}
+    </style>
+  </head><body>
+    <h1>MP Health Procurement — ${pack.title}</h1>
+    <div class="meta">Vendor: ${ds.vendor?.name || 'MediSupply India Pvt Ltd'} · ID: VND-MP-000123 · Category: ${ds.category} · Generated: ${formatDateDMY(APP_TODAY)}</div>
+    <div class="actions"><button onclick="window.print()">Download / Print PDF</button></div>
+    ${tablesHtml}
+    <script>setTimeout(function(){ window.print(); }, 350);<\/script>
+  </body></html>`);
+  win.document.close();
 }
 
 function renderSettings() {
@@ -1443,18 +2988,169 @@ function renderSettings() {
 }
 
 function renderRegistration() {
-  return `<div class="wf-detail"><h3>Vendor Profile — VND-MP-000123</h3>
-    <div class="form-grid mt-2">
-      <div class="form-group"><label>Company Name</label><input value="MediSupply India Pvt Ltd"></div>
-      <div class="form-group"><label>Vendor ID</label><input value="VND-MP-000123" readonly></div>
-      <div class="form-group"><label>GSTIN</label><input value="23AABCM1234A1Z5"></div>
-      <div class="form-group"><label>PAN</label><input value="AABCM1234A"></div>
-      <div class="form-group"><label>Drug License</label><input value="DL-MH-2024-0892"><small style="color:var(--danger)">Expires: 2027-03-15</small></div>
-      <div class="form-group"><label>ISO 13485</label><input value="Certified"><small style="color:var(--warning)">Expires in 22 days</small></div>
-      <div class="form-group full"><label>Bank Account (Verified)</label><input value="HDFC Bank - ****4567" readonly></div>
+  const p = vendorProfileState;
+  const editing = p.editing;
+  return `<div class="profile-kyc">
+    <div class="profile-kyc-header">
+      <div>
+        <h3>Vendor Profile — ${p.vendorId}</h3>
+        <p>Core identity fields are locked. Edit only Drug License, ISO 13485, or Bank Account via document upload + OCR confirmation.</p>
+      </div>
+      <span class="badge badge-success">Verified Profile</span>
     </div>
-    <div class="wf-actions mt-2"><button class="btn btn-primary">Update Profile</button><button class="btn btn-outline">Upload Documents</button></div>
+    <div class="profile-readonly-grid">
+      <div class="profile-field is-locked">
+        <span class="profile-field-label">Company Name</span>
+        <strong>${p.company}</strong>
+      </div>
+      <div class="profile-field is-locked">
+        <span class="profile-field-label">Vendor ID</span>
+        <strong>${p.vendorId}</strong>
+      </div>
+      <div class="profile-field is-locked">
+        <span class="profile-field-label">GSTIN</span>
+        <strong>${p.gstin}</strong>
+      </div>
+      <div class="profile-field is-locked">
+        <span class="profile-field-label">PAN</span>
+        <strong>${p.pan}</strong>
+      </div>
+      <div class="profile-field ${editing ? 'is-editable' : ''}">
+        <span class="profile-field-label">Drug License ${editing ? '<span class="badge badge-info">Editable</span>' : ''}</span>
+        <strong>${p.drugLicense}</strong>
+        <small class="profile-field-meta" style="color:var(--danger)">Expires: ${p.drugExpiry}</small>
+      </div>
+      <div class="profile-field ${editing ? 'is-editable' : ''}">
+        <span class="profile-field-label">ISO 13485 ${editing ? '<span class="badge badge-info">Editable</span>' : ''}</span>
+        <strong>${p.iso}</strong>
+        <small class="profile-field-meta" style="color:var(--warning)">${p.isoNote}</small>
+      </div>
+      <div class="profile-field full ${editing ? 'is-editable' : ''}">
+        <span class="profile-field-label">Bank Account (Verified) ${editing ? '<span class="badge badge-info">Editable</span>' : ''}</span>
+        <strong>${p.bank}</strong>
+      </div>
+    </div>
+    ${editing ? `
+    <div class="profile-edit-panel">
+      <h4><i class="fa-solid fa-file-arrow-up"></i> Upload document to update editable fields</h4>
+      <p>Select which field to update, upload the source document, review OCR results, then confirm.</p>
+      <div class="profile-edit-actions">
+        <button type="button" class="btn btn-outline" onclick="startProfileFieldUpload('drug')">Upload Drug License</button>
+        <button type="button" class="btn btn-outline" onclick="startProfileFieldUpload('iso')">Upload ISO 13485 Certificate</button>
+        <button type="button" class="btn btn-outline" onclick="startProfileFieldUpload('bank')">Upload Bank Proof</button>
+      </div>
+    </div>` : ''}
+    <div class="wf-actions mt-2">
+      ${editing
+        ? `<button class="btn btn-outline" onclick="cancelProfileEdit()">Cancel Edit</button>`
+        : `<button class="btn btn-primary" onclick="enableProfileEdit()"><i class="fa-solid fa-pen"></i> Edit</button>`}
+    </div>
   </div>`;
+}
+
+function enableProfileEdit() {
+  vendorProfileState.editing = true;
+  renderPageContent();
+}
+
+function cancelProfileEdit() {
+  vendorProfileState.editing = false;
+  vendorProfileState.pendingEdit = null;
+  renderPageContent();
+}
+
+function startProfileFieldUpload(field) {
+  const meta = {
+    drug: {
+      title: 'Upload Drug License',
+      lead: 'Upload a clear scan of the drug / trade license. OCR will extract license number and expiry.',
+      preview: { drugLicense: 'DL-MH-2024-1102', drugExpiry: '20-06-2028' }
+    },
+    iso: {
+      title: 'Upload ISO 13485 Certificate',
+      lead: 'Upload the ISO 13485 certificate. OCR will extract certification status and validity.',
+      preview: { iso: 'Certified — Renewed', isoNote: 'Valid until 15-08-2027' }
+    },
+    bank: {
+      title: 'Upload Bank Account Proof',
+      lead: 'Upload cancelled cheque or bank letter. OCR will extract account details.',
+      preview: { bank: 'HDFC Bank - ****7891 (Verified)' }
+    }
+  }[field];
+  if (!meta) return;
+
+  openModal(meta.title, `
+    <div class="upload-modal">
+      <p class="upload-modal-lead">${meta.lead}</p>
+      <div class="upload-dropzone" onclick="document.getElementById('profileUploadInput').click()">
+        <i class="fa-solid fa-cloud-arrow-up"></i>
+        <strong>Click to select document</strong>
+        <span>PDF, JPG, PNG · Max 10 MB</span>
+        <input type="file" id="profileUploadInput" class="upload-file-input" accept=".pdf,.jpg,.jpeg,.png" />
+      </div>
+      <div id="profileUploadList" class="upload-file-list"></div>
+      <div class="upload-modal-actions">
+        <button type="button" class="btn btn-outline" onclick="closeModal()">Cancel</button>
+        <button type="button" class="btn btn-primary" onclick="runProfileOcr('${field}')">Extract with OCR</button>
+      </div>
+    </div>
+  `, { wide: true });
+
+  vendorProfileState.pendingEdit = { field, preview: meta.preview };
+  const input = document.getElementById('profileUploadInput');
+  const list = document.getElementById('profileUploadList');
+  input?.addEventListener('change', () => {
+    const f = input.files?.[0];
+    list.innerHTML = f ? `<div class="upload-file-item"><i class="fa-solid fa-file"></i> ${f.name}</div>` : '';
+  });
+}
+
+function runProfileOcr(field) {
+  const file = document.getElementById('profileUploadInput')?.files?.[0];
+  if (!file) {
+    showWfAlert('Please select a document to upload before running OCR.');
+    return;
+  }
+  const pending = vendorProfileState.pendingEdit;
+  if (!pending || pending.field !== field) return;
+
+  const rows = Object.entries(pending.preview).map(([k, v]) => {
+    const labels = {
+      drugLicense: 'Drug License',
+      drugExpiry: 'License Expiry',
+      iso: 'ISO 13485',
+      isoNote: 'Validity',
+      bank: 'Bank Account'
+    };
+    return `<tr><td>${labels[k] || k}</td><td><strong>${v}</strong></td></tr>`;
+  }).join('');
+
+  openModal('Confirm OCR Extracted Information', `
+    <div class="upload-modal">
+      <p class="upload-modal-lead">Review the information extracted from <strong>${file.name}</strong>. Confirm to update your profile.</p>
+      <div class="award-table-wrap">
+        <table class="data-table award-table">
+          <thead><tr><th>Field</th><th>Extracted Value</th></tr></thead>
+          <tbody>${rows}</tbody>
+        </table>
+      </div>
+      <div class="upload-modal-actions">
+        <button type="button" class="btn btn-outline" onclick="closeModal()">Cancel</button>
+        <button type="button" class="btn btn-primary" onclick="confirmProfileOcrSave()">Confirm &amp; Save</button>
+      </div>
+    </div>
+  `, { wide: true });
+}
+
+function confirmProfileOcrSave() {
+  const pending = vendorProfileState.pendingEdit;
+  if (!pending?.preview) return;
+  Object.assign(vendorProfileState, pending.preview);
+  vendorProfileState.pendingEdit = null;
+  vendorProfileState.editing = false;
+  closeModal();
+  showWfAlert('Profile updated successfully from OCR-confirmed document.', 'success');
+  renderPageContent();
 }
 
 function renderTenders() {
@@ -1462,10 +3158,10 @@ function renderTenders() {
   tenders = filterTendersByStatus(tenders);
   const emptyLabel = tenderStatusFilter === 'all' ? 'tenders' : `${tenderStatusFilter} tenders`;
   return `<div class="cards-grid">
-      ${tenders.length ? tenders.map(t => `<div class="info-card" onclick="openDrillDown('tender','${t.id}','${t.title}')">
+      ${tenders.length ? tenders.map(t => `<div class="info-card info-card--interactive" role="button" tabindex="0" onclick="openTenderDetail('${t.id}')" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();openTenderDetail('${t.id}')}">
         <h4>${t.id}</h4><p>${t.title}</p>
         <div class="card-meta"><span>${t.category} · ${t.value}</span><span class="badge badge-${tenderBadgeClass(t.status)}">${t.status}</span></div>
-        <div class="card-meta"><span>Deadline: ${t.deadline}</span><span>${t.bids} bids</span></div>
+        <div class="card-meta"><span>Deadline: ${formatDateDMY(t.deadline)}</span></div>
       </div>`).join('') : `<div class="empty-state-card"><i class="fa-solid fa-inbox"></i><p>No ${emptyLabel} found${currentCategory !== 'All' ? ' for ' + currentCategory : ''}.</p></div>`}
     </div>`;
 }
@@ -1481,7 +3177,7 @@ function renderBids() {
             <td><span class="badge badge-${b.technical === 'Complete' || b.technical === 'Submitted' ? 'success' : 'warning'}">${b.technical}</span></td>
             <td><span class="badge badge-${b.financial === 'Sealed' ? 'muted' : 'success'}">${b.financial === 'Sealed' ? '<i class="fa-solid fa-lock"></i> Sealed' : b.financial}</span></td>
             <td><span class="badge badge-${b.emd === 'Paid' ? 'success' : 'warning'}">${b.emd}</span></td>
-            <td>${b.deadline}</td>
+            <td>${formatDateDMY(b.deadline)}</td>
             <td><span class="badge badge-${b.status === 'Draft' ? 'warning' : 'info'}">${b.status}</span></td>
           </tr>`).join('') : emptyTableRow(7)}
         </tbody>
@@ -1526,7 +3222,7 @@ function renderDelivery() {
   const deliveries = filterByCategory(DELIVERIES);
   return `<div class="data-table-wrap">
       <table class="data-table">
-        <thead><tr><th>Delivery ID</th><th>PO Reference</th><th>Category</th><th>Items</th><th>GRN Status</th><th>Invoice</th><th>Payment</th></tr></thead>
+        <thead><tr><th>Delivery Challan ID</th><th>PO Reference</th><th>Category</th><th>Items</th><th>GRN Status</th><th>Invoice</th><th>Payment</th></tr></thead>
         <tbody>
           ${deliveries.length ? deliveries.map(d => `<tr>
             <td><strong>${d.id}</strong></td><td>${d.po}</td><td>${d.category}</td><td>${d.items}</td>
@@ -1541,6 +3237,253 @@ function renderDelivery() {
 
 function renderPerformance() {
   return renderPerformanceBreakdown(VENDORS[0]);
+}
+
+function workQueueSeverityMeta(severity) {
+  if (severity === 'high') return { icon: 'fa-circle-exclamation', cls: 'wq-sev--high', label: 'High' };
+  if (severity === 'medium') return { icon: 'fa-triangle-exclamation', cls: 'wq-sev--medium', label: 'Medium' };
+  return { icon: 'fa-circle-info', cls: 'wq-sev--info', label: 'Info' };
+}
+
+function filterWorkQueueItems() {
+  const items = VENDOR_WORK_QUEUE;
+  if (workQueueFilter === 'all') return items;
+  if (workQueueFilter === 'unread') return items.filter(i => i.unread);
+  return items.filter(i => i.category === workQueueFilter);
+}
+
+function renderWorkQueue() {
+  const items = filterWorkQueueItems();
+  const counts = {
+    all: VENDOR_WORK_QUEUE.length,
+    unread: VENDOR_WORK_QUEUE.filter(i => i.unread).length,
+    milestones: VENDOR_WORK_QUEUE.filter(i => i.category === 'milestones').length,
+    sla: VENDOR_WORK_QUEUE.filter(i => i.category === 'sla').length,
+    payments: VENDOR_WORK_QUEUE.filter(i => i.category === 'payments').length,
+    system: VENDOR_WORK_QUEUE.filter(i => i.category === 'system').length
+  };
+  const tabs = [
+    ['all', 'All'],
+    ['unread', 'Unread'],
+    ['milestones', 'Milestones'],
+    ['sla', 'SLA'],
+    ['payments', 'Payments'],
+    ['system', 'System']
+  ];
+
+  return `<div class="work-queue">
+    <div class="work-queue-card">
+      <div class="work-queue-card-head">
+        <div>
+          <h3>Alerts and work queue</h3>
+          <p>Prioritized actions grouped by severity, owner, due date and record type.</p>
+        </div>
+        <button type="button" class="btn btn-outline btn-sm" onclick="markAllWorkQueueRead()">Mark all as read</button>
+      </div>
+      <div class="work-queue-tabs" role="tablist">
+        ${tabs.map(([id, label]) => `<button type="button" class="work-queue-tab${workQueueFilter === id ? ' active' : ''}" onclick="setWorkQueueFilter('${id}')">${label} <span>${counts[id]}</span></button>`).join('')}
+      </div>
+      <div class="work-queue-list">
+        ${items.length ? items.map(item => {
+          const sev = workQueueSeverityMeta(item.severity);
+          return `<button type="button" class="work-queue-row${item.unread ? ' is-unread' : ''}" onclick="openWorkQueueItem('${item.id}')">
+            <span class="wq-sev ${sev.cls}"><i class="fa-solid ${sev.icon}"></i></span>
+            <span class="wq-body">
+              <strong>${item.title}</strong>
+              <span class="wq-detail">${item.detail}</span>
+            </span>
+            <span class="wq-meta">
+              <span class="wq-priority">${sev.label}</span>
+              <span class="wq-time">${item.timeline}</span>
+            </span>
+          </button>`;
+        }).join('') : `<div class="empty-state-card"><i class="fa-solid fa-inbox"></i><p>No alerts in this filter.</p></div>`}
+      </div>
+    </div>
+  </div>`;
+}
+
+function setWorkQueueFilter(filter) {
+  workQueueFilter = filter;
+  renderPageContent();
+}
+
+function markAllWorkQueueRead() {
+  VENDOR_WORK_QUEUE.forEach(i => { i.unread = false; });
+  renderSidebar();
+  renderTopbar();
+  renderPageContent();
+  showWfAlert('All work queue alerts marked as read.', 'success');
+}
+
+function openWorkQueueItem(id) {
+  const item = VENDOR_WORK_QUEUE.find(i => i.id === id);
+  if (!item) return;
+  item.unread = false;
+  renderSidebar();
+  renderTopbar();
+  if (item.actionPage === 'sla-desk') {
+    const thread = SLA_THREADS.find(t => t.contractId === item.ref || t.subject.includes(item.ref));
+    if (thread) activeSlaThreadId = thread.id;
+  }
+  if (item.actionPage) navigateTo(item.actionPage);
+  else renderPageContent();
+}
+
+function renderSlaDesk() {
+  const thread = SLA_THREADS.find(t => t.id === activeSlaThreadId) || SLA_THREADS[0];
+  return `<div class="sla-desk">
+    <div class="sla-hierarchy-card">
+      <div class="sla-hierarchy-head">
+        <h3><i class="fa-solid fa-sitemap"></i> SLA Escalation Hierarchy</h3>
+        <p>Communicate with government officers in order. Escalate only after the lower level SLA window lapses.</p>
+      </div>
+      <ol class="sla-hierarchy-list">
+        ${SLA_HIERARCHY.map(h => `<li>
+          <span class="sla-level">L${h.level}</span>
+          <div>
+            <strong>${h.role}</strong>
+            <span class="sla-org">${h.org}</span>
+            <span class="sla-window">${h.sla}</span>
+            <span class="sla-contact"><i class="fa-solid fa-envelope"></i> ${h.contact}</span>
+          </div>
+        </li>`).join('')}
+      </ol>
+    </div>
+
+    <div class="sla-comm-layout">
+      <aside class="sla-thread-list">
+        <div class="sla-thread-list-head">
+          <h4>Open threads</h4>
+          <button type="button" class="btn btn-primary btn-sm" onclick="openNewSlaThreadModal()"><i class="fa-solid fa-plus"></i> New</button>
+        </div>
+        ${SLA_THREADS.map(t => `<button type="button" class="sla-thread-item${t.id === thread.id ? ' active' : ''}" onclick="selectSlaThread('${t.id}')">
+          <div class="sla-thread-item-top">
+            <strong>${t.subject}</strong>
+            <span class="badge badge-${t.status === 'Resolved' ? 'success' : t.status === 'Open' ? 'danger' : 'warning'}">${t.status}</span>
+          </div>
+          <span class="sla-thread-meta">L${t.level} · ${t.contractId} · ${t.lastUpdate}</span>
+        </button>`).join('')}
+      </aside>
+
+      <section class="sla-thread-panel">
+        <div class="sla-thread-panel-head">
+          <div>
+            <h3>${thread.subject}</h3>
+            <p>Contract <strong>${thread.contractId}</strong> · Escalation Level L${thread.level} (${SLA_HIERARCHY.find(h => h.level === thread.level)?.role || '—'}) · Priority: ${thread.priority}</p>
+          </div>
+          <span class="badge badge-${thread.status === 'Resolved' ? 'success' : thread.status === 'Open' ? 'danger' : 'warning'}">${thread.status}</span>
+        </div>
+        <div class="sla-messages" id="slaMessages">
+          ${thread.messages.map(m => `<div class="sla-msg ${m.from === 'vendor' ? 'sla-msg--vendor' : 'sla-msg--gov'}">
+            <div class="sla-msg-meta"><strong>${m.name}</strong> · ${m.role} · ${m.time}</div>
+            <div class="sla-msg-body">${m.text}</div>
+          </div>`).join('')}
+        </div>
+        <div class="sla-compose">
+          ${customSelectHTML('Escalate to level', 'slaEscalateLevel', SLA_HIERARCHY.map(h => `L${h.level} — ${h.role}`), `L${thread.level} — ${SLA_HIERARCHY.find(h => h.level === thread.level)?.role || ''}`)}
+          <div class="form-group full">
+            <label>Message to government officer <span class="req-star">*</span></label>
+            <textarea id="slaMessageInput" rows="3" placeholder="Describe the SLA issue, reference documents, and requested action…"></textarea>
+          </div>
+          <div class="sla-compose-actions">
+            <button type="button" class="btn btn-outline" onclick="navigateTo('work-queue')">Back to Work Queue</button>
+            <button type="button" class="btn btn-primary" onclick="sendSlaMessage()"><i class="fa-solid fa-paper-plane"></i> Send to hierarchy</button>
+          </div>
+        </div>
+      </section>
+    </div>
+  </div>`;
+}
+
+function selectSlaThread(id) {
+  activeSlaThreadId = id;
+  renderPageContent();
+}
+
+function openNewSlaThreadModal() {
+  openModal('Raise SLA Communication', `
+    <div class="upload-modal">
+      <p class="upload-modal-lead">Start a new escalation with the government hierarchy. Choose the correct SLA level based on issue type.</p>
+      <div class="form-grid wf-form-grid">
+        ${customSelectHTML('Contract', 'newSlaContract', CONTRACTS.map(c => c.id), CONTRACTS[0]?.id)}
+        ${customSelectHTML('Escalate to', 'newSlaLevel', SLA_HIERARCHY.map(h => `L${h.level} — ${h.role}`), 'L2 — Contract Manager')}
+        <div class="form-group full"><label>Subject <span class="req-star">*</span></label><input id="newSlaSubject" type="text" placeholder="e.g. Delivery response delay — CNT-2026-0089"></div>
+        <div class="form-group full"><label>Details <span class="req-star">*</span></label><textarea id="newSlaDetails" rows="4" placeholder="Summarize the breach, dates, and requested cure…"></textarea></div>
+      </div>
+      <div class="upload-modal-actions">
+        <button type="button" class="btn btn-outline" onclick="closeModal()">Cancel</button>
+        <button type="button" class="btn btn-primary" onclick="createSlaThread()">Create Thread</button>
+      </div>
+    </div>
+  `, { wide: true });
+  initCustomSelects();
+}
+
+function createSlaThread() {
+  const subject = document.getElementById('newSlaSubject')?.value?.trim();
+  const details = document.getElementById('newSlaDetails')?.value?.trim();
+  const contractId = typeof getCustomSelectValue === 'function' ? getCustomSelectValue('newSlaContract') : CONTRACTS[0]?.id;
+  const levelLabel = typeof getCustomSelectValue === 'function' ? getCustomSelectValue('newSlaLevel') : 'L2 — Contract Manager';
+  const level = parseInt(String(levelLabel).replace(/^L/, ''), 10) || 2;
+  if (!subject || !details) {
+    showWfAlert('Please enter Subject and Details before creating an SLA thread.');
+    return;
+  }
+  const id = `SLA-2026-${String(100 + SLA_THREADS.length).slice(-3)}`;
+  SLA_THREADS.unshift({
+    id,
+    subject,
+    contractId: contractId || 'CNT-2026-0089',
+    level,
+    status: 'Open',
+    priority: level <= 2 ? 'High' : 'Medium',
+    lastUpdate: formatDateDMY(APP_TODAY),
+    messages: [
+      { from: 'vendor', name: 'MediSupply India', role: 'Vendor', time: `${formatDateDMY(APP_TODAY)} ${new Date().toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' })}`, text: details }
+    ]
+  });
+  activeSlaThreadId = id;
+  closeModal();
+  renderSidebar();
+  renderPageContent();
+  showWfAlert('SLA communication thread created and routed to the selected hierarchy level.', 'success');
+}
+
+function sendSlaMessage() {
+  const text = document.getElementById('slaMessageInput')?.value?.trim();
+  if (!text) {
+    showWfAlert('Enter a message before sending to the government hierarchy.');
+    return;
+  }
+  const thread = SLA_THREADS.find(t => t.id === activeSlaThreadId);
+  if (!thread) return;
+  const levelLabel = typeof getCustomSelectValue === 'function' ? getCustomSelectValue('slaEscalateLevel') : '';
+  const level = parseInt(String(levelLabel).replace(/^L/, ''), 10);
+  if (level) thread.level = level;
+  thread.status = 'In Progress';
+  thread.lastUpdate = formatDateDMY(APP_TODAY);
+  thread.messages.push({
+    from: 'vendor',
+    name: 'MediSupply India',
+    role: 'Vendor',
+    time: `${formatDateDMY(APP_TODAY)} ${new Date().toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' })}`,
+    text
+  });
+  // Demo auto-ack from current hierarchy officer
+  const officer = SLA_HIERARCHY.find(h => h.level === thread.level);
+  if (officer) {
+    thread.messages.push({
+      from: 'gov',
+      name: officer.role === 'Contract Manager' ? 'Rohit Sharma' : officer.role,
+      role: officer.role,
+      time: `${formatDateDMY(APP_TODAY)} ${new Date().toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' })}`,
+      text: `Message received at ${officer.role} desk. We will respond within the defined SLA window (${officer.sla}).`
+    });
+  }
+  renderSidebar();
+  renderPageContent();
+  showWfAlert(`Message sent to ${officer?.role || 'government hierarchy'}.`, 'success');
 }
 
 // ========== INTERACTIONS ==========
@@ -1560,10 +3503,46 @@ function setCategory(cat) {
 function setPeriod(period) {
   currentPeriod = period;
   if (currentPage === 'dashboard' || currentPage === 'reports') {
-    refreshAllCharts(period, currentCategory);
+    if (currentRole === 'vendor' && currentPage === 'reports') {
+      initVendorReportCharts(currentCategory);
+    } else if (currentRole === 'gov' && currentPage === 'dashboard') {
+      // Keep filter bar selection in sync without full page remount if possible
+      document.querySelectorAll('.analytics-filter .time-btn').forEach(btn => {
+        btn.classList.toggle('active', btn.textContent.toLowerCase() === period);
+      });
+      refreshAllCharts(period, currentCategory);
+    } else {
+      refreshAllCharts(period, currentCategory);
+    }
     document.querySelectorAll('.time-btn').forEach(btn => {
       btn.classList.toggle('active', btn.textContent.toLowerCase() === period);
     });
+  }
+}
+
+function setAnalyticsFocusYear(year) {
+  analyticsFocusYear = year || 'all';
+  if (currentPage === 'dashboard' && currentRole === 'gov') {
+    const select = document.getElementById('analyticsFocusYear');
+    if (select) select.value = analyticsFocusYear;
+    document.querySelectorAll('.analytics-fy-chip').forEach(chip => {
+      const label = chip.textContent.trim();
+      const isAll = analyticsFocusYear === 'all' && label.startsWith('All');
+      const isYear = analyticsFocusYear !== 'all' && label === analyticsFocusYear.replace('FY', '');
+      chip.classList.toggle('active', isAll || isYear);
+    });
+    refreshAllCharts(currentPeriod, currentCategory);
+    const subtitle = document.querySelector('#chartAnalyticsCompare')?.closest('.chart-card')?.querySelector('.chart-subtitle');
+    if (subtitle) {
+      subtitle.textContent = `${analyticsFocusYear === 'all' ? 'Last 10 FYs' : analyticsFocusYear} · ${currentPeriod} view · ${currentCategory === 'All' ? 'All categories' : currentCategory}`;
+    }
+  }
+}
+
+function setAnalyticsCompareMode(mode) {
+  analyticsCompareMode = mode === 'item' ? 'item' : 'vendor';
+  if (currentPage === 'dashboard' && currentRole === 'gov') {
+    renderPageContent();
   }
 }
 
@@ -1727,20 +3706,382 @@ function markAlertRead(id) {
 }
 
 function openDrillDown(type, title, content) {
-  const modal = document.getElementById('modalOverlay');
-  document.getElementById('modalTitle').textContent = title;
-  document.getElementById('modalBody').innerHTML = `<p>${content}</p>
-    <div class="data-table-wrap mt-2"><table class="data-table"><thead><tr><th>Reference</th><th>Detail</th><th>Status</th></tr></thead>
-    <tbody><tr><td>REF-001</td><td>Linked transaction data</td><td><span class="badge badge-info">Traceable</span></td></tr>
-    <tr><td>REF-002</td><td>Audit trail entry</td><td><span class="badge badge-success">Verified</span></td></tr></tbody></table></div>
-    <p class="mt-2" style="font-size:0.8rem;color:var(--text-muted)">Every figure supports contextual navigation and full traceability to underlying transaction data.</p>`;
-  modal.classList.add('open');
+  if (type === 'tender') {
+    openTenderDetail(title);
+    return;
+  }
+  if (type === 'categorySpend') {
+    openCategorySpendDetail(title);
+    return;
+  }
+  if (type === 'chartPeriod') {
+    openChartPeriodDetail(title, content);
+    return;
+  }
+  openModal(title, `<div class="drill-simple"><p>${content}</p></div>`, { wide: false });
+}
+
+function getCategoryMetricAverages(vendors) {
+  const list = vendors?.length ? vendors : VENDORS;
+  const keys = ['quality', 'leadTime', 'cost', 'regulatory', 'satisfaction'];
+  const out = {};
+  keys.forEach(k => {
+    out[k] = list.length
+      ? Math.round(list.reduce((s, v) => s + (v[k] || 0), 0) / list.length)
+      : 0;
+  });
+  return out;
+}
+
+function filterListByCategory(list) {
+  if (currentCategory === 'All') return list;
+  return list.filter(x => x.category === currentCategory);
+}
+
+function openGovKpiDetail(key) {
+  if (key?.startsWith('metric:')) {
+    openMetricWeightDetail(key.slice(7));
+    return;
+  }
+  const catLabel = currentCategory === 'All' ? 'All categories' : currentCategory;
+  if (key === 'openTenders') {
+    const tenders = filterListByCategory(TENDERS).filter(t => ['Open', 'Evaluation', 'Draft'].includes(t.status));
+    const itemTypes = currentCategory === 'All'
+      ? Object.entries(CATEGORY_ITEM_TYPES).flatMap(([cat, items]) => items.map(i => ({ ...i, category: cat })))
+      : (CATEGORY_ITEM_TYPES[currentCategory] || []).map(i => ({ ...i, category: currentCategory }));
+
+    openModal(`Open Tenders — ${catLabel}`, `
+      <div class="kpi-detail">
+        <div class="tender-detail-stats tender-detail-stats--3">
+          <div class="tender-stat"><span>Active tenders</span><strong>${tenders.length}</strong></div>
+          <div class="tender-stat"><span>Open for bids</span><strong>${tenders.filter(t => t.status === 'Open').length}</strong></div>
+          <div class="tender-stat"><span>In evaluation</span><strong>${tenders.filter(t => t.status === 'Evaluation').length}</strong></div>
+        </div>
+        <div class="tender-detail-section">
+          <h4>${currentCategory === 'Drugs' || currentCategory === 'All' ? 'Drug / item types covered' : 'Item types covered'}</h4>
+          <div class="kpi-detail-chips">
+            ${itemTypes.slice(0, 8).map(i => `<span class="kpi-chip"><strong>${i.name}</strong><em>${i.type}</em></span>`).join('') || '<span class="meta-chip">No item types mapped</span>'}
+          </div>
+        </div>
+        <div class="tender-detail-section">
+          <h4>Tender details</h4>
+          <div class="data-table-wrap kpi-detail-table">
+            <table class="data-table">
+              <thead><tr><th>Tender ID</th><th>Title</th><th>Category</th><th>Value</th><th>Bids</th><th>Deadline</th><th>Status</th></tr></thead>
+              <tbody>
+                ${tenders.length ? tenders.map(t => `<tr onclick="openTenderDetail('${t.id}')">
+                  <td><strong>${t.id}</strong></td>
+                  <td>${t.title}</td>
+                  <td>${t.category}</td>
+                  <td>${t.value}</td>
+                  <td>${t.bids}</td>
+                  <td>${formatDateDMY(t.deadline)}</td>
+                  <td><span class="badge badge-${tenderBadgeClass(t.status)}">${t.status}</span></td>
+                </tr>`).join('') : emptyTableRow(7, 'No open / evaluation / draft tenders for this filter.')}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    `, { wide: true, large: true });
+    return;
+  }
+
+  if (key === 'pendingApprovals') {
+    const rows = filterListByCategory(PENDING_APPROVALS);
+    openModal(`Pending Approvals — ${catLabel}`, `
+      <div class="kpi-detail">
+        <div class="tender-detail-stats tender-detail-stats--3">
+          <div class="tender-stat"><span>Awaiting action</span><strong>${rows.length}</strong></div>
+          <div class="tender-stat"><span>Oldest</span><strong>${rows.length ? Math.max(...rows.map(r => parseInt(r.age, 10) || 0)) + ' days' : '—'}</strong></div>
+          <div class="tender-stat"><span>Financial sanction</span><strong>${rows.filter(r => r.stage.includes('Financial')).length}</strong></div>
+        </div>
+        <div class="tender-detail-section">
+          <h4>Purchase requisitions in queue</h4>
+          <div class="data-table-wrap kpi-detail-table">
+            <table class="data-table">
+              <thead><tr><th>PR ID</th><th>Title</th><th>Category</th><th>Stage</th><th>Amount</th><th>Age</th><th>Owner</th></tr></thead>
+              <tbody>
+                ${rows.length ? rows.map(r => `<tr>
+                  <td><strong>${r.id}</strong></td><td>${r.title}</td><td>${r.category}</td>
+                  <td><span class="badge badge-warning">${r.stage}</span></td>
+                  <td>${r.amount}</td><td>${r.age}</td><td>${r.owner}</td>
+                </tr>`).join('') : emptyTableRow(7)}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    `, { wide: true, large: true });
+    return;
+  }
+
+  if (key === 'paymentDelays') {
+    const rows = filterListByCategory(PAYMENT_DELAYS);
+    openModal(`Payment Delays — ${catLabel}`, `
+      <div class="kpi-detail">
+        <div class="tender-detail-stats tender-detail-stats--3">
+          <div class="tender-stat"><span>Delayed invoices</span><strong>${rows.length}</strong></div>
+          <div class="tender-stat"><span>Max overdue</span><strong>${rows.length ? Math.max(...rows.map(r => r.daysOverdue)) + ' days' : '—'}</strong></div>
+          <div class="tender-stat"><span>Vendors affected</span><strong>${new Set(rows.map(r => r.vendor)).size}</strong></div>
+        </div>
+        <div class="tender-detail-section">
+          <h4>Invoice hold / delay register</h4>
+          <div class="data-table-wrap kpi-detail-table">
+            <table class="data-table">
+              <thead><tr><th>Invoice</th><th>Vendor</th><th>Category</th><th>Amount</th><th>Overdue</th><th>Reason</th><th>Contract</th></tr></thead>
+              <tbody>
+                ${rows.length ? rows.map(r => `<tr>
+                  <td><strong>${r.id}</strong></td><td>${r.vendor}</td><td>${r.category}</td>
+                  <td>${r.amount}</td>
+                  <td><span class="badge badge-danger">${r.daysOverdue}d</span></td>
+                  <td>${r.reason}</td><td>${r.contractId}</td>
+                </tr>`).join('') : emptyTableRow(7)}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    `, { wide: true, large: true });
+    return;
+  }
+
+  if (key === 'procurementSpend') {
+    openCategorySpendDetail(currentCategory === 'All' ? null : currentCategory);
+    return;
+  }
+
+  if (key === 'avgVendorScore') {
+    const vendors = filterByCategory(VENDORS);
+    const avg = vendors.length
+      ? (vendors.reduce((s, v) => s + v.overall, 0) / vendors.length).toFixed(1)
+      : '—';
+    openModal(`Avg Vendor Score — ${catLabel}`, `
+      <div class="kpi-detail">
+        <div class="tender-detail-stats tender-detail-stats--3">
+          <div class="tender-stat"><span>Average overall</span><strong>${avg}</strong></div>
+          <div class="tender-stat"><span>Vendors scored</span><strong>${vendors.length}</strong></div>
+          <div class="tender-stat"><span>Preferred</span><strong>${vendors.filter(v => v.status === 'Preferred').length}</strong></div>
+        </div>
+        <div class="tender-detail-section">
+          <h4>Score breakdown by vendor</h4>
+          <div class="data-table-wrap kpi-detail-table">
+            <table class="data-table">
+              <thead><tr><th>Vendor</th><th>Category</th><th>Quality</th><th>Lead Time</th><th>Cost</th><th>Regulatory</th><th>Satisfaction</th><th>Overall</th><th>Status</th></tr></thead>
+              <tbody>
+                ${vendors.length ? vendors.map(v => `<tr onclick="openVendorDetail('${v.id}')">
+                  <td><strong>${v.name}</strong><div class="cell-sub">${v.id}</div></td>
+                  <td>${v.category}</td>
+                  <td>${v.quality}</td><td>${v.leadTime}</td><td>${v.cost}</td><td>${v.regulatory}</td><td>${v.satisfaction}</td>
+                  <td><strong>${v.overall}</strong></td>
+                  <td><span class="badge badge-${v.status === 'Preferred' ? 'success' : v.status === 'Watch' ? 'danger' : 'info'}">${v.status}</span></td>
+                </tr>`).join('') : emptyTableRow(9)}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    `, { wide: true, large: true });
+  }
+}
+
+function openMetricWeightDetail(metricKey) {
+  const metric = PERF_METRICS.find(m => m.key === metricKey);
+  if (!metric) return;
+  const vendors = filterByCategory(VENDORS).slice().sort((a, b) => (b[metricKey] || 0) - (a[metricKey] || 0));
+  const avg = vendors.length
+    ? Math.round(vendors.reduce((s, v) => s + (v[metricKey] || 0), 0) / vendors.length)
+    : 0;
+  openModal(`${metric.label} — Performance Matrix`, `
+    <div class="kpi-detail">
+      <div class="tender-detail-stats tender-detail-stats--3">
+        <div class="tender-stat"><span>Weight in overall</span><strong>${metric.weight}%</strong></div>
+        <div class="tender-stat"><span>Category avg</span><strong>${avg}</strong></div>
+        <div class="tender-stat"><span>Top score</span><strong>${vendors[0] ? vendors[0][metricKey] : '—'}</strong></div>
+      </div>
+      <div class="tender-detail-section">
+        <h4>Vendor ranking on ${metric.label}</h4>
+        <div class="data-table-wrap kpi-detail-table">
+          <table class="data-table">
+            <thead><tr><th>Rank</th><th>Vendor</th><th>Category</th><th>${metric.label}</th><th>Overall</th><th>Status</th></tr></thead>
+            <tbody>
+              ${vendors.map((v, i) => `<tr onclick="openVendorDetail('${v.id}')">
+                <td>${i + 1}</td>
+                <td><strong>${v.name}</strong></td>
+                <td>${v.category}</td>
+                <td><strong>${v[metricKey]}</strong></td>
+                <td>${v.overall}</td>
+                <td><span class="badge badge-${v.status === 'Preferred' ? 'success' : v.status === 'Watch' ? 'danger' : 'info'}">${v.status}</span></td>
+              </tr>`).join('')}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  `, { wide: true });
+}
+
+function openCategorySpendDetail(focusCategory) {
+  const cat = focusCategory && focusCategory !== 'All' ? focusCategory : null;
+  const title = cat ? `${cat} Spend Detail` : 'Category-wise Spend Distribution';
+  const amounts = { Drugs: 90.3, Equipment: 60.2, Services: 32.3, Consumables: 21.5, Others: 10.8 };
+  const pct = CHART_DATA.categorySpend;
+  const cats = cat ? [cat] : pct.labels;
+  const items = cat
+    ? (CATEGORY_ITEM_TYPES[cat] || []).map(i => ({ ...i, category: cat }))
+    : Object.entries(CATEGORY_ITEM_TYPES).flatMap(([c, list]) => list.map(i => ({ ...i, category: c })));
+
+  const districtKey = cat ? cat.toLowerCase() : null;
+  const districts = DISTRICT_SPEND.map(d => {
+    const value = districtKey
+      ? d[districtKey]
+      : d.drugs + d.equipment + d.services + d.consumables + d.others;
+    return { ...d, value: Math.round(value * 10) / 10 };
+  });
+
+  openModal(title, `
+    <div class="kpi-detail">
+      <div class="tender-detail-stats" style="grid-template-columns:repeat(${Math.min(cats.length, 5)},minmax(0,1fr))">
+        ${cats.map(c => {
+          const i = pct.labels.indexOf(c);
+          return `<div class="tender-stat"><span>${c}</span><strong>₹${amounts[c]} Cr</strong><em>${pct.data[i]}% of total</em></div>`;
+        }).join('')}
+      </div>
+      <div class="tender-detail-section">
+        <h4>${cat === 'Drugs' ? 'Types of drugs / items' : 'Item types &amp; tender coverage'}</h4>
+        <div class="data-table-wrap kpi-detail-table">
+          <table class="data-table">
+            <thead><tr><th>Item</th><th>Type</th><th>Category</th><th>Linked tenders</th><th>Est. spend</th><th>Facilities</th></tr></thead>
+            <tbody>
+              ${items.map(i => `<tr>
+                <td><strong>${i.name}</strong></td>
+                <td><span class="badge badge-info">${i.type}</span></td>
+                <td>${i.category}</td>
+                <td>${i.tenders}</td>
+                <td>${i.spend}</td>
+                <td>${i.facilities}</td>
+              </tr>`).join('')}
+            </tbody>
+          </table>
+        </div>
+      </div>
+      <div class="tender-detail-section">
+        <h4>District &amp; facility spend (₹ Cr)</h4>
+        <div class="data-table-wrap kpi-detail-table">
+          <table class="data-table">
+            <thead><tr><th>District</th><th>Facility</th><th>Spend (₹ Cr)</th></tr></thead>
+            <tbody>
+              ${districts.map(d => `<tr>
+                <td><strong>${d.district}</strong></td>
+                <td>${d.facility}</td>
+                <td>₹${d.value} Cr</td>
+              </tr>`).join('')}
+            </tbody>
+          </table>
+        </div>
+      </div>
+      <p class="report-footnote"><i class="fa-solid fa-circle-info"></i> Click a category slice on the pie chart anytime to reopen this breakdown for that category.</p>
+    </div>
+  `, { wide: true, large: true });
+}
+
+function openChartPeriodDetail(seriesLabel, periodLabel) {
+  const cat = currentCategory === 'All' ? null : currentCategory;
+  const items = cat
+    ? (CATEGORY_ITEM_TYPES[cat] || [])
+    : (CATEGORY_ITEM_TYPES.Drugs || []).slice(0, 4);
+  openModal(`${seriesLabel}: ${periodLabel}`, `
+    <div class="kpi-detail">
+      <div class="tender-detail-section">
+        <h4>Period snapshot — ${periodLabel}</h4>
+        <p>Detailed breakdown for <strong>${periodLabel}</strong>${cat ? ` under <strong>${cat}</strong>` : ''}. Transaction-level ledgers remain in Finance module.</p>
+      </div>
+      <div class="tender-detail-section">
+        <h4>${cat === 'Drugs' || !cat ? 'Key drug / item lines' : 'Key item lines'}</h4>
+        <div class="kpi-detail-chips">
+          ${items.map(i => `<span class="kpi-chip"><strong>${i.name}</strong><em>${i.type} · ${i.spend}</em></span>`).join('')}
+        </div>
+      </div>
+      <div class="tender-detail-actions">
+        <button type="button" class="btn btn-primary" onclick="openCategorySpendDetail(${cat ? `'${cat}'` : 'null'})">View full category spend →</button>
+      </div>
+    </div>
+  `, { wide: true });
+}
+
+function openTenderDetail(tenderId) {
+  const t = TENDERS.find(x => x.id === tenderId);
+  if (!t) {
+    openModal(tenderId, '<p>Tender record not found.</p>');
+    return;
+  }
+
+  const isOpen = t.status === 'Open';
+  const daysLeft = daysUntilDeadline(t.deadline);
+  const emdEstimate = t.category === 'Drugs' ? '₹3,20,000' : t.category === 'Equipment' ? '₹2,50,000' : '₹1,00,000';
+
+  const deadlineLabel = !isOpen
+    ? 'Not open for bidding'
+    : daysLeft === null
+      ? ''
+      : daysLeft > 0
+        ? `${daysLeft} day(s) remaining`
+        : daysLeft === 0
+          ? 'Due today'
+          : 'Deadline passed';
+
+  const body = `<div class="tender-detail">
+    <div class="tender-detail-hero">
+      <div>
+        <span class="badge badge-${tenderBadgeClass(t.status)}">${t.status}</span>
+        <h3 class="tender-detail-title">${t.title}</h3>
+        <p class="tender-detail-sub">${t.category} procurement · Estimated value ${t.value}</p>
+      </div>
+      <div class="tender-detail-deadline ${isOpen && daysLeft !== null && daysLeft <= 5 ? 'urgent' : ''}">
+        <span class="tender-detail-deadline-label">Bid deadline</span>
+        <strong>${formatDateDMY(t.deadline)}</strong>
+        <span>${deadlineLabel}</span>
+      </div>
+    </div>
+
+    <div class="tender-detail-stats tender-detail-stats--3">
+      <div class="tender-stat"><span>Tender ID</span><strong>${t.id}</strong></div>
+      <div class="tender-stat"><span>Category</span><strong>${t.category}</strong></div>
+      <div class="tender-stat"><span>Est. Value</span><strong>${t.value}</strong></div>
+    </div>
+
+    <div class="tender-detail-section">
+      <h4>Overview</h4>
+      <p>Public tender for <strong>${t.title}</strong> under the ${t.category} category. Vendors must meet eligibility criteria, submit technical &amp; financial bids, and furnish EMD before the deadline.</p>
+    </div>
+
+    <div class="tender-detail-section">
+      <h4>Key requirements</h4>
+      <ul class="tender-req-list">
+        <li>Valid GSTIN, PAN, and category licenses</li>
+        <li>Technical compliance matrix mapped to NIT/RFP</li>
+        <li>Sealed commercial bid (opened only after technical qualification)</li>
+        <li>EMD approximately <strong>${emdEstimate}</strong> (as per NIT)</li>
+      </ul>
+    </div>
+  </div>`;
+
+  openModal(t.id, body, { wide: true });
 }
 
 function openVendorDetail(id) {
   const v = VENDORS.find(x => x.id === id);
   if (!v) return;
-  openDrillDown('vendor', `${v.id} — ${v.name}`, `Overall Score: ${v.overall} | Status: ${v.status} | Category: ${v.category}. Quality: ${v.quality}, Lead Time: ${v.leadTime}, Cost: ${v.cost}, Regulatory: ${v.regulatory}, Satisfaction: ${v.satisfaction}`);
+  openModal(`${v.id} — ${v.name}`, `<div class="drill-simple">
+    <p><strong>Overall Score:</strong> ${v.overall} · <strong>Status:</strong> ${v.status} · <strong>Category:</strong> ${v.category}</p>
+    <div class="tender-detail-stats mt-2">
+      <div class="tender-stat"><span>Quality</span><strong>${v.quality}</strong></div>
+      <div class="tender-stat"><span>Lead Time</span><strong>${v.leadTime}</strong></div>
+      <div class="tender-stat"><span>Cost</span><strong>${v.cost}</strong></div>
+      <div class="tender-stat"><span>Regulatory</span><strong>${v.regulatory}</strong></div>
+      <div class="tender-stat"><span>Satisfaction</span><strong>${v.satisfaction}</strong></div>
+    </div>
+  </div>`, { wide: true });
 }
 
 function closeModal() {

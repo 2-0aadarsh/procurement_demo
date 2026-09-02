@@ -1,9 +1,12 @@
 /* Custom Dropdown Component */
 
-function customSelectHTML(label, id, options, selected) {
+function customSelectHTML(label, id, options, selected, required = false) {
   const sel = selected || options[0];
+  const labelHtml = required
+    ? `${label} <span class="req-star" title="Required">*</span>`
+    : label;
   return `<div class="form-group">
-    <label>${label}</label>
+    <label>${labelHtml}</label>
     <div class="custom-select" data-select-id="${id}">
       <button type="button" class="custom-select-trigger" aria-haspopup="listbox" aria-expanded="false">
         <span class="custom-select-value">${sel}</span>
