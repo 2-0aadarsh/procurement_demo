@@ -19,6 +19,20 @@ function customSelectHTML(label, id, options, selected, required = false) {
   </div>`;
 }
 
+/** Compact custom select for analytics toolbar (no form-group wrapper) */
+function inlineCustomSelectHTML(id, options, selected) {
+  const sel = selected || options[0];
+  return `<div class="custom-select custom-select--inline" data-select-id="${id}">
+    <button type="button" class="custom-select-trigger" aria-haspopup="listbox" aria-expanded="false">
+      <span class="custom-select-value">${sel}</span>
+      <i class="fa-solid fa-chevron-down custom-select-arrow"></i>
+    </button>
+    <div class="custom-select-menu" role="listbox">
+      ${options.map(o => `<div class="custom-select-option${o === sel ? ' selected' : ''}" role="option" data-value="${o}">${o}</div>`).join('')}
+    </div>
+  </div>`;
+}
+
 function initCustomSelects() {
   document.querySelectorAll('.custom-select').forEach(wrapper => {
     if (wrapper.dataset.bound) return;

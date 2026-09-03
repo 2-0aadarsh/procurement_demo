@@ -6,10 +6,13 @@ let currentPage = 'dashboard';
 let currentCategory = 'All';
 let currentPeriod = 'year';
 let analyticsFocusYear = 'all'; // 'all' | FY label e.g. 'FY25-26'
-let analyticsCompareMode = 'vendor'; // 'vendor' | 'item'
+let analyticsSliceType = 'quarter'; // 'quarter' | 'month' — after a FY is selected
+let analyticsPeriodFocus = 'all'; // 'all' | 'Q1'..'Q4' | month name
+let analyticsCompareMode = 'vendor'; // 'vendor' | 'progress'
 let currentWorkflowStep = null;
 let alertPanelOpen = false;
 let pageStack = [];
+let modalHistory = [];
 let tenderStatusFilter = 'all'; // 'all' | 'open' | 'evaluation' | 'draft'
 let pipelinePage = 1;
 const PIPELINE_PAGE_SIZE = 10;
@@ -301,6 +304,25 @@ function getVendorNavBadgeInfo(pageId) {
 
 function getNavBadgeInfo(item) {
   if (currentRole === 'vendor') return getVendorNavBadgeInfo(item.id);
+  if (item.id === 'sourcing') {
+    const sum = getGovDashboardActionCounts('All').sum;
+    return { count: sum, title: `${sum} action items (Open Tenders + Pending Approvals + Payment Delays)` };
+  }
+  if (item.id === 'workflow') {
+    return { count: item.badge || 0, title: item.badge ? `${item.badge} stage(s) need attention` : '' };
+  }
+  if (item.id === 'work-queue') {
+    const queue = getWorkQueueSource();
+    const unread = queue.filter(a => a.unread).length;
+    return { count: unread || queue.length, title: `${unread || queue.length} alert(s) in work queue` };
+  }
+  if (item.id === 'sla-desk') {
+    const open = SLA_THREADS.filter(t => t.status !== 'Resolved').length;
+    return { count: open, title: `${open} open SLA thread(s)` };
+  }
+  if (item.id === 'reports') {
+    return { count: 3, title: '3 downloadable report packs (Lifecycle, Sourcing, Operations)' };
+  }
   return { count: item.badge || 0, title: item.badge ? `${item.badge} item(s)` : '' };
 }
 
@@ -371,8 +393,12 @@ function renderTopbar() {
     dashboard: currentRole === 'vendor'
       ? ['My Dashboard', 'Your procurement activity at a glance']
       : ['Analytics Dashboard', 'Real-time procurement insights & KPIs'],
-    'work-queue': ['Alerts & Work Queue', 'Prioritized actions by severity, owner, due date and record type'],
-    'sla-desk': ['SLA Communication', 'Escalate and resolve issues with government officers as per SLA hierarchy'],
+    'work-queue': currentRole === 'gov'
+      ? ['Alerts & Work Queue', 'Prioritized government actions — approvals, payments, vendor SLA breaches, and tender pipeline']
+      : ['Alerts & Work Queue', 'Prioritized actions by severity, owner, due date and record type'],
+    'sla-desk': currentRole === 'gov'
+      ? ['SLA Communication', 'Respond to vendor escalations and resolve issues per internal response hierarchy']
+      : ['SLA Communication', 'Escalate and resolve issues with government officers as per SLA hierarchy'],
     workflow: ['Procurement Lifecycle', ''],
     'vendor-reg': ['Vendor Registration', 'Review and approve vendor onboarding requests'],
     sourcing: ['Sourcing & Award', 'Technical and commercial evaluation'],
@@ -381,7 +407,7 @@ function renderTopbar() {
     'vendor-matrix': ['Vendor Performance Matrix', 'Weighted scoring and vendor ranking'],
     reports: currentRole === 'vendor'
       ? ['My Reports', 'Bid participation, contract execution & downloadable analytics']
-      : ['Reports & Analytics', 'Comparative analytics and trend reports'],
+      : ['Reports & Analytics', 'Cross-module procurement intelligence — charts, tables and downloadable PDF/Excel packs'],
     settings: ['Settings & Branding', 'Organization name, logo, and configuration'],
     registration: ['Profile & KYC', 'Complete your vendor profile and verification'],
     tenders: ['Tender Discovery', getTenderPageSubtitle()],
@@ -448,8 +474,26 @@ function getPageMeta() {
     return chips.join('');
   }
   if (currentPage === 'sourcing') {
-    const count = filterByCategory(TENDERS).length;
-    return `<span class="meta-chip accent"><strong>${count}</strong> Active Tenders</span>`;
+    const actions = getGovDashboardActionCounts(currentCategory === 'All' ? 'All' : currentCategory);
+    return `<span class="meta-chip accent"><strong>${actions.sum}</strong> Action items</span>
+      <span class="meta-chip"><strong>${actions.open}</strong> Open</span>
+      <span class="meta-chip warning"><strong>${actions.pending}</strong> Pending</span>
+      <span class="meta-chip danger"><strong>${actions.delays}</strong> Delays</span>`;
+  }
+  if (currentPage === 'work-queue') {
+    const queue = getWorkQueueSource();
+    const unread = queue.filter(i => i.unread).length;
+    const high = queue.filter(i => i.severity === 'high').length;
+    return `<span class="meta-chip accent"><strong>${queue.length}</strong> Total alerts</span>
+      <span class="meta-chip warning"><strong>${unread}</strong> Unread</span>
+      <span class="meta-chip danger"><strong>${high}</strong> High priority</span>`;
+  }
+  if (currentPage === 'sla-desk') {
+    const open = SLA_THREADS.filter(t => t.status === 'Open').length;
+    const progress = SLA_THREADS.filter(t => t.status === 'In Progress').length;
+    return `<span class="meta-chip accent"><strong>${SLA_THREADS.length}</strong> Threads</span>
+      <span class="meta-chip danger"><strong>${open}</strong> Open</span>
+      <span class="meta-chip warning"><strong>${progress}</strong> In progress</span>`;
   }
   if (currentPage === 'tor') {
     const entries = filterByCategory(TOR_ENTRIES);
@@ -488,12 +532,17 @@ function updateBreadcrumb() {
 function updateBackButton() {
   const btn = document.getElementById('btnBack');
   if (!btn) return;
-  btn.classList.toggle('hidden', currentPage === 'dashboard');
+  // Show on every non-dashboard route (same pattern as vendor lifecycle pages)
+  const show = currentPage !== 'dashboard';
+  btn.classList.toggle('hidden', !show);
+  btn.title = show
+    ? (pageStack.length ? `Back to ${getPageLabel(pageStack[pageStack.length - 1])}` : 'Back to Dashboard')
+    : 'Go back';
 }
 
 function goBack() {
-  const prev = pageStack.pop() || 'dashboard';
-  currentPage = prev;
+  const prev = pageStack.length ? pageStack.pop() : 'dashboard';
+  currentPage = prev || 'dashboard';
   if (currentPage === 'dashboard') pageStack = [];
   renderSidebar();
   renderTopbar();
@@ -591,21 +640,29 @@ function updateCategoryBarInPlace() {
 function finishPageInit() {
   if (currentPage === 'dashboard') {
     setTimeout(() => {
-      if (currentRole === 'gov') refreshAllCharts(currentPeriod, currentCategory);
-      else { initCategoryChart(currentCategory); }
+      const period = currentRole === 'gov' ? getAnalyticsChartPeriod() : currentPeriod;
+      if (currentRole === 'gov') {
+        refreshAllCharts(period, currentCategory);
+        updateChartSubtitles();
+        syncAnalyticsFilterControls();
+      } else { initCategoryChart(currentCategory); }
     }, 100);
   }
   if (currentPage === 'reports') {
     setTimeout(() => {
       if (currentRole === 'vendor') initVendorReportCharts(currentCategory);
-      else refreshAllCharts(currentPeriod, currentCategory);
+      else refreshGovReportsPage();
     }, 100);
   }
   if (currentPage === 'vendor-matrix') {
-    setTimeout(() => initVendorTrendChart(filterByCategory(VENDORS)), 100);
+    setTimeout(() => {
+      if (currentRole === 'gov') refreshVendorMatrixPage();
+      else initVendorTrendChart(filterByCategory(VENDORS));
+    }, 100);
   }
   bindPageEvents();
   initCustomSelects();
+  bindAnalyticsFilterControls();
 }
 
 function renderPageContent() {
@@ -642,11 +699,11 @@ function categoryBadgeHint() {
   if (currentPage === 'clarifications') {
     return 'Badge count = clarifications in that category on this page';
   }
-  if (currentPage === 'dashboard') {
-    if (currentRole === 'vendor') {
+  if (currentPage === 'dashboard' || currentPage === 'sourcing') {
+    if (currentRole === 'vendor' && currentPage === 'dashboard') {
       return 'Badge count = open + evaluation + draft tenders + active bids + active contracts in that category';
     }
-    return 'Badge count = Open Tenders + Pending Approvals + Payment Delays for that category';
+    return 'Badge count = Open Tenders + Pending Approvals + Payment Delays (same as Analytics Dashboard)';
   }
   const hints = {
     dashboard: 'Active tender count per category on this page',
@@ -694,7 +751,7 @@ function categoryBar() {
 
 function getGovDashboardActionCounts(cat) {
   const tenders = cat === 'All' ? TENDERS : TENDERS.filter(t => t.category === cat);
-  const open = tenders.filter(t => ['Open', 'Evaluation', 'Draft'].includes(t.status)).length;
+  const open = tenders.filter(t => t.status === 'Open').length;
   const pendingList = typeof PENDING_APPROVALS !== 'undefined'
     ? (cat === 'All' ? PENDING_APPROVALS : PENDING_APPROVALS.filter(r => r.category === cat))
     : [];
@@ -727,7 +784,7 @@ function getCategoryItemCount(cat) {
     return VENDOR_REGISTRATIONS.filter(r => r.category === cat).length;
   }
   if (currentPage === 'sourcing') {
-    return TENDERS.filter(t => t.category === cat).length;
+    return getGovDashboardActionCounts(cat).sum;
   }
   if (currentPage === 'tor') {
     return TOR_ENTRIES.filter(t => t.category === cat).length;
@@ -930,13 +987,14 @@ function renderTenderPipeline(tenders) {
         <span class="meta-chip">${paged.total} tender${paged.total !== 1 ? 's' : ''}</span>
       </div>
       <table class="data-table">
-        <thead><tr><th>Tender ID</th><th>Title</th><th>Category</th><th>Deadline</th><th>Status</th><th>Action</th></tr></thead>
+        <thead><tr><th>S.No</th><th>Tender ID</th><th>Title</th><th>Category</th><th>Deadline</th><th>Status</th><th>Action</th></tr></thead>
         <tbody>
-          ${paged.items.length ? paged.items.map(t => `<tr onclick="openDrillDown('tender','${t.id}','${t.title} - ${t.category}. Value: ${t.value}. Status: ${t.status}.')">
+          ${paged.items.length ? paged.items.map((t, i) => `<tr onclick="openDrillDown('tender','${t.id}','${t.title} - ${t.category}. Value: ${t.value}. Status: ${t.status}.')">
+            <td>${paged.from + i}</td>
             <td><strong>${t.id}</strong></td><td>${t.title}</td><td>${t.category}</td><td>${formatDateDMY(t.deadline)}</td>
             <td><span class="badge badge-${tenderBadgeClass(t.status)}">${t.status}</span></td>
             <td><button class="btn btn-outline" style="padding:0.3rem 0.6rem;font-size:0.75rem">${pipelineActionLabel(t.status)}</button></td>
-          </tr>`).join('') : emptyTableRow(6, 'No tenders in pipeline for this category.')}
+          </tr>`).join('') : emptyTableRow(7, 'No tenders in pipeline for this category.')}
         </tbody>
       </table>
       ${renderPaginationControls(paged.page, paged.totalPages, paged.total, paged.from, paged.to, 'setPipelinePage')}
@@ -956,43 +1014,218 @@ function timeToggle() {
   </div>`;
 }
 
-function renderAnalyticsFilterBar() {
+function renderAnalyticsFilterBar(options = {}) {
+  const { showCompare = true } = options;
   const fyOptions = typeof ANALYTICS_FY_OPTIONS !== 'undefined' ? ANALYTICS_FY_OPTIONS : ['all'];
   const years = fyOptions.filter(y => y !== 'all');
+  const yearSelected = analyticsFocusYear !== 'all';
+  const quarters = typeof ANALYTICS_QUARTER_OPTIONS !== 'undefined' ? ANALYTICS_QUARTER_OPTIONS : [];
+  const months = typeof ANALYTICS_MONTH_OPTIONS !== 'undefined' ? ANALYTICS_MONTH_OPTIONS : [];
+  const fyDisplay = fyOptions.map(y => y === 'all' ? 'All 10 years' : y);
+  const fySelectedDisplay = analyticsFocusYear === 'all' ? 'All 10 years' : analyticsFocusYear;
+
   return `<div class="analytics-filter">
     <div class="analytics-filter-intro">
       <div class="analytics-filter-icon"><i class="fa-solid fa-chart-line"></i></div>
       <div>
         <h3>Performance Matrix Explorer</h3>
-        <p>Explore the last 10 financial years. Pick Year / Quarter / Month, focus a FY, then switch Vendor-wise or Item-wise comparison — category tabs above still drive the action-queue totals.</p>
+        <p>Select a <strong>financial year</strong>, choose <strong>quarter</strong> or <strong>month</strong> view, then pick a specific period to filter all charts below.</p>
       </div>
     </div>
     <div class="analytics-filter-controls">
       <div class="analytics-control">
-        <span class="analytics-control-label">Granularity</span>
-        ${timeToggle()}
-      </div>
-      <div class="analytics-control">
         <span class="analytics-control-label">Focus year</span>
-        <label class="analytics-select-wrap">
-          <select id="analyticsFocusYear" onchange="setAnalyticsFocusYear(this.value)" aria-label="Focus financial year">
-            ${fyOptions.map(y => `<option value="${y}" ${analyticsFocusYear === y ? 'selected' : ''}>${y === 'all' ? 'All 10 years' : y}</option>`).join('')}
-          </select>
-        </label>
+        ${typeof inlineCustomSelectHTML === 'function'
+          ? inlineCustomSelectHTML('analyticsFocusYear', fyDisplay, fySelectedDisplay)
+          : `<select id="analyticsFocusYear" onchange="setAnalyticsFocusYear(this.value)">${fyDisplay.map(d => `<option>${d}</option>`).join('')}</select>`}
       </div>
-      <div class="analytics-control">
+      <div class="analytics-control ${yearSelected ? '' : 'analytics-control--muted'}">
+        <span class="analytics-control-label">View by ${yearSelected ? '' : '(select a year first)'}</span>
+        <div class="analytics-segment ${yearSelected ? '' : 'is-disabled'}" role="group" aria-label="Quarter or month view">
+          <button type="button" class="analytics-seg-btn ${analyticsSliceType === 'quarter' ? 'active' : ''}" onclick="setAnalyticsSliceType('quarter')" ${yearSelected ? '' : 'disabled'}><i class="fa-solid fa-table-cells"></i> Quarter</button>
+          <button type="button" class="analytics-seg-btn ${analyticsSliceType === 'month' ? 'active' : ''}" onclick="setAnalyticsSliceType('month')" ${yearSelected ? '' : 'disabled'}><i class="fa-solid fa-calendar-days"></i> Month</button>
+        </div>
+      </div>
+      ${showCompare ? `<div class="analytics-control">
         <span class="analytics-control-label">Compare by</span>
         <div class="analytics-segment" role="group" aria-label="Comparison mode">
           <button type="button" class="analytics-seg-btn ${analyticsCompareMode === 'vendor' ? 'active' : ''}" onclick="setAnalyticsCompareMode('vendor')"><i class="fa-solid fa-users"></i> Vendor-wise</button>
-          <button type="button" class="analytics-seg-btn ${analyticsCompareMode === 'item' ? 'active' : ''}" onclick="setAnalyticsCompareMode('item')"><i class="fa-solid fa-boxes-stacked"></i> Item-wise</button>
+          <button type="button" class="analytics-seg-btn ${analyticsCompareMode === 'progress' ? 'active' : ''}" onclick="setAnalyticsCompareMode('progress')"><i class="fa-solid fa-arrow-trend-up"></i> Progress trend</button>
         </div>
-      </div>
+      </div>` : ''}
     </div>
     <div class="analytics-fy-chips" role="group" aria-label="Quick year select">
       <button type="button" class="analytics-fy-chip ${analyticsFocusYear === 'all' ? 'active' : ''}" onclick="setAnalyticsFocusYear('all')">All 10 yrs</button>
       ${years.map(y => `<button type="button" class="analytics-fy-chip ${analyticsFocusYear === y ? 'active' : ''}" onclick="setAnalyticsFocusYear('${y}')">${y.replace('FY', '')}</button>`).join('')}
     </div>
+    ${yearSelected ? `<div class="analytics-period-row">
+      <span class="analytics-control-label">Select ${analyticsSliceType === 'quarter' ? 'quarter' : 'month'} in ${analyticsFocusYear}</span>
+      <div class="analytics-fy-chips" role="group" aria-label="Period select">
+        <button type="button" class="analytics-fy-chip ${analyticsPeriodFocus === 'all' ? 'active' : ''}" onclick="setAnalyticsPeriodFocus('all')">All</button>
+        ${analyticsSliceType === 'quarter'
+          ? quarters.map(q => `<button type="button" class="analytics-fy-chip ${analyticsPeriodFocus === q.id ? 'active' : ''}" onclick="setAnalyticsPeriodFocus('${q.id}')" title="${q.range}">${q.label} <em>${q.range}</em></button>`).join('')
+          : months.map(m => `<button type="button" class="analytics-fy-chip ${analyticsPeriodFocus === m ? 'active' : ''}" onclick="setAnalyticsPeriodFocus('${m}')">${m}</button>`).join('')}
+      </div>
+    </div>` : `<p class="analytics-filter-hint"><i class="fa-solid fa-circle-info"></i> All 10 years selected — charts show year-over-year trends. Pick a FY to enable quarter/month filtering.</p>`}
   </div>`;
+}
+
+function getAnalyticsContextLabel() {
+  const cat = currentCategory === 'All' ? 'All categories' : currentCategory;
+  if (analyticsFocusYear === 'all') return `Last 10 FYs · ${cat}`;
+  let period = analyticsSliceType === 'month' ? 'Monthly view' : 'Quarterly view';
+  if (analyticsPeriodFocus !== 'all') period = analyticsPeriodFocus;
+  return `${analyticsFocusYear} · ${period} · ${cat}`;
+}
+
+function getChartSubtitle(chartKey) {
+  const ctx = getAnalyticsContextLabel();
+  const units = {
+    spend: '₹ Crore — total procurement outlay',
+    procurement: 'tenders — count of tenders published/processed',
+    vendorPerf: 'points (0–100) — weighted vendor score',
+    savings: '₹ Crore — realized cost savings'
+  };
+  return `${ctx} · ${units[chartKey] || ''}`;
+}
+
+function updateChartSubtitles() {
+  document.querySelectorAll('[data-chart-sub]').forEach(el => {
+    const key = el.dataset.chartSub;
+    if (key) el.textContent = getChartSubtitle(key);
+  });
+  updateAnalyticsExplorerSubtitle();
+}
+
+function getAnalyticsChartPeriod() {
+  if (analyticsFocusYear === 'all') return 'year';
+  return analyticsSliceType || 'quarter';
+}
+
+function isGovAnalyticsPage() {
+  return currentRole === 'gov' && (currentPage === 'dashboard' || currentPage === 'vendor-matrix' || currentPage === 'reports');
+}
+
+function getReportsPeriodTotals() {
+  const period = getAnalyticsChartPeriod();
+  const cat = currentCategory;
+  const spend = typeof resolveChartSeries === 'function' ? resolveChartSeries('spend', period) : { data: [] };
+  const savings = typeof resolveChartSeries === 'function' ? resolveChartSeries('savings', period) : { data: [] };
+  const spendData = typeof scaleData === 'function' ? scaleData(spend.data || [], cat) : (spend.data || []);
+  const saveData = typeof scaleData === 'function' ? scaleData(savings.data || [], cat) : (savings.data || []);
+  const spendTotal = Math.round(spendData.reduce((s, v) => s + (Number(v) || 0), 0) * 10) / 10;
+  const saveTotal = Math.round(saveData.reduce((s, v) => s + (Number(v) || 0), 0) * 10) / 10;
+  const rate = spendTotal > 0 ? Math.round((saveTotal / spendTotal) * 1000) / 10 : 0;
+  return { spendTotal, saveTotal, rate, period };
+}
+
+function refreshGovReportsPage() {
+  const period = getAnalyticsChartPeriod();
+  if (typeof initSpendChart === 'function') initSpendChart(period, currentCategory);
+  if (typeof initSavingsChart === 'function') initSavingsChart(period, currentCategory);
+  if (typeof initGovReportCharts === 'function') initGovReportCharts(currentCategory);
+  updateChartSubtitles();
+  syncAnalyticsFilterControls();
+  const totals = getReportsPeriodTotals();
+  const spendEl = document.getElementById('reportSpendTotal');
+  const saveEl = document.getElementById('reportSaveTotal');
+  const rateEl = document.getElementById('reportSaveRate');
+  const ctxEl = document.getElementById('reportContextLabel');
+  if (spendEl) spendEl.textContent = `₹${totals.spendTotal} Cr`;
+  if (saveEl) saveEl.textContent = `₹${totals.saveTotal} Cr`;
+  if (rateEl) rateEl.textContent = `${totals.rate}%`;
+  if (ctxEl) ctxEl.textContent = getAnalyticsContextLabel();
+  document.querySelectorAll('.analytics-period-row .analytics-fy-chip').forEach(chip => {
+    const label = chip.textContent.trim().split(/\s/)[0];
+    const isAll = analyticsPeriodFocus === 'all' && label === 'All';
+    const isMatch = analyticsPeriodFocus !== 'all' && (label === analyticsPeriodFocus || chip.textContent.includes(analyticsPeriodFocus));
+    chip.classList.toggle('active', isAll || isMatch);
+  });
+}
+
+/** Scale factor for vendor scores based on FY / quarter / month explorer selection */
+function getAnalyticsScoreFactor() {
+  const focus = analyticsFocusYear;
+  if (!focus || focus === 'all') return 1;
+
+  const vp = CHART_DATA.vendorPerf;
+  if (!vp) return 1;
+
+  const yearIdx = vp.year.labels.indexOf(focus);
+  const base = yearIdx >= 0 ? vp.year.data[yearIdx] : 88;
+  const latest = vp.year.data[vp.year.data.length - 1];
+  let factor = latest ? base / latest : 1;
+
+  const periodData = analyticsSliceType === 'month' ? vp.month : vp.quarter;
+  const pf = analyticsPeriodFocus;
+  if (pf && pf !== 'all') {
+    const pidx = periodData.labels.findIndex(l => l === pf || l.startsWith(pf) || l.includes(pf));
+    if (pidx >= 0) {
+      const periodVal = periodData.data[pidx];
+      const periodAvg = periodData.data.reduce((s, v) => s + v, 0) / periodData.data.length;
+      factor *= periodAvg ? periodVal / periodAvg : 1;
+    }
+  }
+
+  return factor;
+}
+
+function adjustVendorScores(vendor, factor) {
+  if (factor === 1) return vendor;
+  const adj = v => Math.min(100, Math.max(1, Math.round(v * factor * 10) / 10));
+  const quality = adj(vendor.quality);
+  const leadTime = adj(vendor.leadTime);
+  const cost = adj(vendor.cost);
+  const regulatory = adj(vendor.regulatory);
+  const satisfaction = adj(vendor.satisfaction);
+  const overall = Math.round(quality * 0.3 + leadTime * 0.2 + cost * 0.2 + regulatory * 0.2 + satisfaction * 0.1);
+  return { ...vendor, quality, leadTime, cost, regulatory, satisfaction, overall };
+}
+
+function getAnalyticsAdjustedVendors(vendors) {
+  const factor = getAnalyticsScoreFactor();
+  return vendors.map(v => adjustVendorScores(v, factor));
+}
+
+function refreshDashboardVendorTable() {
+  const tbody = document.querySelector('#dashboardVendorTable tbody');
+  if (!tbody) return;
+  const vendors = getAnalyticsAdjustedVendors(filterByCategory(VENDORS));
+  tbody.innerHTML = renderVendorTableRows(vendors);
+}
+
+function refreshVendorMatrixPage() {
+  const vendors = getAnalyticsAdjustedVendors(filterByCategory(VENDORS));
+  if (typeof initVendorTrendChart === 'function') initVendorTrendChart(vendors);
+  updateVendorMatrixSubtitle();
+  const tbody = document.querySelector('#vendorMatrixTable tbody');
+  if (tbody) tbody.innerHTML = renderVendorTableRows(vendors);
+  syncAnalyticsFilterControls();
+  document.querySelectorAll('.analytics-period-row .analytics-fy-chip').forEach(chip => {
+    const label = chip.textContent.trim().split(/\s/)[0];
+    const isAll = analyticsPeriodFocus === 'all' && label === 'All';
+    const isMatch = analyticsPeriodFocus !== 'all' && (label === analyticsPeriodFocus || chip.textContent.includes(analyticsPeriodFocus));
+    chip.classList.toggle('active', isAll || isMatch);
+  });
+}
+
+function updateVendorMatrixSubtitle() {
+  const subtitle = document.getElementById('vendorMatrixChartSubtitle');
+  if (subtitle) {
+    subtitle.textContent = `${getAnalyticsContextLabel()} · Vendor score comparison (pts 0–100)`;
+  }
+}
+
+function bindAnalyticsFilterControls() {
+  const wrapper = document.querySelector('.custom-select[data-select-id="analyticsFocusYear"]');
+  if (wrapper && !wrapper.dataset.analyticsBound) {
+    wrapper.dataset.analyticsBound = 'true';
+    wrapper.addEventListener('change', e => {
+      const display = e.detail?.value || '';
+      const year = display === 'All 10 years' ? 'all' : display;
+      setAnalyticsFocusYear(year);
+    });
+  }
 }
 
 // ========== DASHBOARD ==========
@@ -1009,15 +1242,11 @@ function renderGovDashboard() {
   const avgScore = vendors.length
     ? (vendors.reduce((s, v) => s + v.overall, 0) / vendors.length).toFixed(1)
     : '—';
-  const compareTitle = analyticsCompareMode === 'vendor' ? 'Vendor-wise Comparison' : 'Item-wise Comparison';
+  const compareTitle = analyticsCompareMode === 'vendor' ? 'Vendor-wise Comparison' : 'Tender Progress Trend';
+  const compareIcon = analyticsCompareMode === 'vendor' ? 'users' : 'arrow-trend-up';
   const metricAvgs = getCategoryMetricAverages(vendors);
 
   return `
-    <div class="sticky-banner">
-      <span class="banner-icon"><i class="fa-solid fa-triangle-exclamation"></i></span>
-      <div><strong>Restrictive Notice:</strong> Vendor VND-MP-001345 suspended pending compliance review. <a href="#" onclick="navigateTo('tor');return false" style="color:#e65100;font-weight:600">View Details →</a></div>
-    </div>
-
     <div class="kpi-section">
       <div class="kpi-section-label"><i class="fa-solid fa-bolt"></i> Action queue <span class="kpi-section-sum">Tab total = ${actions.sum}</span></div>
       <div class="kpi-grid kpi-grid--actions">
@@ -1048,7 +1277,7 @@ function renderGovDashboard() {
           <div class="kpi-change up">↑ 8.2% YoY</div>
         </div>
         <div class="kpi-card teal" onclick="openGovKpiDetail('avgVendorScore')">
-          <div class="kpi-label">Avg Vendor Score</div>
+          <div class="kpi-label">Vendor Score</div>
           <div class="kpi-value">${avgScore}</div>
           <div class="kpi-change up">↑ 3.2 pts YoY</div>
         </div>
@@ -1060,25 +1289,37 @@ function renderGovDashboard() {
     <div class="chart-grid">
       <div class="chart-card full">
         <div class="chart-header">
-          <h3><i class="fa-solid fa-${analyticsCompareMode === 'vendor' ? 'users' : 'boxes-stacked'}"></i> ${compareTitle}</h3>
-          <span class="chart-subtitle">${analyticsFocusYear === 'all' ? 'Last 10 FYs' : analyticsFocusYear} · ${currentPeriod} view · ${currentCategory === 'All' ? 'All categories' : currentCategory}</span>
+          <h3><i class="fa-solid fa-${compareIcon}"></i> ${compareTitle}</h3>
+          <span class="chart-subtitle">${getAnalyticsContextLabel()} · ${analyticsCompareMode === 'progress' ? 'Tender pipeline' : 'Vendor score comparison'}</span>
         </div>
         <div class="chart-container chart-container--tall"><canvas id="chartAnalyticsCompare"></canvas></div>
       </div>
       <div class="chart-card">
-        <div class="chart-header"><h3><i class="fa-solid fa-chart-column"></i> Spend Trends (₹ Cr)</h3></div>
+        <div class="chart-header">
+          <h3><i class="fa-solid fa-chart-column"></i> Spend Trends (₹ Cr)</h3>
+          <span class="chart-subtitle" data-chart-sub="spend">Total procurement spend · unit: ₹ Crore</span>
+        </div>
         <div class="chart-container"><canvas id="chartSpend"></canvas></div>
       </div>
       <div class="chart-card">
-        <div class="chart-header"><h3><i class="fa-solid fa-chart-line"></i> Procurement Trends</h3></div>
+        <div class="chart-header">
+          <h3><i class="fa-solid fa-chart-line"></i> Procurement Trends (Tender)</h3>
+          <span class="chart-subtitle" data-chart-sub="procurement">Tenders published / processed · unit: count of tenders</span>
+        </div>
         <div class="chart-container"><canvas id="chartProcurement"></canvas></div>
       </div>
       <div class="chart-card">
-        <div class="chart-header"><h3><i class="fa-solid fa-star"></i> Vendor Performance Trends</h3></div>
+        <div class="chart-header">
+          <h3><i class="fa-solid fa-star"></i> Vendor Performance Trends</h3>
+          <span class="chart-subtitle" data-chart-sub="vendorPerf">Weighted vendor score · unit: points (0–100)</span>
+        </div>
         <div class="chart-container"><canvas id="chartVendorPerf"></canvas></div>
       </div>
       <div class="chart-card">
-        <div class="chart-header"><h3><i class="fa-solid fa-piggy-bank"></i> Savings Realization (₹ Cr)</h3></div>
+        <div class="chart-header">
+          <h3><i class="fa-solid fa-piggy-bank"></i> Savings Realization (₹ Cr)</h3>
+          <span class="chart-subtitle" data-chart-sub="savings">Cost savings from optimization · unit: ₹ Crore</span>
+        </div>
         <div class="chart-container"><canvas id="chartSavings"></canvas></div>
       </div>
       <div class="chart-card full">
@@ -1095,11 +1336,10 @@ function renderGovDashboard() {
         return `<div class="weight-card weight-card--clickable" onclick="openGovKpiDetail('metric:${m.key}')" title="View ${m.label} detail">
           <div class="weight-pct">${avg}</div>
           <div class="weight-label">${m.label}</div>
-          <div class="weight-meta">Avg score · weight ${m.weight}%</div>
         </div>`;
       }).join('')}
     </div>
-    ${renderVendorTable()}
+    ${renderVendorTable({ tableId: 'dashboardVendorTable' })}
   `;
 }
 
@@ -1156,21 +1396,26 @@ function renderVendorDashboard() {
   `;
 }
 
-function renderVendorTable() {
-  const vendors = filterByCategory(VENDORS);
-  return `<div class="data-table-wrap">
-    <div class="table-header"><h3>Vendor Performance Matrix ${currentCategory !== 'All' ? `— ${currentCategory}` : ''}</h3><button class="btn btn-outline" onclick="navigateTo('vendor-matrix')">Full Matrix →</button></div>
+function renderVendorTableRows(vendors) {
+  return vendors.length ? vendors.map(v => `<tr onclick="openVendorDetail('${v.id}')">
+    <td><strong>${v.id}</strong></td>
+    <td>${v.name}</td>
+    <td>${v.category}</td>
+    ${[v.quality, v.leadTime, v.cost, v.regulatory, v.satisfaction].map(s => `<td><div class="score-bar"><div class="score-track"><div class="score-fill ${s >= 85 ? 'high' : s >= 70 ? 'mid' : 'low'}" style="width:${s}%"></div></div><span>${s}</span></div></td>`).join('')}
+    <td><strong>${v.overall}</strong></td>
+    <td><span class="badge badge-${v.status === 'Preferred' ? 'success' : v.status === 'Watch' ? 'danger' : 'info'}">${v.status}</span></td>
+  </tr>`).join('') : emptyTableRow(10);
+}
+
+function renderVendorTable(options = {}) {
+  const { showNavButton = true, tableId = '' } = options;
+  const vendors = getAnalyticsAdjustedVendors(filterByCategory(VENDORS));
+  return `<div class="data-table-wrap"${tableId ? ` id="${tableId}"` : ''}>
+    <div class="table-header"><h3>Vendor Performance Matrix ${currentCategory !== 'All' ? `— ${currentCategory}` : ''}</h3>${showNavButton ? `<button class="btn btn-outline" onclick="navigateTo('vendor-matrix')">Full Matrix →</button>` : ''}</div>
     <table class="data-table">
       <thead><tr><th>Vendor ID</th><th>Name</th><th>Category</th><th>Quality</th><th>Lead Time</th><th>Cost</th><th>Regulatory</th><th>Satisfaction</th><th>Overall</th><th>Status</th></tr></thead>
       <tbody>
-        ${vendors.length ? vendors.map(v => `<tr onclick="openVendorDetail('${v.id}')">
-          <td><strong>${v.id}</strong></td>
-          <td>${v.name}</td>
-          <td>${v.category}</td>
-          ${[v.quality, v.leadTime, v.cost, v.regulatory, v.satisfaction].map(s => `<td><div class="score-bar"><div class="score-track"><div class="score-fill ${s >= 85 ? 'high' : s >= 70 ? 'mid' : 'low'}" style="width:${s}%"></div></div><span>${s}</span></div></td>`).join('')}
-          <td><strong>${v.overall}</strong></td>
-          <td><span class="badge badge-${v.status === 'Preferred' ? 'success' : v.status === 'Watch' ? 'danger' : 'info'}">${v.status}</span></td>
-        </tr>`).join('') : emptyTableRow(10)}
+        ${renderVendorTableRows(vendors)}
       </tbody>
     </table>
   </div>`;
@@ -2334,11 +2579,32 @@ function openWorkflowDocument(docId) {
 function openModal(title, bodyHtml, options = {}) {
   const overlay = document.getElementById('modalOverlay');
   const modal = overlay?.querySelector('.modal');
-  document.getElementById('modalTitle').textContent = title;
-  document.getElementById('modalBody').innerHTML = bodyHtml;
+  const titleEl = document.getElementById('modalTitle');
+  const bodyEl = document.getElementById('modalBody');
+  const backBtn = document.getElementById('modalBackBtn');
+
+  const alreadyOpen = overlay?.classList.contains('open');
+  if (alreadyOpen && !options.fromBack && !options.replace) {
+    modalHistory.push({
+      title: titleEl?.textContent || '',
+      body: bodyEl?.innerHTML || '',
+      wide: !!modal?.classList.contains('modal--wide'),
+      large: !!modal?.classList.contains('modal--lg'),
+      extraWide: !!modal?.classList.contains('modal--xl')
+    });
+  }
+  if (!alreadyOpen && !options.fromBack) {
+    modalHistory = [];
+  }
+
+  if (titleEl) titleEl.textContent = title;
+  if (bodyEl) bodyEl.innerHTML = bodyHtml;
   modal?.classList.toggle('modal--wide', !!options.wide);
   modal?.classList.toggle('modal--lg', !!options.large);
+  modal?.classList.toggle('modal--xl', !!options.extraWide);
   overlay?.classList.add('open');
+  backBtn?.classList.toggle('hidden', modalHistory.length === 0);
+
   if (options.highlightStage) {
     requestAnimationFrame(() => {
       const el = document.getElementById(`guide-stage-${options.highlightStage}`);
@@ -2346,6 +2612,21 @@ function openModal(title, bodyHtml, options = {}) {
       el?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
     });
   }
+}
+
+function modalGoBack() {
+  const prev = modalHistory.pop();
+  if (!prev) {
+    closeModal();
+    return;
+  }
+  openModal(prev.title, prev.body, {
+    wide: prev.wide,
+    large: prev.large,
+    extraWide: prev.extraWide,
+    fromBack: true,
+    replace: true
+  });
 }
 
 function getAuditTrailEntries() {
@@ -2635,25 +2916,138 @@ function renderVendorReg() {
     </div>`;
 }
 
+function getLinkedItemsForTender(tender) {
+  if (!tender || typeof CATEGORY_ITEM_TYPES === 'undefined') return [];
+  const items = CATEGORY_ITEM_TYPES[tender.category] || [];
+  const title = (tender.title || '').toLowerCase();
+  const matched = items.filter(i => {
+    const name = (i.name || '').toLowerCase();
+    const tokens = name.split(/[\s&/]+/).filter(w => w.length > 3);
+    return tokens.some(tok => title.includes(tok)) || title.includes(name.split(' ')[0].toLowerCase());
+  });
+  if (matched.length) return matched;
+  // Fall back to items whose spend matches tender value
+  const byValue = items.filter(i => i.spend === tender.value);
+  return byValue.length ? byValue : items.slice(0, 2);
+}
+
+function getBidForTender(tenderId) {
+  return typeof BIDS !== 'undefined' ? BIDS.find(b => b.tenderId === tenderId) : null;
+}
+
 function renderSourcing() {
-  const tenders = filterByCategory(TENDERS);
-  return `<div class="data-table-wrap">
-      <div class="table-header"><h3>Active Tenders — Sourcing & Award (${tenders.length})</h3></div>
+  const actions = getGovDashboardActionCounts(currentCategory === 'All' ? 'All' : currentCategory);
+  const openTenders = filterListByCategory(TENDERS).filter(t => t.status === 'Open');
+  const evalTenders = filterListByCategory(TENDERS).filter(t => t.status === 'Evaluation');
+  const pending = filterListByCategory(PENDING_APPROVALS);
+  const delays = filterListByCategory(PAYMENT_DELAYS);
+  const catLabel = currentCategory === 'All' ? 'All categories' : currentCategory;
+
+  return `
+    <div class="kpi-section">
+      <div class="kpi-section-label"><i class="fa-solid fa-bolt"></i> Same action queue as Analytics · ${catLabel} <span class="kpi-section-sum">Tab total = ${actions.sum}</span></div>
+      <div class="kpi-grid kpi-grid--actions">
+        <div class="kpi-card blue" onclick="document.getElementById('sourcingOpenTenders')?.scrollIntoView({behavior:'smooth',block:'start'})">
+          <div class="kpi-label">Open Tenders</div>
+          <div class="kpi-value">${actions.open}</div>
+          <div class="kpi-change">Accepting bids</div>
+        </div>
+        <div class="kpi-card orange" onclick="document.getElementById('sourcingPending')?.scrollIntoView({behavior:'smooth',block:'start'})">
+          <div class="kpi-label">Pending Approvals</div>
+          <div class="kpi-value">${actions.pending}</div>
+          <div class="kpi-change">Awaiting sanction</div>
+        </div>
+        <div class="kpi-card red" onclick="document.getElementById('sourcingDelays')?.scrollIntoView({behavior:'smooth',block:'start'})">
+          <div class="kpi-label">Payment Delays</div>
+          <div class="kpi-value">${actions.delays}</div>
+          <div class="kpi-change">Invoice holds</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="data-table-wrap" id="sourcingOpenTenders">
+      <div class="table-header"><h3>Open Tenders — ${catLabel} (${openTenders.length})</h3></div>
       <table class="data-table">
-        <thead><tr><th>Tender ID</th><th>Title</th><th>Category</th><th>Bids</th><th>Evaluation</th><th>Commercial</th><th>Status</th></tr></thead>
+        <thead><tr><th>S.No</th><th>Tender ID</th><th>Title</th><th>Category</th><th>Value</th><th>Bids</th><th>Deadline</th><th>Status</th></tr></thead>
         <tbody>
-          ${tenders.length ? tenders.map(t => `<tr>
-            <td><strong>${t.id}</strong></td><td>${t.title}</td><td>${t.category}</td><td>${t.bids}</td>
-            <td><span class="badge badge-${t.status==='Evaluation'?'warning':'muted'}">${t.status==='Evaluation'?'In Progress':'—'}</span></td>
-            <td><span class="badge badge-muted"><i class="fa-solid fa-lock"></i> Sealed</span></td>
+          ${openTenders.length ? openTenders.map((t, i) => `<tr onclick="openTenderDetail('${t.id}')" style="cursor:pointer">
+            <td>${i + 1}</td>
+            <td><strong>${t.id}</strong></td>
+            <td>${t.title}</td>
+            <td>${t.category}</td>
+            <td>${t.value}</td>
+            <td>${t.bids}</td>
+            <td>${formatDateDMY(t.deadline)}</td>
             <td><span class="badge badge-${tenderBadgeClass(t.status)}">${t.status}</span></td>
-          </tr>`).join('') : emptyTableRow(7)}
+          </tr>`).join('') : emptyTableRow(8, 'No open tenders for this category.')}
         </tbody>
       </table>
     </div>
+
+    ${evalTenders.length ? `<div class="data-table-wrap mt-2">
+      <div class="table-header"><h3>Under Evaluation — ${catLabel} (${evalTenders.length})</h3></div>
+      <table class="data-table">
+        <thead><tr><th>S.No</th><th>Tender ID</th><th>Title</th><th>Category</th><th>Value</th><th>Bids</th><th>Evaluation</th><th>Commercial</th><th>Status</th></tr></thead>
+        <tbody>
+          ${evalTenders.map((t, i) => {
+            const bid = getBidForTender(t.id);
+            return `<tr onclick="openTenderDetail('${t.id}')" style="cursor:pointer">
+              <td>${i + 1}</td>
+              <td><strong>${t.id}</strong></td>
+              <td>${t.title}</td>
+              <td>${t.category}</td>
+              <td>${t.value}</td>
+              <td>${t.bids}</td>
+              <td><span class="badge badge-warning">${bid?.status === 'Under Evaluation' || t.status === 'Evaluation' ? 'In Progress' : '—'}</span></td>
+              <td><span class="badge badge-muted"><i class="fa-solid fa-lock"></i> ${bid?.financial || 'Sealed'}</span></td>
+              <td><span class="badge badge-${tenderBadgeClass(t.status)}">${t.status}</span></td>
+            </tr>`;
+          }).join('')}
+        </tbody>
+      </table>
+    </div>` : ''}
+
+    <div class="data-table-wrap mt-2" id="sourcingPending">
+      <div class="table-header"><h3>Pending Approvals — ${catLabel} (${pending.length})</h3></div>
+      <table class="data-table">
+        <thead><tr><th>S.No</th><th>PR ID</th><th>Title</th><th>Category</th><th>Stage</th><th>Amount</th><th>Age</th><th>Owner</th></tr></thead>
+        <tbody>
+          ${pending.length ? pending.map((r, i) => `<tr>
+            <td>${i + 1}</td>
+            <td><strong>${r.id}</strong></td>
+            <td>${r.title}</td>
+            <td>${r.category}</td>
+            <td><span class="badge badge-warning">${r.stage}</span></td>
+            <td>${r.amount}</td>
+            <td>${r.age}</td>
+            <td>${r.owner}</td>
+          </tr>`).join('') : emptyTableRow(8, 'No pending approvals for this category.')}
+        </tbody>
+      </table>
+    </div>
+
+    <div class="data-table-wrap mt-2" id="sourcingDelays">
+      <div class="table-header"><h3>Payment Delays — ${catLabel} (${delays.length})</h3></div>
+      <table class="data-table">
+        <thead><tr><th>S.No</th><th>Invoice</th><th>Vendor</th><th>Category</th><th>Amount</th><th>Overdue</th><th>Reason</th><th>Contract</th></tr></thead>
+        <tbody>
+          ${delays.length ? delays.map((r, i) => `<tr>
+            <td>${i + 1}</td>
+            <td><strong>${r.id}</strong></td>
+            <td>${r.vendor}</td>
+            <td>${r.category}</td>
+            <td>${r.amount}</td>
+            <td><span class="badge badge-danger">${r.daysOverdue}d</span></td>
+            <td>${r.reason}</td>
+            <td>${r.contractId}</td>
+          </tr>`).join('') : emptyTableRow(8, 'No payment delays for this category.')}
+        </tbody>
+      </table>
+    </div>
+
     <div class="wf-detail mt-2">
       <h3>Weighted Vendor Recommendation</h3>
-      <p>Selected vendor receives explainable weighted score. Blacklisted/expired/non-compliant bidders auto-blocked.</p>
+      <p>Selected vendor receives explainable weighted score. Blacklisted/expired/non-compliant bidders auto-blocked. Score weights match Analytics Vendor Performance Matrix.</p>
       <div class="score-weights">${SCORE_WEIGHTS.map(w => `<div class="weight-card"><div class="weight-pct">${w.weight}%</div><div class="weight-label">${w.label}</div></div>`).join('')}</div>
     </div>`;
 }
@@ -2687,19 +3081,323 @@ function renderTOR() {
 }
 
 function renderVendorMatrix() {
-  return `${timeToggle()}
-    <div class="chart-card mb-2"><div class="chart-header"><h3>Vendor Comparison</h3></div><div class="chart-container"><canvas id="chartVendorTrend"></canvas></div></div>
-    ${renderVendorTable()}`;
+  return `${renderAnalyticsFilterBar({ showCompare: false })}
+    <div class="chart-card mb-2">
+      <div class="chart-header">
+        <h3>Vendor Comparison</h3>
+        <span class="chart-subtitle" id="vendorMatrixChartSubtitle">${getAnalyticsContextLabel()} · Vendor score comparison (pts 0–100)</span>
+      </div>
+      <div class="chart-container"><canvas id="chartVendorTrend"></canvas></div>
+    </div>
+    ${renderVendorTable({ showNavButton: false, tableId: 'vendorMatrixTable' })}`;
 }
 
 function renderReports() {
   if (currentRole === 'vendor') return renderVendorReports();
-  return `<div class="flex items-center gap-1 mb-2" style="justify-content:flex-end">${timeToggle()}</div>
-    <div class="chart-grid">
-      <div class="chart-card"><div class="chart-header"><h3>Spend Trends</h3></div><div class="chart-container"><canvas id="chartSpend"></canvas></div></div>
-      <div class="chart-card"><div class="chart-header"><h3>Savings Realization</h3></div><div class="chart-container"><canvas id="chartSavings"></canvas></div></div>
+  return renderGovReports();
+}
+
+function getGovReportDataset(category = currentCategory) {
+  const filter = (items, field = 'category') => (category === 'All' ? items : items.filter(i => i[field] === category));
+  const workQueue = getWorkQueueSource();
+  const filteredQueue = category === 'All'
+    ? workQueue
+    : workQueue.filter(w => `${w.title} ${w.detail}`.toLowerCase().includes(category.toLowerCase()));
+
+  const workflowDone = GOV_WORKFLOW.filter(s => s.status === 'done').length;
+  const workflowActive = GOV_WORKFLOW.filter(s => s.status === 'active').length;
+  const workflowPending = GOV_WORKFLOW.filter(s => s.status === 'pending').length;
+
+  return {
+    category,
+    workflow: GOV_WORKFLOW,
+    workflowDone,
+    workflowActive,
+    workflowPending,
+    tenders: filter(TENDERS),
+    registrations: filter(VENDOR_REGISTRATIONS),
+    pendingApprovals: filter(PENDING_APPROVALS),
+    paymentDelays: filter(PAYMENT_DELAYS),
+    workQueue: filteredQueue,
+    slaThreads: SLA_THREADS,
+    vendors: filter(VENDORS),
+    totals: getReportsPeriodTotals(),
+    actions: getGovDashboardActionCounts(category === 'All' ? 'All' : category),
+    districtSpend: typeof DISTRICT_SPEND !== 'undefined' ? DISTRICT_SPEND : []
+  };
+}
+
+function renderGovReports() {
+  const ds = getGovReportDataset();
+  const ctx = getAnalyticsContextLabel();
+  const openTenders = ds.tenders.filter(t => t.status === 'Open').length;
+  const evalTenders = ds.tenders.filter(t => t.status === 'Evaluation').length;
+  const pendingKyc = ds.registrations.filter(r => r.kyc === 'Pending' || r.kyc === 'In Review').length;
+  const openSla = ds.slaThreads.filter(t => t.status !== 'Resolved').length;
+  const unreadAlerts = ds.workQueue.filter(w => w.unread).length;
+  const avgVendorScore = ds.vendors.length
+    ? Math.round(ds.vendors.reduce((s, v) => s + v.overall, 0) / ds.vendors.length * 10) / 10
+    : 0;
+
+  return `<div class="gov-reports vendor-reports">
+    <div class="report-toolbar">
+      <div>
+        <p class="report-toolbar-lead">Resource Manager analytics · <strong>${ds.category === 'All' ? 'All categories' : ds.category}</strong></p>
+        <p class="report-toolbar-meta">Generated ${formatDateDMY(APP_TODAY)} · ${ctx} · DoPHFW, GoMP</p>
+      </div>
+      <div class="report-toolbar-actions">
+        <button type="button" class="btn btn-outline" onclick="downloadGovReportPack('excel')"><i class="fa-solid fa-file-excel"></i> Excel Pack</button>
+        <button type="button" class="btn btn-primary" onclick="downloadGovReportPack('pdf')"><i class="fa-solid fa-file-pdf"></i> PDF Pack</button>
+      </div>
     </div>
-    <p class="section-subtitle">Historical data for previous 4 financial years. Toggle Year / Quarter / Month views.</p>`;
+
+    ${renderAnalyticsFilterBar({ showCompare: false })}
+
+    <div class="report-insight-strip">
+      <div class="report-insight-card">
+        <span class="report-insight-label">Procurement spend</span>
+        <strong id="reportSpendTotal">₹${ds.totals.spendTotal} Cr</strong>
+        <p>Total value of POs &amp; contracts in the selected period</p>
+      </div>
+      <div class="report-insight-card report-insight-card--green">
+        <span class="report-insight-label">Savings realized</span>
+        <strong id="reportSaveTotal">₹${ds.totals.saveTotal} Cr</strong>
+        <p>Budgeted cost minus actual contract value</p>
+      </div>
+      <div class="report-insight-card">
+        <span class="report-insight-label">Action items</span>
+        <strong>${ds.actions.sum}</strong>
+        <p>Open tenders + pending approvals + payment delays</p>
+      </div>
+      <div class="report-insight-card report-insight-card--muted">
+        <span class="report-insight-label">Active filter</span>
+        <strong id="reportContextLabel" class="report-insight-filter">${ctx}</strong>
+        <p>Period applies to spend &amp; savings charts below</p>
+      </div>
+    </div>
+
+    <div class="kpi-grid kpi-grid--vendor mb-2">
+      <div class="kpi-card blue"><div class="kpi-label">Lifecycle Progress</div><div class="kpi-value">${ds.workflowDone}/13</div><div class="kpi-change">Stages completed</div></div>
+      <div class="kpi-card teal"><div class="kpi-label">Open Tenders</div><div class="kpi-value">${openTenders}</div><div class="kpi-change">Under eval: ${evalTenders}</div></div>
+      <div class="kpi-card orange"><div class="kpi-label">Vendor Onboarding</div><div class="kpi-value">${ds.registrations.length}</div><div class="kpi-change">KYC pending: ${pendingKyc}</div></div>
+      <div class="kpi-card green"><div class="kpi-label">Operations</div><div class="kpi-value">${unreadAlerts}</div><div class="kpi-change">Unread alerts · SLA open: ${openSla}</div></div>
+    </div>
+
+    <!-- Report 01: Procurement Lifecycle & Financial Analytics -->
+    <section class="report-section" id="reportGovLifecycle">
+      <div class="report-section-header">
+        <div>
+          <span class="report-eyebrow">Report 01</span>
+          <h3>Procurement Lifecycle &amp; Financial Analytics</h3>
+          <p>Combines Analytics Dashboard and Need Identification to Pay — spend, savings, workflow stage status, and district-wise outlay.</p>
+        </div>
+        <div class="report-section-actions">
+          <button type="button" class="btn btn-outline btn-sm" onclick="downloadGovReport('lifecycle','excel')"><i class="fa-solid fa-file-excel"></i> Excel</button>
+          <button type="button" class="btn btn-outline btn-sm" onclick="downloadGovReport('lifecycle','pdf')"><i class="fa-solid fa-file-pdf"></i> PDF</button>
+        </div>
+      </div>
+      <div class="chart-grid">
+        <div class="chart-card">
+          <div class="chart-header">
+            <h3><i class="fa-solid fa-chart-column"></i> Spend Trends (Procurement)</h3>
+            <span class="chart-subtitle" data-chart-sub="spend">${getChartSubtitle('spend')}</span>
+          </div>
+          <p class="chart-help">Unit: <strong>₹ Crore</strong> — money spent through awarded tenders / purchase orders.</p>
+          <div class="chart-container"><canvas id="chartSpend"></canvas></div>
+        </div>
+        <div class="chart-card">
+          <div class="chart-header">
+            <h3><i class="fa-solid fa-piggy-bank"></i> Savings Realization (₹ Cr)</h3>
+            <span class="chart-subtitle" data-chart-sub="savings">${getChartSubtitle('savings')}</span>
+          </div>
+          <p class="chart-help">Unit: <strong>₹ Crore</strong> — savings vs estimate through rate contracts and L1 competition.</p>
+          <div class="chart-container"><canvas id="chartSavings"></canvas></div>
+        </div>
+      </div>
+      <div class="chart-grid mt-2">
+        <div class="chart-card full">
+          <div class="chart-header"><h3><i class="fa-solid fa-arrows-rotate"></i> Procurement Lifecycle Stage Status</h3></div>
+          <p class="chart-help">13-stage Need Identification to Pay workflow — completed, active, and pending stages.</p>
+          <div class="chart-container chart-container--tall"><canvas id="chartGovWorkflow"></canvas></div>
+        </div>
+      </div>
+      <div class="data-table-wrap mt-2">
+        <table class="data-table" id="tblGovWorkflow">
+          <thead><tr><th>Stage</th><th>Step</th><th>Description</th><th>Status</th></tr></thead>
+          <tbody>
+            ${ds.workflow.map(s => `<tr>
+              <td><strong>${s.id}</strong></td>
+              <td>${s.name}</td>
+              <td>${s.desc}</td>
+              <td><span class="badge badge-${s.status === 'done' ? 'success' : s.status === 'active' ? 'warning' : 'muted'}">${s.status === 'done' ? 'Completed' : s.status === 'active' ? 'In Progress' : 'Pending'}</span></td>
+            </tr>`).join('')}
+          </tbody>
+        </table>
+      </div>
+      <div class="data-table-wrap mt-2">
+        <table class="data-table" id="tblDistrictSpend">
+          <thead><tr><th>District</th><th>Facility</th><th>Drugs (₹ Cr)</th><th>Equipment</th><th>Services</th><th>Consumables</th><th>Others</th></tr></thead>
+          <tbody>
+            ${ds.districtSpend.length ? ds.districtSpend.map(d => `<tr>
+              <td><strong>${d.district}</strong></td><td>${d.facility}</td>
+              <td>${d.drugs}</td><td>${d.equipment}</td><td>${d.services}</td><td>${d.consumables}</td><td>${d.others}</td>
+            </tr>`).join('') : emptyTableRow(7)}
+          </tbody>
+        </table>
+      </div>
+      <p class="report-footnote"><i class="fa-solid fa-circle-info"></i> Savings rate for selected period: <strong id="reportSaveRate">${ds.totals.rate}%</strong> · Workflow: <strong>${ds.workflowActive}</strong> active, <strong>${ds.workflowPending}</strong> pending</p>
+    </section>
+
+    <!-- Report 02: Vendor Onboarding & Sourcing -->
+    <section class="report-section" id="reportGovSourcing">
+      <div class="report-section-header">
+        <div>
+          <span class="report-eyebrow">Report 02</span>
+          <h3>Vendor Onboarding &amp; Sourcing Pipeline</h3>
+          <p>Combines Vendor Registration and Sourcing &amp; Award — KYC queue, tender pipeline, pending sanctions, and payment delays.</p>
+        </div>
+        <div class="report-section-actions">
+          <button type="button" class="btn btn-outline btn-sm" onclick="downloadGovReport('sourcing','excel')"><i class="fa-solid fa-file-excel"></i> Excel</button>
+          <button type="button" class="btn btn-outline btn-sm" onclick="downloadGovReport('sourcing','pdf')"><i class="fa-solid fa-file-pdf"></i> PDF</button>
+        </div>
+      </div>
+      <div class="chart-grid">
+        <div class="chart-card">
+          <div class="chart-header"><h3>Tender Pipeline by Status</h3></div>
+          <div class="chart-container"><canvas id="chartGovTenderPipeline"></canvas></div>
+        </div>
+        <div class="chart-card">
+          <div class="chart-header"><h3>Pending Approvals by Stage</h3></div>
+          <div class="chart-container"><canvas id="chartGovApprovalStages"></canvas></div>
+        </div>
+      </div>
+      <div class="chart-grid mt-2">
+        <div class="chart-card full">
+          <div class="chart-header"><h3>Payment Delays by Days Overdue</h3></div>
+          <div class="chart-container chart-container--tall"><canvas id="chartGovPaymentDelays"></canvas></div>
+        </div>
+      </div>
+      <div class="data-table-wrap mt-2">
+        <table class="data-table" id="tblGovRegistrations">
+          <thead><tr><th>Registration ID</th><th>Vendor</th><th>Category</th><th>KYC</th><th>Documents</th><th>Submitted</th></tr></thead>
+          <tbody>
+            ${ds.registrations.length ? ds.registrations.map(r => `<tr>
+              <td><strong>${r.id}</strong></td><td>${r.name}</td><td>${r.category}</td>
+              <td><span class="badge badge-${kycBadgeClass(r.kyc)}">${r.kyc}</span></td>
+              <td>${r.documents}</td><td>${formatDateDMY(r.submitted)}</td>
+            </tr>`).join('') : emptyTableRow(6)}
+          </tbody>
+        </table>
+      </div>
+      <div class="data-table-wrap mt-2">
+        <table class="data-table" id="tblGovTenders">
+          <thead><tr><th>Tender ID</th><th>Title</th><th>Category</th><th>Value</th><th>Bids</th><th>Deadline</th><th>Status</th></tr></thead>
+          <tbody>
+            ${ds.tenders.length ? ds.tenders.map(t => `<tr>
+              <td><strong>${t.id}</strong></td><td>${t.title}</td><td>${t.category}</td><td>${t.value}</td>
+              <td>${t.bids}</td><td>${formatDateDMY(t.deadline)}</td>
+              <td><span class="badge badge-${tenderBadgeClass(t.status)}">${t.status}</span></td>
+            </tr>`).join('') : emptyTableRow(7)}
+          </tbody>
+        </table>
+      </div>
+      <div class="data-table-wrap mt-2">
+        <table class="data-table" id="tblGovApprovals">
+          <thead><tr><th>PR ID</th><th>Title</th><th>Category</th><th>Stage</th><th>Amount</th><th>Age</th><th>Owner</th></tr></thead>
+          <tbody>
+            ${ds.pendingApprovals.length ? ds.pendingApprovals.map(a => `<tr>
+              <td><strong>${a.id}</strong></td><td>${a.title}</td><td>${a.category}</td><td>${a.stage}</td>
+              <td>${a.amount}</td><td>${a.age}</td><td>${a.owner}</td>
+            </tr>`).join('') : emptyTableRow(7)}
+          </tbody>
+        </table>
+      </div>
+      <div class="data-table-wrap mt-2">
+        <table class="data-table" id="tblGovPaymentDelays">
+          <thead><tr><th>Invoice</th><th>Vendor</th><th>Category</th><th>Amount</th><th>Days Overdue</th><th>Reason</th><th>Contract</th></tr></thead>
+          <tbody>
+            ${ds.paymentDelays.length ? ds.paymentDelays.map(p => `<tr>
+              <td><strong>${p.id}</strong></td><td>${p.vendor}</td><td>${p.category}</td><td>${p.amount}</td>
+              <td><span class="badge badge-danger">${p.daysOverdue} days</span></td><td>${p.reason}</td><td>${p.contractId}</td>
+            </tr>`).join('') : emptyTableRow(7)}
+          </tbody>
+        </table>
+      </div>
+      <p class="report-footnote"><i class="fa-solid fa-circle-info"></i> Sourcing action queue: <strong>${ds.actions.open}</strong> open tenders · <strong>${ds.actions.pending}</strong> pending approvals · <strong>${ds.actions.delays}</strong> payment delays</p>
+    </section>
+
+    <!-- Report 03: Operations & Performance -->
+    <section class="report-section" id="reportGovOperations">
+      <div class="report-section-header">
+        <div>
+          <span class="report-eyebrow">Report 03</span>
+          <h3>Operations, SLA &amp; Vendor Performance</h3>
+          <p>Combines Alerts &amp; Work Queue, SLA Communication, and Vendor Performance Matrix — escalations, alerts, and vendor scorecard.</p>
+        </div>
+        <div class="report-section-actions">
+          <button type="button" class="btn btn-outline btn-sm" onclick="downloadGovReport('operations','excel')"><i class="fa-solid fa-file-excel"></i> Excel</button>
+          <button type="button" class="btn btn-outline btn-sm" onclick="downloadGovReport('operations','pdf')"><i class="fa-solid fa-file-pdf"></i> PDF</button>
+        </div>
+      </div>
+      <div class="chart-grid">
+        <div class="chart-card">
+          <div class="chart-header"><h3>Work Queue by Category</h3></div>
+          <div class="chart-container"><canvas id="chartGovWorkQueue"></canvas></div>
+        </div>
+        <div class="chart-card">
+          <div class="chart-header"><h3>SLA Thread Status</h3></div>
+          <div class="chart-container"><canvas id="chartGovSlaStatus"></canvas></div>
+        </div>
+      </div>
+      <div class="chart-grid mt-2">
+        <div class="chart-card full">
+          <div class="chart-header"><h3>Vendor Performance Score Comparison</h3></div>
+          <p class="chart-help">Weighted overall score (0–100) across registered vendors in the selected category filter.</p>
+          <div class="chart-container chart-container--tall"><canvas id="chartGovVendorScores"></canvas></div>
+        </div>
+      </div>
+      <div class="data-table-wrap mt-2">
+        <table class="data-table" id="tblGovWorkQueue">
+          <thead><tr><th>Alert</th><th>Category</th><th>Severity</th><th>Owner</th><th>Timeline</th><th>Detail</th></tr></thead>
+          <tbody>
+            ${ds.workQueue.length ? ds.workQueue.map(w => `<tr>
+              <td><strong>${w.title}</strong></td><td>${w.category}</td>
+              <td><span class="badge badge-${w.severity === 'high' ? 'danger' : w.severity === 'medium' ? 'warning' : 'info'}">${w.severity}</span></td>
+              <td>${w.owner}</td><td>${w.timeline}</td><td>${w.detail}</td>
+            </tr>`).join('') : emptyTableRow(6)}
+          </tbody>
+        </table>
+      </div>
+      <div class="data-table-wrap mt-2">
+        <table class="data-table" id="tblGovSlaThreads">
+          <thead><tr><th>Thread ID</th><th>Subject</th><th>Contract</th><th>Level</th><th>Priority</th><th>Status</th><th>Last Update</th></tr></thead>
+          <tbody>
+            ${ds.slaThreads.map(t => `<tr>
+              <td><strong>${t.id}</strong></td><td>${t.subject}</td><td>${t.contractId}</td>
+              <td>L${t.level}</td>
+              <td><span class="badge badge-${t.priority === 'High' ? 'danger' : t.priority === 'Medium' ? 'warning' : 'info'}">${t.priority}</span></td>
+              <td><span class="badge badge-${t.status === 'Resolved' ? 'success' : t.status === 'Open' ? 'danger' : 'warning'}">${t.status}</span></td>
+              <td>${t.lastUpdate}</td>
+            </tr>`).join('')}
+          </tbody>
+        </table>
+      </div>
+      <div class="data-table-wrap mt-2">
+        <table class="data-table" id="tblGovVendors">
+          <thead><tr><th>Vendor ID</th><th>Name</th><th>Category</th><th>Quality</th><th>Lead Time</th><th>Cost</th><th>Regulatory</th><th>Satisfaction</th><th>Overall</th><th>Status</th></tr></thead>
+          <tbody>
+            ${ds.vendors.length ? ds.vendors.map(v => `<tr>
+              <td><strong>${v.id}</strong></td><td>${v.name}</td><td>${v.category}</td>
+              <td>${v.quality}</td><td>${v.leadTime}</td><td>${v.cost}</td><td>${v.regulatory}</td><td>${v.satisfaction}</td>
+              <td><strong>${v.overall}</strong></td>
+              <td><span class="badge badge-${v.status === 'Preferred' ? 'success' : v.status === 'Watch' ? 'danger' : 'info'}">${v.status}</span></td>
+            </tr>`).join('') : emptyTableRow(10)}
+          </tbody>
+        </table>
+      </div>
+      <p class="report-footnote"><i class="fa-solid fa-circle-info"></i> Average vendor score in filter: <strong>${avgVendorScore}</strong> · Open SLA threads: <strong>${openSla}</strong> · Unread alerts: <strong>${unreadAlerts}</strong></p>
+    </section>
+  </div>`;
 }
 
 function getVendorReportDataset(category = currentCategory) {
@@ -2934,6 +3632,136 @@ function downloadVendorReportPack(format) {
   ['bid', 'execution'].forEach((kind, i) => {
     setTimeout(() => downloadVendorReport(kind, format), i * (format === 'excel' ? 500 : 350));
   });
+}
+
+function buildGovReportTables(kind) {
+  const ds = getGovReportDataset();
+  if (kind === 'lifecycle') {
+    return {
+      title: 'Procurement Lifecycle & Financial Analytics',
+      sheets: [
+        {
+          name: 'Workflow_Stages',
+          headers: ['Stage', 'Step', 'Description', 'Status'],
+          rows: ds.workflow.map(s => [s.id, s.name, s.desc, s.status === 'done' ? 'Completed' : s.status === 'active' ? 'In Progress' : 'Pending'])
+        },
+        {
+          name: 'District_Spend',
+          headers: ['District', 'Facility', 'Drugs (Cr)', 'Equipment', 'Services', 'Consumables', 'Others'],
+          rows: ds.districtSpend.map(d => [d.district, d.facility, d.drugs, d.equipment, d.services, d.consumables, d.others])
+        }
+      ]
+    };
+  }
+  if (kind === 'sourcing') {
+    return {
+      title: 'Vendor Onboarding & Sourcing Pipeline',
+      sheets: [
+        {
+          name: 'Vendor_Registrations',
+          headers: ['Registration ID', 'Vendor', 'Category', 'KYC', 'Documents', 'Submitted'],
+          rows: ds.registrations.map(r => [r.id, r.name, r.category, r.kyc, r.documents, formatDateDMY(r.submitted)])
+        },
+        {
+          name: 'Tenders',
+          headers: ['Tender ID', 'Title', 'Category', 'Value', 'Bids', 'Deadline', 'Status'],
+          rows: ds.tenders.map(t => [t.id, t.title, t.category, t.value, t.bids, formatDateDMY(t.deadline), t.status])
+        },
+        {
+          name: 'Pending_Approvals',
+          headers: ['PR ID', 'Title', 'Category', 'Stage', 'Amount', 'Age', 'Owner'],
+          rows: ds.pendingApprovals.map(a => [a.id, a.title, a.category, a.stage, a.amount, a.age, a.owner])
+        },
+        {
+          name: 'Payment_Delays',
+          headers: ['Invoice', 'Vendor', 'Category', 'Amount', 'Days Overdue', 'Reason', 'Contract'],
+          rows: ds.paymentDelays.map(p => [p.id, p.vendor, p.category, p.amount, p.daysOverdue, p.reason, p.contractId])
+        }
+      ]
+    };
+  }
+  if (kind === 'operations') {
+    return {
+      title: 'Operations, SLA & Vendor Performance',
+      sheets: [
+        {
+          name: 'Work_Queue',
+          headers: ['Alert', 'Category', 'Severity', 'Owner', 'Timeline', 'Detail'],
+          rows: ds.workQueue.map(w => [w.title, w.category, w.severity, w.owner, w.timeline, w.detail])
+        },
+        {
+          name: 'SLA_Threads',
+          headers: ['Thread ID', 'Subject', 'Contract', 'Level', 'Priority', 'Status', 'Last Update'],
+          rows: ds.slaThreads.map(t => [t.id, t.subject, t.contractId, `L${t.level}`, t.priority, t.status, t.lastUpdate])
+        },
+        {
+          name: 'Vendor_Performance',
+          headers: ['Vendor ID', 'Name', 'Category', 'Quality', 'Lead Time', 'Cost', 'Regulatory', 'Satisfaction', 'Overall', 'Status'],
+          rows: ds.vendors.map(v => [v.id, v.name, v.category, v.quality, v.leadTime, v.cost, v.regulatory, v.satisfaction, v.overall, v.status])
+        }
+      ]
+    };
+  }
+  return buildGovReportTables('lifecycle');
+}
+
+function downloadGovReport(kind, format) {
+  const pack = buildGovReportTables(kind);
+  const stamp = APP_TODAY.replace(/-/g, '');
+  if (format === 'excel') {
+    pack.sheets.forEach((sheet, i) => {
+      setTimeout(() => {
+        downloadCsv(`MPHP_GOV_${kind}_${sheet.name}_${stamp}.csv`, sheet.headers, sheet.rows);
+      }, i * 200);
+    });
+    showWfAlert(`${pack.title} exported as Excel-compatible CSV (${pack.sheets.length} file${pack.sheets.length > 1 ? 's' : ''}).`, 'success');
+    return;
+  }
+  openGovReportPdf(pack);
+}
+
+function downloadGovReportPack(format) {
+  ['lifecycle', 'sourcing', 'operations'].forEach((kind, i) => {
+    setTimeout(() => downloadGovReport(kind, format), i * (format === 'excel' ? 600 : 400));
+  });
+}
+
+function openGovReportPdf(pack) {
+  const ds = getGovReportDataset();
+  const tablesHtml = pack.sheets.map(sheet => `
+    <h3 style="margin:18px 0 8px;font-size:14px;color:#0d47a1">${sheet.name.replace(/_/g, ' ')}</h3>
+    <table style="width:100%;border-collapse:collapse;font-size:11px">
+      <thead>
+        <tr>${sheet.headers.map(h => `<th style="border:1px solid #cbd5e1;background:#f1f5f9;padding:6px 8px;text-align:left">${h}</th>`).join('')}</tr>
+      </thead>
+      <tbody>
+        ${sheet.rows.map(r => `<tr>${r.map(c => `<td style="border:1px solid #e2e8f0;padding:6px 8px">${c}</td>`).join('')}</tr>`).join('') || `<tr><td colspan="${sheet.headers.length}" style="padding:8px;color:#64748b">No records</td></tr>`}
+      </tbody>
+    </table>
+  `).join('');
+
+  const win = window.open('', '_blank', 'noopener,noreferrer,width=960,height=720');
+  if (!win) {
+    showWfAlert('Please allow pop-ups to download the PDF report.');
+    return;
+  }
+  win.document.write(`<!DOCTYPE html><html><head><title>${pack.title}</title>
+    <style>
+      body{font-family:'Segoe UI',Arial,sans-serif;color:#0f172a;padding:24px;margin:0}
+      h1{font-size:20px;margin:0 0 4px}
+      .meta{color:#64748b;font-size:12px;margin-bottom:16px}
+      .actions{margin:16px 0 20px}
+      .actions button{padding:8px 14px;border-radius:8px;border:1px solid #cbd5e1;background:#0d47a1;color:#fff;cursor:pointer;font-weight:600}
+      @media print{.actions{display:none} body{padding:0}}
+    </style>
+  </head><body>
+    <h1>MP Health Procurement — ${pack.title}</h1>
+    <div class="meta">Resource Manager · Category: ${ds.category} · Period: ${getAnalyticsContextLabel()} · Generated: ${formatDateDMY(APP_TODAY)}</div>
+    <div class="actions"><button onclick="window.print()">Download / Print PDF</button></div>
+    ${tablesHtml}
+    <script>setTimeout(function(){ window.print(); }, 350);<\/script>
+  </body></html>`);
+  win.document.close();
 }
 
 function openVendorReportPdf(pack) {
@@ -3239,30 +4067,29 @@ function renderPerformance() {
   return renderPerformanceBreakdown(VENDORS[0]);
 }
 
-function workQueueSeverityMeta(severity) {
-  if (severity === 'high') return { icon: 'fa-circle-exclamation', cls: 'wq-sev--high', label: 'High' };
-  if (severity === 'medium') return { icon: 'fa-triangle-exclamation', cls: 'wq-sev--medium', label: 'Medium' };
-  return { icon: 'fa-circle-info', cls: 'wq-sev--info', label: 'Info' };
+function getWorkQueueSource() {
+  if (currentRole === 'gov' && typeof GOV_WORK_QUEUE !== 'undefined') return GOV_WORK_QUEUE;
+  return typeof VENDOR_WORK_QUEUE !== 'undefined' ? VENDOR_WORK_QUEUE : [];
 }
 
-function filterWorkQueueItems() {
-  const items = VENDOR_WORK_QUEUE;
-  if (workQueueFilter === 'all') return items;
-  if (workQueueFilter === 'unread') return items.filter(i => i.unread);
-  return items.filter(i => i.category === workQueueFilter);
+function getSlaHierarchy() {
+  if (currentRole === 'gov' && typeof GOV_SLA_HIERARCHY !== 'undefined') return GOV_SLA_HIERARCHY;
+  return typeof SLA_HIERARCHY !== 'undefined' ? SLA_HIERARCHY : [];
 }
 
-function renderWorkQueue() {
-  const items = filterWorkQueueItems();
-  const counts = {
-    all: VENDOR_WORK_QUEUE.length,
-    unread: VENDOR_WORK_QUEUE.filter(i => i.unread).length,
-    milestones: VENDOR_WORK_QUEUE.filter(i => i.category === 'milestones').length,
-    sla: VENDOR_WORK_QUEUE.filter(i => i.category === 'sla').length,
-    payments: VENDOR_WORK_QUEUE.filter(i => i.category === 'payments').length,
-    system: VENDOR_WORK_QUEUE.filter(i => i.category === 'system').length
-  };
-  const tabs = [
+function getWorkQueueTabs() {
+  if (currentRole === 'gov') {
+    return [
+      ['all', 'All'],
+      ['unread', 'Unread'],
+      ['approvals', 'Approvals'],
+      ['payments', 'Payments'],
+      ['sla', 'SLA'],
+      ['vendors', 'Vendors'],
+      ['tenders', 'Tenders']
+    ];
+  }
+  return [
     ['all', 'All'],
     ['unread', 'Unread'],
     ['milestones', 'Milestones'],
@@ -3270,18 +4097,69 @@ function renderWorkQueue() {
     ['payments', 'Payments'],
     ['system', 'System']
   ];
+}
+
+function workQueueSeverityMeta(severity) {
+  if (severity === 'high') return { icon: 'fa-circle-exclamation', cls: 'wq-sev--high', label: 'High' };
+  if (severity === 'medium') return { icon: 'fa-triangle-exclamation', cls: 'wq-sev--medium', label: 'Medium' };
+  return { icon: 'fa-circle-info', cls: 'wq-sev--info', label: 'Info' };
+}
+
+function filterWorkQueueItems() {
+  const items = getWorkQueueSource();
+  if (workQueueFilter === 'all') return items;
+  if (workQueueFilter === 'unread') return items.filter(i => i.unread);
+  return items.filter(i => i.category === workQueueFilter);
+}
+
+function getWorkQueueCounts() {
+  const items = getWorkQueueSource();
+  const counts = { all: items.length, unread: items.filter(i => i.unread).length };
+  getWorkQueueTabs().forEach(([id]) => {
+    if (id !== 'all' && id !== 'unread') counts[id] = items.filter(i => i.category === id).length;
+  });
+  return counts;
+}
+
+function renderWorkQueue() {
+  const items = filterWorkQueueItems();
+  const counts = getWorkQueueCounts();
+  const tabs = getWorkQueueTabs();
+  const isGov = currentRole === 'gov';
+  const allItems = getWorkQueueSource();
+  const highCount = allItems.filter(i => i.severity === 'high').length;
 
   return `<div class="work-queue">
+    ${isGov ? `<div class="work-queue-summary">
+      <div class="work-queue-stat">
+        <span class="work-queue-stat-label">Total alerts</span>
+        <strong>${counts.all}</strong>
+      </div>
+      <div class="work-queue-stat work-queue-stat--warn">
+        <span class="work-queue-stat-label">Unread</span>
+        <strong>${counts.unread}</strong>
+      </div>
+      <div class="work-queue-stat work-queue-stat--danger">
+        <span class="work-queue-stat-label">High priority</span>
+        <strong>${highCount}</strong>
+      </div>
+      <div class="work-queue-stat work-queue-stat--muted">
+        <span class="work-queue-stat-label">SLA breaches</span>
+        <strong>${counts.sla || 0}</strong>
+      </div>
+    </div>` : ''}
     <div class="work-queue-card">
       <div class="work-queue-card-head">
         <div>
-          <h3>Alerts and work queue</h3>
-          <p>Prioritized actions grouped by severity, owner, due date and record type.</p>
+          <h3>${isGov ? 'Government alerts & work queue' : 'Alerts and work queue'}</h3>
+          <p>${isGov
+            ? 'Prioritized actions from Analytics — approvals, payment delays, vendor SLA breaches, and tender pipeline.'
+            : 'Prioritized actions grouped by severity, owner, due date and record type.'}</p>
         </div>
         <button type="button" class="btn btn-outline btn-sm" onclick="markAllWorkQueueRead()">Mark all as read</button>
       </div>
       <div class="work-queue-tabs" role="tablist">
-        ${tabs.map(([id, label]) => `<button type="button" class="work-queue-tab${workQueueFilter === id ? ' active' : ''}" onclick="setWorkQueueFilter('${id}')">${label} <span>${counts[id]}</span></button>`).join('')}
+        ${tabs.map(([id, label]) => `<button type="button" class="work-queue-tab${workQueueFilter === id ? ' active' : ''}" onclick="setWorkQueueFilter('${id}')">${label} <span>${counts[id] ?? 0}</span></button>`).join('')}
       </div>
       <div class="work-queue-list">
         ${items.length ? items.map(item => {
@@ -3291,6 +4169,7 @@ function renderWorkQueue() {
             <span class="wq-body">
               <strong>${item.title}</strong>
               <span class="wq-detail">${item.detail}</span>
+              ${isGov ? `<span class="wq-owner"><i class="fa-solid fa-user"></i> ${item.owner}</span>` : ''}
             </span>
             <span class="wq-meta">
               <span class="wq-priority">${sev.label}</span>
@@ -3309,7 +4188,7 @@ function setWorkQueueFilter(filter) {
 }
 
 function markAllWorkQueueRead() {
-  VENDOR_WORK_QUEUE.forEach(i => { i.unread = false; });
+  getWorkQueueSource().forEach(i => { i.unread = false; });
   renderSidebar();
   renderTopbar();
   renderPageContent();
@@ -3317,13 +4196,13 @@ function markAllWorkQueueRead() {
 }
 
 function openWorkQueueItem(id) {
-  const item = VENDOR_WORK_QUEUE.find(i => i.id === id);
+  const item = getWorkQueueSource().find(i => i.id === id);
   if (!item) return;
   item.unread = false;
   renderSidebar();
   renderTopbar();
   if (item.actionPage === 'sla-desk') {
-    const thread = SLA_THREADS.find(t => t.contractId === item.ref || t.subject.includes(item.ref));
+    const thread = SLA_THREADS.find(t => t.id === item.ref || t.contractId === item.ref || t.subject.includes(item.ref));
     if (thread) activeSlaThreadId = thread.id;
   }
   if (item.actionPage) navigateTo(item.actionPage);
@@ -3331,15 +4210,22 @@ function openWorkQueueItem(id) {
 }
 
 function renderSlaDesk() {
+  const hierarchy = getSlaHierarchy();
   const thread = SLA_THREADS.find(t => t.id === activeSlaThreadId) || SLA_THREADS[0];
-  return `<div class="sla-desk">
+  const isGov = currentRole === 'gov';
+  const officer = hierarchy.find(h => h.level === thread.level);
+  const openCount = SLA_THREADS.filter(t => t.status !== 'Resolved').length;
+
+  return `<div class="sla-desk${isGov ? ' sla-desk--gov' : ''}">
     <div class="sla-hierarchy-card">
       <div class="sla-hierarchy-head">
-        <h3><i class="fa-solid fa-sitemap"></i> SLA Escalation Hierarchy</h3>
-        <p>Communicate with government officers in order. Escalate only after the lower level SLA window lapses.</p>
+        <h3><i class="fa-solid fa-sitemap"></i> ${isGov ? 'Internal Response Hierarchy' : 'SLA Escalation Hierarchy'}</h3>
+        <p>${isGov
+          ? 'Assign and respond to vendor escalations within SLA windows. Escalate internally only when the current level cannot resolve.'
+          : 'Communicate with government officers in order. Escalate only after the lower level SLA window lapses.'}</p>
       </div>
       <ol class="sla-hierarchy-list">
-        ${SLA_HIERARCHY.map(h => `<li>
+        ${hierarchy.map(h => `<li>
           <span class="sla-level">L${h.level}</span>
           <div>
             <strong>${h.role}</strong>
@@ -3354,8 +4240,8 @@ function renderSlaDesk() {
     <div class="sla-comm-layout">
       <aside class="sla-thread-list">
         <div class="sla-thread-list-head">
-          <h4>Open threads</h4>
-          <button type="button" class="btn btn-primary btn-sm" onclick="openNewSlaThreadModal()"><i class="fa-solid fa-plus"></i> New</button>
+          <h4>${isGov ? 'Vendor escalations' : 'Open threads'} <span class="sla-thread-count">${openCount}</span></h4>
+          ${isGov ? '' : `<button type="button" class="btn btn-primary btn-sm" onclick="openNewSlaThreadModal()"><i class="fa-solid fa-plus"></i> New</button>`}
         </div>
         ${SLA_THREADS.map(t => `<button type="button" class="sla-thread-item${t.id === thread.id ? ' active' : ''}" onclick="selectSlaThread('${t.id}')">
           <div class="sla-thread-item-top">
@@ -3363,6 +4249,7 @@ function renderSlaDesk() {
             <span class="badge badge-${t.status === 'Resolved' ? 'success' : t.status === 'Open' ? 'danger' : 'warning'}">${t.status}</span>
           </div>
           <span class="sla-thread-meta">L${t.level} · ${t.contractId} · ${t.lastUpdate}</span>
+          ${isGov ? `<span class="sla-thread-vendor"><i class="fa-solid fa-building"></i> Vendor thread</span>` : ''}
         </button>`).join('')}
       </aside>
 
@@ -3370,9 +4257,12 @@ function renderSlaDesk() {
         <div class="sla-thread-panel-head">
           <div>
             <h3>${thread.subject}</h3>
-            <p>Contract <strong>${thread.contractId}</strong> · Escalation Level L${thread.level} (${SLA_HIERARCHY.find(h => h.level === thread.level)?.role || '—'}) · Priority: ${thread.priority}</p>
+            <p>Contract <strong>${thread.contractId}</strong> · Level L${thread.level} (${officer?.role || '—'}) · Priority: <span class="badge badge-${thread.priority === 'High' ? 'danger' : thread.priority === 'Medium' ? 'warning' : 'info'}">${thread.priority}</span></p>
           </div>
-          <span class="badge badge-${thread.status === 'Resolved' ? 'success' : thread.status === 'Open' ? 'danger' : 'warning'}">${thread.status}</span>
+          <div class="sla-thread-actions">
+            ${isGov && thread.status !== 'Resolved' ? `<button type="button" class="btn btn-outline btn-sm" onclick="resolveSlaThread('${thread.id}')"><i class="fa-solid fa-check"></i> Mark resolved</button>` : ''}
+            <span class="badge badge-${thread.status === 'Resolved' ? 'success' : thread.status === 'Open' ? 'danger' : 'warning'}">${thread.status}</span>
+          </div>
         </div>
         <div class="sla-messages" id="slaMessages">
           ${thread.messages.map(m => `<div class="sla-msg ${m.from === 'vendor' ? 'sla-msg--vendor' : 'sla-msg--gov'}">
@@ -3380,17 +4270,17 @@ function renderSlaDesk() {
             <div class="sla-msg-body">${m.text}</div>
           </div>`).join('')}
         </div>
-        <div class="sla-compose">
-          ${customSelectHTML('Escalate to level', 'slaEscalateLevel', SLA_HIERARCHY.map(h => `L${h.level} — ${h.role}`), `L${thread.level} — ${SLA_HIERARCHY.find(h => h.level === thread.level)?.role || ''}`)}
+        ${thread.status !== 'Resolved' ? `<div class="sla-compose">
+          ${customSelectHTML(isGov ? 'Assign / respond as' : 'Escalate to level', 'slaEscalateLevel', hierarchy.map(h => `L${h.level} — ${h.role}`), `L${thread.level} — ${officer?.role || ''}`)}
           <div class="form-group full">
-            <label>Message to government officer <span class="req-star">*</span></label>
-            <textarea id="slaMessageInput" rows="3" placeholder="Describe the SLA issue, reference documents, and requested action…"></textarea>
+            <label>${isGov ? 'Official response to vendor' : 'Message to government officer'} <span class="req-star">*</span></label>
+            <textarea id="slaMessageInput" rows="3" placeholder="${isGov ? 'Provide cure plan, reference documents, and expected resolution date…' : 'Describe the SLA issue, reference documents, and requested action…'}"></textarea>
           </div>
           <div class="sla-compose-actions">
             <button type="button" class="btn btn-outline" onclick="navigateTo('work-queue')">Back to Work Queue</button>
-            <button type="button" class="btn btn-primary" onclick="sendSlaMessage()"><i class="fa-solid fa-paper-plane"></i> Send to hierarchy</button>
+            <button type="button" class="btn btn-primary" onclick="sendSlaMessage()"><i class="fa-solid fa-paper-plane"></i> ${isGov ? 'Send official response' : 'Send to hierarchy'}</button>
           </div>
-        </div>
+        </div>` : `<div class="sla-resolved-banner"><i class="fa-solid fa-circle-check"></i> This thread is resolved. No further action required.</div>`}
       </section>
     </div>
   </div>`;
@@ -3402,12 +4292,14 @@ function selectSlaThread(id) {
 }
 
 function openNewSlaThreadModal() {
+  if (currentRole === 'gov') return;
+  const hierarchy = getSlaHierarchy();
   openModal('Raise SLA Communication', `
     <div class="upload-modal">
       <p class="upload-modal-lead">Start a new escalation with the government hierarchy. Choose the correct SLA level based on issue type.</p>
       <div class="form-grid wf-form-grid">
         ${customSelectHTML('Contract', 'newSlaContract', CONTRACTS.map(c => c.id), CONTRACTS[0]?.id)}
-        ${customSelectHTML('Escalate to', 'newSlaLevel', SLA_HIERARCHY.map(h => `L${h.level} — ${h.role}`), 'L2 — Contract Manager')}
+        ${customSelectHTML('Escalate to', 'newSlaLevel', hierarchy.map(h => `L${h.level} — ${h.role}`), 'L2 — Contract Manager')}
         <div class="form-group full"><label>Subject <span class="req-star">*</span></label><input id="newSlaSubject" type="text" placeholder="e.g. Delivery response delay — CNT-2026-0089"></div>
         <div class="form-group full"><label>Details <span class="req-star">*</span></label><textarea id="newSlaDetails" rows="4" placeholder="Summarize the breach, dates, and requested cure…"></textarea></div>
       </div>
@@ -3453,37 +4345,73 @@ function createSlaThread() {
 function sendSlaMessage() {
   const text = document.getElementById('slaMessageInput')?.value?.trim();
   if (!text) {
-    showWfAlert('Enter a message before sending to the government hierarchy.');
+    showWfAlert(currentRole === 'gov' ? 'Enter an official response before sending.' : 'Enter a message before sending to the government hierarchy.');
     return;
   }
   const thread = SLA_THREADS.find(t => t.id === activeSlaThreadId);
   if (!thread) return;
+  const hierarchy = getSlaHierarchy();
   const levelLabel = typeof getCustomSelectValue === 'function' ? getCustomSelectValue('slaEscalateLevel') : '';
   const level = parseInt(String(levelLabel).replace(/^L/, ''), 10);
   if (level) thread.level = level;
   thread.status = 'In Progress';
   thread.lastUpdate = formatDateDMY(APP_TODAY);
+  const timeStr = `${formatDateDMY(APP_TODAY)} ${new Date().toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' })}`;
+
+  if (currentRole === 'gov') {
+    const officer = hierarchy.find(h => h.level === thread.level);
+    thread.messages.push({
+      from: 'gov',
+      name: authUser?.name || 'Dr. Rajesh Sharma',
+      role: officer?.role || 'Contract Manager',
+      time: timeStr,
+      text
+    });
+    renderSidebar();
+    renderPageContent();
+    showWfAlert(`Official response sent as ${officer?.role || 'government officer'}.`, 'success');
+    return;
+  }
+
   thread.messages.push({
     from: 'vendor',
     name: 'MediSupply India',
     role: 'Vendor',
-    time: `${formatDateDMY(APP_TODAY)} ${new Date().toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' })}`,
+    time: timeStr,
     text
   });
-  // Demo auto-ack from current hierarchy officer
-  const officer = SLA_HIERARCHY.find(h => h.level === thread.level);
+  const officer = hierarchy.find(h => h.level === thread.level);
   if (officer) {
     thread.messages.push({
       from: 'gov',
       name: officer.role === 'Contract Manager' ? 'Rohit Sharma' : officer.role,
       role: officer.role,
-      time: `${formatDateDMY(APP_TODAY)} ${new Date().toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' })}`,
+      time: timeStr,
       text: `Message received at ${officer.role} desk. We will respond within the defined SLA window (${officer.sla}).`
     });
   }
   renderSidebar();
   renderPageContent();
   showWfAlert(`Message sent to ${officer?.role || 'government hierarchy'}.`, 'success');
+}
+
+function resolveSlaThread(id) {
+  const thread = SLA_THREADS.find(t => t.id === id);
+  if (!thread) return;
+  thread.status = 'Resolved';
+  thread.lastUpdate = formatDateDMY(APP_TODAY);
+  const hierarchy = getSlaHierarchy();
+  const officer = hierarchy.find(h => h.level === thread.level);
+  thread.messages.push({
+    from: 'gov',
+    name: authUser?.name || 'Dr. Rajesh Sharma',
+    role: officer?.role || 'Contract Manager',
+    time: `${formatDateDMY(APP_TODAY)} ${new Date().toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' })}`,
+    text: 'Case reviewed and closed. Vendor notified of resolution. SLA cure clock stopped.'
+  });
+  renderSidebar();
+  renderPageContent();
+  showWfAlert('SLA thread marked as resolved.', 'success');
 }
 
 // ========== INTERACTIONS ==========
@@ -3505,12 +4433,14 @@ function setPeriod(period) {
   if (currentPage === 'dashboard' || currentPage === 'reports') {
     if (currentRole === 'vendor' && currentPage === 'reports') {
       initVendorReportCharts(currentCategory);
-    } else if (currentRole === 'gov' && currentPage === 'dashboard') {
-      // Keep filter bar selection in sync without full page remount if possible
+    } else if (isGovAnalyticsPage() && currentPage === 'dashboard') {
       document.querySelectorAll('.analytics-filter .time-btn').forEach(btn => {
         btn.classList.toggle('active', btn.textContent.toLowerCase() === period);
       });
-      refreshAllCharts(period, currentCategory);
+      refreshAllCharts(getAnalyticsChartPeriod(), currentCategory);
+      updateChartSubtitles();
+    } else if (currentPage === 'vendor-matrix' && currentRole === 'gov') {
+      refreshVendorMatrixPage();
     } else {
       refreshAllCharts(period, currentCategory);
     }
@@ -3522,25 +4452,72 @@ function setPeriod(period) {
 
 function setAnalyticsFocusYear(year) {
   analyticsFocusYear = year || 'all';
+  analyticsPeriodFocus = 'all';
+  if (analyticsFocusYear !== 'all' && !analyticsSliceType) analyticsSliceType = 'quarter';
+  currentPeriod = analyticsFocusYear === 'all' ? 'year' : analyticsSliceType;
+  if (isGovAnalyticsPage()) {
+    renderPageContent();
+  }
+}
+
+function setAnalyticsSliceType(slice) {
+  if (analyticsFocusYear === 'all') return;
+  analyticsSliceType = slice === 'month' ? 'month' : 'quarter';
+  analyticsPeriodFocus = 'all';
+  currentPeriod = analyticsSliceType;
+  if (isGovAnalyticsPage()) {
+    renderPageContent();
+  }
+}
+
+function setAnalyticsPeriodFocus(period) {
+  if (analyticsFocusYear === 'all') return;
+  analyticsPeriodFocus = period || 'all';
   if (currentPage === 'dashboard' && currentRole === 'gov') {
-    const select = document.getElementById('analyticsFocusYear');
-    if (select) select.value = analyticsFocusYear;
-    document.querySelectorAll('.analytics-fy-chip').forEach(chip => {
-      const label = chip.textContent.trim();
-      const isAll = analyticsFocusYear === 'all' && label.startsWith('All');
-      const isYear = analyticsFocusYear !== 'all' && label === analyticsFocusYear.replace('FY', '');
-      chip.classList.toggle('active', isAll || isYear);
+    refreshAllCharts(getAnalyticsChartPeriod(), currentCategory);
+    updateChartSubtitles();
+    refreshDashboardVendorTable();
+    document.querySelectorAll('.analytics-period-row .analytics-fy-chip').forEach(chip => {
+      const label = chip.textContent.trim().split(/\s/)[0];
+      const isAll = analyticsPeriodFocus === 'all' && label === 'All';
+      const isMatch = analyticsPeriodFocus !== 'all' && (label === analyticsPeriodFocus || chip.textContent.includes(analyticsPeriodFocus));
+      chip.classList.toggle('active', isAll || isMatch);
     });
-    refreshAllCharts(currentPeriod, currentCategory);
-    const subtitle = document.querySelector('#chartAnalyticsCompare')?.closest('.chart-card')?.querySelector('.chart-subtitle');
-    if (subtitle) {
-      subtitle.textContent = `${analyticsFocusYear === 'all' ? 'Last 10 FYs' : analyticsFocusYear} · ${currentPeriod} view · ${currentCategory === 'All' ? 'All categories' : currentCategory}`;
-    }
+  } else if (currentPage === 'vendor-matrix' && currentRole === 'gov') {
+    refreshVendorMatrixPage();
+  } else if (currentPage === 'reports' && currentRole === 'gov') {
+    refreshGovReportsPage();
+  }
+}
+
+function syncAnalyticsFilterControls() {
+  const wrapper = document.querySelector('.custom-select[data-select-id="analyticsFocusYear"]');
+  const display = analyticsFocusYear === 'all' ? 'All 10 years' : analyticsFocusYear;
+  if (wrapper) {
+    const valueEl = wrapper.querySelector('.custom-select-value');
+    if (valueEl) valueEl.textContent = display;
+    wrapper.querySelectorAll('.custom-select-option').forEach(opt => {
+      opt.classList.toggle('selected', opt.dataset.value === display);
+    });
+  }
+  document.querySelectorAll('.analytics-fy-chips:not(.analytics-period-row .analytics-fy-chips) .analytics-fy-chip, .analytics-filter > .analytics-fy-chips .analytics-fy-chip').forEach(chip => {
+    const label = chip.textContent.trim();
+    const isAll = analyticsFocusYear === 'all' && label.startsWith('All');
+    const isYear = analyticsFocusYear !== 'all' && label === analyticsFocusYear.replace('FY', '');
+    chip.classList.toggle('active', isAll || isYear);
+  });
+}
+
+function updateAnalyticsExplorerSubtitle() {
+  const subtitle = document.querySelector('#chartAnalyticsCompare')?.closest('.chart-card')?.querySelector('.chart-subtitle');
+  if (subtitle && typeof getAnalyticsContextLabel === 'function') {
+    const mode = analyticsCompareMode === 'progress' ? 'Tender pipeline' : 'Vendor score comparison';
+    subtitle.textContent = `${getAnalyticsContextLabel()} · ${mode}`;
   }
 }
 
 function setAnalyticsCompareMode(mode) {
-  analyticsCompareMode = mode === 'item' ? 'item' : 'vendor';
+  analyticsCompareMode = mode === 'progress' ? 'progress' : 'vendor';
   if (currentPage === 'dashboard' && currentRole === 'gov') {
     renderPageContent();
   }
@@ -3745,31 +4722,18 @@ function openGovKpiDetail(key) {
   }
   const catLabel = currentCategory === 'All' ? 'All categories' : currentCategory;
   if (key === 'openTenders') {
-    const tenders = filterListByCategory(TENDERS).filter(t => ['Open', 'Evaluation', 'Draft'].includes(t.status));
-    const itemTypes = currentCategory === 'All'
-      ? Object.entries(CATEGORY_ITEM_TYPES).flatMap(([cat, items]) => items.map(i => ({ ...i, category: cat })))
-      : (CATEGORY_ITEM_TYPES[currentCategory] || []).map(i => ({ ...i, category: currentCategory }));
+    const tenders = filterListByCategory(TENDERS).filter(t => t.status === 'Open');
 
     openModal(`Open Tenders — ${catLabel}`, `
       <div class="kpi-detail">
-        <div class="tender-detail-stats tender-detail-stats--3">
-          <div class="tender-stat"><span>Active tenders</span><strong>${tenders.length}</strong></div>
-          <div class="tender-stat"><span>Open for bids</span><strong>${tenders.filter(t => t.status === 'Open').length}</strong></div>
-          <div class="tender-stat"><span>In evaluation</span><strong>${tenders.filter(t => t.status === 'Evaluation').length}</strong></div>
-        </div>
-        <div class="tender-detail-section">
-          <h4>${currentCategory === 'Drugs' || currentCategory === 'All' ? 'Drug / item types covered' : 'Item types covered'}</h4>
-          <div class="kpi-detail-chips">
-            ${itemTypes.slice(0, 8).map(i => `<span class="kpi-chip"><strong>${i.name}</strong><em>${i.type}</em></span>`).join('') || '<span class="meta-chip">No item types mapped</span>'}
-          </div>
-        </div>
         <div class="tender-detail-section">
           <h4>Tender details</h4>
           <div class="data-table-wrap kpi-detail-table">
-            <table class="data-table">
-              <thead><tr><th>Tender ID</th><th>Title</th><th>Category</th><th>Value</th><th>Bids</th><th>Deadline</th><th>Status</th></tr></thead>
+            <table class="data-table data-table--modal">
+              <thead><tr><th>S.No</th><th>Tender ID</th><th>Title</th><th>Category</th><th>Value</th><th>Bids</th><th>Deadline</th><th>Status</th></tr></thead>
               <tbody>
-                ${tenders.length ? tenders.map(t => `<tr onclick="openTenderDetail('${t.id}')">
+                ${tenders.length ? tenders.map((t, i) => `<tr onclick="openTenderDetail('${t.id}')">
+                  <td>${i + 1}</td>
                   <td><strong>${t.id}</strong></td>
                   <td>${t.title}</td>
                   <td>${t.category}</td>
@@ -3777,7 +4741,7 @@ function openGovKpiDetail(key) {
                   <td>${t.bids}</td>
                   <td>${formatDateDMY(t.deadline)}</td>
                   <td><span class="badge badge-${tenderBadgeClass(t.status)}">${t.status}</span></td>
-                </tr>`).join('') : emptyTableRow(7, 'No open / evaluation / draft tenders for this filter.')}
+                </tr>`).join('') : emptyTableRow(8, 'No open tenders for this filter.')}
               </tbody>
             </table>
           </div>
@@ -3799,14 +4763,15 @@ function openGovKpiDetail(key) {
         <div class="tender-detail-section">
           <h4>Purchase requisitions in queue</h4>
           <div class="data-table-wrap kpi-detail-table">
-            <table class="data-table">
-              <thead><tr><th>PR ID</th><th>Title</th><th>Category</th><th>Stage</th><th>Amount</th><th>Age</th><th>Owner</th></tr></thead>
+            <table class="data-table data-table--modal">
+              <thead><tr><th>S.No</th><th>PR ID</th><th>Title</th><th>Category</th><th>Stage</th><th>Amount</th><th>Age</th><th>Owner</th></tr></thead>
               <tbody>
-                ${rows.length ? rows.map(r => `<tr>
+                ${rows.length ? rows.map((r, i) => `<tr>
+                  <td>${i + 1}</td>
                   <td><strong>${r.id}</strong></td><td>${r.title}</td><td>${r.category}</td>
                   <td><span class="badge badge-warning">${r.stage}</span></td>
                   <td>${r.amount}</td><td>${r.age}</td><td>${r.owner}</td>
-                </tr>`).join('') : emptyTableRow(7)}
+                </tr>`).join('') : emptyTableRow(8)}
               </tbody>
             </table>
           </div>
@@ -3828,15 +4793,16 @@ function openGovKpiDetail(key) {
         <div class="tender-detail-section">
           <h4>Invoice hold / delay register</h4>
           <div class="data-table-wrap kpi-detail-table">
-            <table class="data-table">
-              <thead><tr><th>Invoice</th><th>Vendor</th><th>Category</th><th>Amount</th><th>Overdue</th><th>Reason</th><th>Contract</th></tr></thead>
+            <table class="data-table data-table--modal">
+              <thead><tr><th>S.No</th><th>Invoice</th><th>Vendor</th><th>Category</th><th>Amount</th><th>Overdue</th><th>Reason</th><th>Contract</th></tr></thead>
               <tbody>
-                ${rows.length ? rows.map(r => `<tr>
+                ${rows.length ? rows.map((r, i) => `<tr>
+                  <td>${i + 1}</td>
                   <td><strong>${r.id}</strong></td><td>${r.vendor}</td><td>${r.category}</td>
                   <td>${r.amount}</td>
                   <td><span class="badge badge-danger">${r.daysOverdue}d</span></td>
                   <td>${r.reason}</td><td>${r.contractId}</td>
-                </tr>`).join('') : emptyTableRow(7)}
+                </tr>`).join('') : emptyTableRow(8)}
               </tbody>
             </table>
           </div>
@@ -3853,35 +4819,46 @@ function openGovKpiDetail(key) {
 
   if (key === 'avgVendorScore') {
     const vendors = filterByCategory(VENDORS);
-    const avg = vendors.length
-      ? (vendors.reduce((s, v) => s + v.overall, 0) / vendors.length).toFixed(1)
-      : '—';
-    openModal(`Avg Vendor Score — ${catLabel}`, `
+    openModal(`Vendor Score — ${catLabel}`, `
       <div class="kpi-detail">
-        <div class="tender-detail-stats tender-detail-stats--3">
-          <div class="tender-stat"><span>Average overall</span><strong>${avg}</strong></div>
-          <div class="tender-stat"><span>Vendors scored</span><strong>${vendors.length}</strong></div>
-          <div class="tender-stat"><span>Preferred</span><strong>${vendors.filter(v => v.status === 'Preferred').length}</strong></div>
-        </div>
         <div class="tender-detail-section">
-          <h4>Score breakdown by vendor</h4>
-          <div class="data-table-wrap kpi-detail-table">
-            <table class="data-table">
-              <thead><tr><th>Vendor</th><th>Category</th><th>Quality</th><th>Lead Time</th><th>Cost</th><th>Regulatory</th><th>Satisfaction</th><th>Overall</th><th>Status</th></tr></thead>
+          <div class="need-section-head" style="border:none;padding:0 0 0.65rem;background:transparent">
+            <h4>Score breakdown by vendor</h4>
+            <span class="meta-chip">${vendors.length} vendor${vendors.length !== 1 ? 's' : ''} scored</span>
+          </div>
+          <div class="data-table-wrap kpi-detail-table kpi-detail-table--scroll">
+            <table class="data-table data-table--modal data-table--vendor-score">
+              <thead><tr>
+                <th>S.No</th>
+                <th>Vendor</th>
+                <th>Category</th>
+                <th>Quality</th>
+                <th>Lead Time</th>
+                <th>Cost</th>
+                <th>Regulatory</th>
+                <th>Satisfaction</th>
+                <th>Overall</th>
+                <th>Status</th>
+              </tr></thead>
               <tbody>
-                ${vendors.length ? vendors.map(v => `<tr onclick="openVendorDetail('${v.id}')">
-                  <td><strong>${v.name}</strong><div class="cell-sub">${v.id}</div></td>
+                ${vendors.length ? vendors.map((v, i) => `<tr onclick="openVendorDetail('${v.id}')">
+                  <td>${i + 1}</td>
+                  <td class="cell-vendor"><strong>${v.name}</strong><div class="cell-sub">${v.id}</div></td>
                   <td>${v.category}</td>
-                  <td>${v.quality}</td><td>${v.leadTime}</td><td>${v.cost}</td><td>${v.regulatory}</td><td>${v.satisfaction}</td>
+                  <td>${v.quality}</td>
+                  <td>${v.leadTime}</td>
+                  <td>${v.cost}</td>
+                  <td>${v.regulatory}</td>
+                  <td>${v.satisfaction}</td>
                   <td><strong>${v.overall}</strong></td>
                   <td><span class="badge badge-${v.status === 'Preferred' ? 'success' : v.status === 'Watch' ? 'danger' : 'info'}">${v.status}</span></td>
-                </tr>`).join('') : emptyTableRow(9)}
+                </tr>`).join('') : emptyTableRow(10)}
               </tbody>
             </table>
           </div>
         </div>
       </div>
-    `, { wide: true, large: true });
+    `, { wide: true, large: true, extraWide: true });
   }
 }
 
@@ -3950,10 +4927,11 @@ function openCategorySpendDetail(focusCategory) {
       <div class="tender-detail-section">
         <h4>${cat === 'Drugs' ? 'Types of drugs / items' : 'Item types &amp; tender coverage'}</h4>
         <div class="data-table-wrap kpi-detail-table">
-          <table class="data-table">
-            <thead><tr><th>Item</th><th>Type</th><th>Category</th><th>Linked tenders</th><th>Est. spend</th><th>Facilities</th></tr></thead>
-            <tbody>
-              ${items.map(i => `<tr>
+            <table class="data-table data-table--modal">
+              <thead><tr><th>S.No</th><th>Item</th><th>Type</th><th>Category</th><th>Linked tenders</th><th>Est. spend</th><th>Facilities</th></tr></thead>
+              <tbody>
+              ${items.map((i, idx) => `<tr>
+                <td>${idx + 1}</td>
                 <td><strong>${i.name}</strong></td>
                 <td><span class="badge badge-info">${i.type}</span></td>
                 <td>${i.category}</td>
@@ -3968,10 +4946,11 @@ function openCategorySpendDetail(focusCategory) {
       <div class="tender-detail-section">
         <h4>District &amp; facility spend (₹ Cr)</h4>
         <div class="data-table-wrap kpi-detail-table">
-          <table class="data-table">
-            <thead><tr><th>District</th><th>Facility</th><th>Spend (₹ Cr)</th></tr></thead>
+          <table class="data-table data-table--modal">
+            <thead><tr><th>S.No</th><th>District</th><th>Facility</th><th>Spend (₹ Cr)</th></tr></thead>
             <tbody>
-              ${districts.map(d => `<tr>
+              ${districts.map((d, i) => `<tr>
+                <td>${i + 1}</td>
                 <td><strong>${d.district}</strong></td>
                 <td>${d.facility}</td>
                 <td>₹${d.value} Cr</td>
@@ -3983,6 +4962,309 @@ function openCategorySpendDetail(focusCategory) {
       <p class="report-footnote"><i class="fa-solid fa-circle-info"></i> Click a category slice on the pie chart anytime to reopen this breakdown for that category.</p>
     </div>
   `, { wide: true, large: true });
+}
+
+function openChartTrendDetail(chartKey, seriesLabel, periodLabel, value) {
+  const cat = currentCategory === 'All' ? null : currentCategory;
+  const catLabel = cat || 'All categories';
+  const ctx = getAnalyticsContextLabel();
+  const val = value != null ? value : '—';
+
+  if (chartKey === 'spend') {
+    const amounts = { Drugs: 90.3, Equipment: 60.2, Services: 32.3, Consumables: 21.5, Others: 10.8 };
+    const cats = cat ? [cat] : CHART_DATA.categorySpend.labels;
+    const total = cat ? amounts[cat] : Object.values(amounts).reduce((s, v) => s + v, 0);
+    const scale = val !== '—' && total ? Number(val) / total : 1;
+    const numVal = typeof val === 'number' ? val : Number(val);
+    const fmt = Number.isFinite(numVal) ? numVal.toFixed(1) : val;
+    const items = cat
+      ? (CATEGORY_ITEM_TYPES[cat] || []).slice(0, 5)
+      : (CATEGORY_ITEM_TYPES.Drugs || []).slice(0, 4);
+    const tenders = filterListByCategory(TENDERS).slice(0, 6);
+    openModal(`Spend Trends (Procurement) — ${periodLabel}`, `
+      <div class="trend-detail">
+        <div class="trend-detail-hero">
+          <div>
+            <span class="trend-detail-badge">Procurement spend · ₹ Crore</span>
+            <h3 class="trend-detail-value">₹${fmt} Cr</h3>
+            <p class="trend-detail-desc">Money spent via POs &amp; contracts in <strong>${periodLabel}</strong> · ${ctx}</p>
+          </div>
+        </div>
+        <div class="trend-detail-explain">
+          <i class="fa-solid fa-circle-info"></i>
+          <p><strong>What this means:</strong> Total procurement outlay for the period — the rupee value of awarded tenders / purchase orders. Unit is <strong>₹ Crore</strong> (1 Cr = ₹1 crore = ₹10 million). This is spend, not savings.</p>
+        </div>
+        <div class="tender-detail-stats tender-detail-stats--3">
+          <div class="tender-stat"><span>Period spend</span><strong>₹${fmt} Cr</strong></div>
+          <div class="tender-stat"><span>Category</span><strong>${catLabel}</strong></div>
+          <div class="tender-stat"><span>Linked tenders</span><strong>${tenders.length}</strong></div>
+        </div>
+        <div class="tender-detail-section">
+          <h4>Where the money went (by category)</h4>
+          <div class="data-table-wrap kpi-detail-table">
+            <table class="data-table data-table--modal">
+              <thead><tr><th>S.No</th><th>Category</th><th>Spend (₹ Cr)</th><th>Share</th></tr></thead>
+              <tbody>
+                ${cats.map((c, i) => {
+                  const amt = Math.round(amounts[c] * scale * 10) / 10;
+                  const share = total ? Math.round((amounts[c] / total) * 100) : 0;
+                  return `<tr><td>${i + 1}</td><td><strong>${c}</strong></td><td>₹${amt} Cr</td><td>${share}%</td></tr>`;
+                }).join('')}
+              </tbody>
+            </table>
+          </div>
+        </div>
+        <div class="tender-detail-section">
+          <h4>Key drug / item lines driving spend</h4>
+          <div class="data-table-wrap kpi-detail-table">
+            <table class="data-table data-table--modal">
+              <thead><tr><th>S.No</th><th>Item</th><th>Type</th><th>Est. spend</th><th>Tenders</th></tr></thead>
+              <tbody>
+                ${items.map((i, idx) => `<tr>
+                  <td>${idx + 1}</td>
+                  <td><strong>${i.name}</strong></td>
+                  <td>${i.type}</td>
+                  <td>${i.spend}</td>
+                  <td>${i.tenders}</td>
+                </tr>`).join('')}
+              </tbody>
+            </table>
+          </div>
+        </div>
+        <div class="tender-detail-section">
+          <h4>Top districts by spend</h4>
+          <div class="data-table-wrap kpi-detail-table">
+            <table class="data-table data-table--modal">
+              <thead><tr><th>S.No</th><th>District</th><th>Facility</th><th>Spend (₹ Cr)</th></tr></thead>
+              <tbody>
+                ${DISTRICT_SPEND.slice(0, 6).map((d, i) => {
+                  const v = cat
+                    ? d[cat.toLowerCase()]
+                    : d.drugs + d.equipment + d.services + d.consumables + d.others;
+                  return `<tr><td>${i + 1}</td><td><strong>${d.district}</strong></td><td>${d.facility}</td><td>₹${(v * scale).toFixed(1)} Cr</td></tr>`;
+                }).join('')}
+              </tbody>
+            </table>
+          </div>
+        </div>
+        <div class="tender-detail-actions">
+          <button type="button" class="btn btn-primary" onclick="openCategorySpendDetail(${cat ? `'${cat}'` : 'null'})">View full category spend →</button>
+        </div>
+      </div>
+    `, { wide: true, large: true });
+    return;
+  }
+
+  if (chartKey === 'procurement') {
+    const tenders = filterListByCategory(TENDERS).slice(0, 8);
+    const open = tenders.filter(t => t.status === 'Open').length;
+    const awarded = tenders.filter(t => t.status === 'Awarded').length;
+    const evaln = tenders.filter(t => t.status === 'Evaluation').length;
+    openModal(`Procurement (Tenders) — ${periodLabel}`, `
+      <div class="trend-detail">
+        <div class="trend-detail-hero">
+          <div>
+            <span class="trend-detail-badge">Tenders</span>
+            <h3 class="trend-detail-value">${val}</h3>
+            <p class="trend-detail-desc">Tenders published or processed in <strong>${periodLabel}</strong> · ${ctx}</p>
+          </div>
+        </div>
+        <div class="trend-detail-explain">
+          <i class="fa-solid fa-circle-info"></i>
+          <p>Each unit is one <strong>tender</strong> (NIT/RFP) issued or progressed in the period — not individual items or line items.</p>
+        </div>
+        <div class="tender-detail-stats tender-detail-stats--3">
+          <div class="tender-stat"><span>Total tenders</span><strong>${val}</strong></div>
+          <div class="tender-stat"><span>Currently open</span><strong>${open}</strong></div>
+          <div class="tender-stat"><span>Awarded / in eval</span><strong>${awarded} / ${evaln}</strong></div>
+        </div>
+        <div class="tender-detail-section">
+          <h4>Tender register — ${periodLabel}</h4>
+          <div class="data-table-wrap kpi-detail-table">
+            <table class="data-table data-table--modal">
+              <thead><tr><th>S.No</th><th>Tender ID</th><th>Title</th><th>Category</th><th>Value</th><th>Status</th><th>Bids</th></tr></thead>
+              <tbody>
+                ${tenders.map((t, i) => `<tr onclick="openTenderDetail('${t.id}')">
+                  <td>${i + 1}</td>
+                  <td><strong>${t.id}</strong></td>
+                  <td>${t.title}</td>
+                  <td>${t.category}</td>
+                  <td>${t.value}</td>
+                  <td><span class="badge badge-${tenderBadgeClass(t.status)}">${t.status}</span></td>
+                  <td>${t.bids}</td>
+                </tr>`).join('')}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    `, { wide: true, large: true });
+    return;
+  }
+
+  if (chartKey === 'vendorPerf') {
+    const vendors = filterByCategory(VENDORS).slice().sort((a, b) => b.overall - a.overall).slice(0, 8);
+    const avg = vendors.length ? (vendors.reduce((s, v) => s + v.overall, 0) / vendors.length).toFixed(1) : '—';
+    openModal(`Vendor Performance — ${periodLabel}`, `
+      <div class="trend-detail">
+        <div class="trend-detail-hero">
+          <div>
+            <span class="trend-detail-badge">Score (0–100)</span>
+            <h3 class="trend-detail-value">${val} pts</h3>
+            <p class="trend-detail-desc">Weighted average vendor score for <strong>${periodLabel}</strong> · ${ctx}</p>
+          </div>
+        </div>
+        <div class="trend-detail-explain">
+          <i class="fa-solid fa-circle-info"></i>
+          <p>Score combines Quality (30%), Lead Time (20%), Cost (20%), Regulatory (20%), and User Satisfaction (10%). Higher is better; 80+ is preferred vendor threshold.</p>
+        </div>
+        <div class="tender-detail-stats tender-detail-stats--3">
+          <div class="tender-stat"><span>Period avg</span><strong>${val} pts</strong></div>
+          <div class="tender-stat"><span>Vendors scored</span><strong>${vendors.length}</strong></div>
+          <div class="tender-stat"><span>Category filter</span><strong>${catLabel}</strong></div>
+        </div>
+        <div class="tender-detail-section">
+          <h4>Vendor ranking — ${periodLabel}</h4>
+          <div class="data-table-wrap kpi-detail-table">
+            <table class="data-table data-table--modal">
+              <thead><tr><th>S.No</th><th>Vendor</th><th>Category</th><th>Quality</th><th>Lead Time</th><th>Cost</th><th>Overall</th><th>Status</th></tr></thead>
+              <tbody>
+                ${vendors.map((v, i) => `<tr onclick="openVendorDetail('${v.id}')">
+                  <td>${i + 1}</td>
+                  <td><strong>${v.name}</strong></td>
+                  <td>${v.category}</td>
+                  <td>${v.quality}</td>
+                  <td>${v.leadTime}</td>
+                  <td>${v.cost}</td>
+                  <td><strong>${v.overall}</strong></td>
+                  <td><span class="badge badge-${v.status === 'Preferred' ? 'success' : v.status === 'Watch' ? 'danger' : 'info'}">${v.status}</span></td>
+                </tr>`).join('')}
+              </tbody>
+            </table>
+          </div>
+        </div>
+        <div class="tender-detail-actions">
+          <button type="button" class="btn btn-primary" onclick="openGovKpiDetail('avgVendorScore')">View all vendor scores →</button>
+        </div>
+      </div>
+    `, { wide: true, large: true });
+    return;
+  }
+
+  if (chartKey === 'savings') {
+    const sources = [
+      { name: 'Rate contract negotiation', amount: 8.2, pct: 37, how: 'Locked multi-year rates below market' },
+      { name: 'Bulk purchase pooling', amount: 5.4, pct: 25, how: 'District demand pooled for volume discount' },
+      { name: 'Generic substitution', amount: 4.1, pct: 19, how: 'Branded → equivalent generics' },
+      { name: 'E-procurement efficiency', amount: 2.8, pct: 13, how: 'Faster cycle, lower overhead' },
+      { name: 'Vendor competition (L1)', amount: 1.5, pct: 6, how: 'Competitive bidding pulled prices down' }
+    ];
+    const numVal = typeof val === 'number' ? val : Number(val);
+    const fmt = Number.isFinite(numVal) ? numVal.toFixed(1) : val;
+    const scale = Number.isFinite(numVal) ? numVal / 22 : 1;
+    const estimated = Number.isFinite(numVal) ? Math.round((numVal + numVal / 0.1) * 10) / 10 : '—';
+    const actual = Number.isFinite(numVal) ? Math.round((estimated - numVal) * 10) / 10 : '—';
+    const periodTarget = analyticsFocusYear === 'all' ? 20 : (analyticsSliceType === 'month' ? 1.8 : 5.5);
+    const achievement = Number.isFinite(numVal) ? Math.round((numVal / periodTarget) * 100) : '—';
+    openModal(`Savings Realization (₹ Cr) — ${periodLabel}`, `
+      <div class="trend-detail">
+        <div class="trend-detail-hero">
+          <div>
+            <span class="trend-detail-badge">Cost savings · ₹ Crore</span>
+            <h3 class="trend-detail-value">₹${fmt} Cr</h3>
+            <p class="trend-detail-desc">Money saved vs estimate in <strong>${periodLabel}</strong> · ${ctx}</p>
+          </div>
+        </div>
+        <div class="trend-detail-explain">
+          <i class="fa-solid fa-circle-info"></i>
+          <p><strong>What this means:</strong> Savings = <em>estimated / budgeted cost − actual contract value</em>. Unit is <strong>₹ Crore</strong>. This is money <em>not spent</em> relative to the estimate — not procurement spend.</p>
+        </div>
+        <div class="tender-detail-stats tender-detail-stats--3">
+          <div class="tender-stat"><span>Estimated cost</span><strong>₹${estimated} Cr</strong></div>
+          <div class="tender-stat"><span>Actual paid</span><strong>₹${actual} Cr</strong></div>
+          <div class="tender-stat"><span>Saved</span><strong>₹${fmt} Cr</strong></div>
+        </div>
+        <div class="tender-detail-stats tender-detail-stats--3">
+          <div class="tender-stat"><span>Period target</span><strong>₹${periodTarget} Cr</strong></div>
+          <div class="tender-stat"><span>Achievement</span><strong>${achievement}%</strong></div>
+          <div class="tender-stat"><span>Category</span><strong>${catLabel}</strong></div>
+        </div>
+        <div class="tender-detail-section">
+          <h4>How savings were earned</h4>
+          <div class="data-table-wrap kpi-detail-table">
+            <table class="data-table data-table--modal">
+              <thead><tr><th>S.No</th><th>Source</th><th>How</th><th>Saved (₹ Cr)</th><th>Share</th></tr></thead>
+              <tbody>
+                ${sources.map((s, i) => `<tr>
+                  <td>${i + 1}</td>
+                  <td><strong>${s.name}</strong></td>
+                  <td>${s.how}</td>
+                  <td>₹${(s.amount * scale).toFixed(1)} Cr</td>
+                  <td>${s.pct}%</td>
+                </tr>`).join('')}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    `, { wide: true, large: true });
+    return;
+  }
+
+  if (chartKey === 'progress') {
+    const d = typeof getTenderProgressSeries === 'function' ? getTenderProgressSeries(currentCategory) : null;
+    const idx = d ? d.labels.findIndex(l => l === periodLabel || l.startsWith(periodLabel) || l.includes(periodLabel)) : -1;
+    const proc = idx >= 0 ? d.processed[idx] : '—';
+    const pend = idx >= 0 ? d.pending[idx] : '—';
+    const del = idx >= 0 ? d.delayed[idx] : '—';
+    openModal(`Tender Pipeline — ${periodLabel}`, `
+      <div class="trend-detail">
+        <div class="trend-detail-hero">
+          <div>
+            <span class="trend-detail-badge">Tender counts</span>
+            <h3 class="trend-detail-value">${proc} processed</h3>
+            <p class="trend-detail-desc">Pipeline status for <strong>${periodLabel}</strong> · ${ctx}</p>
+          </div>
+        </div>
+        <div class="trend-detail-explain">
+          <i class="fa-solid fa-circle-info"></i>
+          <p><strong>Processed</strong> = tenders completed (awarded/closed). <strong>Pending</strong> = in evaluation or approval. <strong>Delayed</strong> = past SLA deadline.</p>
+        </div>
+        <div class="tender-detail-stats tender-detail-stats--3">
+          <div class="tender-stat"><span>Processed</span><strong>${proc}</strong></div>
+          <div class="tender-stat"><span>Pending</span><strong>${pend}</strong></div>
+          <div class="tender-stat"><span>Delayed</span><strong>${del}</strong></div>
+        </div>
+        <div class="tender-detail-section">
+          <h4>Active tenders in pipeline</h4>
+          <div class="data-table-wrap kpi-detail-table">
+            <table class="data-table data-table--modal">
+              <thead><tr><th>S.No</th><th>Tender ID</th><th>Title</th><th>Category</th><th>Status</th><th>Deadline</th></tr></thead>
+              <tbody>
+                ${filterListByCategory(TENDERS).filter(t => ['Open', 'Evaluation', 'Draft'].includes(t.status)).slice(0, 6).map((t, i) => `<tr onclick="openTenderDetail('${t.id}')">
+                  <td>${i + 1}</td>
+                  <td><strong>${t.id}</strong></td>
+                  <td>${t.title}</td>
+                  <td>${t.category}</td>
+                  <td><span class="badge badge-${tenderBadgeClass(t.status)}">${t.status}</span></td>
+                  <td>${formatDateDMY(t.deadline)}</td>
+                </tr>`).join('')}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    `, { wide: true, large: true });
+    return;
+  }
+
+  if (chartKey === 'vendorCompare') {
+    const vendors = filterByCategory(VENDORS);
+    const vendor = vendors.find(v => v.name.includes(periodLabel) || v.name.replace(' India Pvt Ltd', '').replace(' Solutions', '').includes(periodLabel));
+    if (vendor) { openVendorDetail(vendor.id); return; }
+  }
+
+  openChartPeriodDetail(seriesLabel, periodLabel);
 }
 
 function openChartPeriodDetail(seriesLabel, periodLabel) {
@@ -4019,6 +5301,11 @@ function openTenderDetail(tenderId) {
   const isOpen = t.status === 'Open';
   const daysLeft = daysUntilDeadline(t.deadline);
   const emdEstimate = t.category === 'Drugs' ? '₹3,20,000' : t.category === 'Equipment' ? '₹2,50,000' : '₹1,00,000';
+  const linkedItems = getLinkedItemsForTender(t);
+  const bid = getBidForTender(t.id);
+  const clarifs = typeof CLARIFICATIONS !== 'undefined'
+    ? CLARIFICATIONS.filter(c => c.tenderId === t.id)
+    : [];
 
   const deadlineLabel = !isOpen
     ? 'Not open for bidding'
@@ -4035,7 +5322,7 @@ function openTenderDetail(tenderId) {
       <div>
         <span class="badge badge-${tenderBadgeClass(t.status)}">${t.status}</span>
         <h3 class="tender-detail-title">${t.title}</h3>
-        <p class="tender-detail-sub">${t.category} procurement · Estimated value ${t.value}</p>
+        <p class="tender-detail-sub">${t.category} procurement · Estimated value ${t.value} · ${t.bids} bid(s)</p>
       </div>
       <div class="tender-detail-deadline ${isOpen && daysLeft !== null && daysLeft <= 5 ? 'urgent' : ''}">
         <span class="tender-detail-deadline-label">Bid deadline</span>
@@ -4049,11 +5336,34 @@ function openTenderDetail(tenderId) {
       <div class="tender-stat"><span>Category</span><strong>${t.category}</strong></div>
       <div class="tender-stat"><span>Est. Value</span><strong>${t.value}</strong></div>
     </div>
+    <div class="tender-detail-stats tender-detail-stats--3">
+      <div class="tender-stat"><span>Bids received</span><strong>${t.bids}</strong></div>
+      <div class="tender-stat"><span>Technical</span><strong>${bid?.technical || (t.status === 'Evaluation' ? 'Under review' : '—')}</strong></div>
+      <div class="tender-stat"><span>Commercial</span><strong>${bid?.financial || 'Sealed'}</strong></div>
+    </div>
 
     <div class="tender-detail-section">
       <h4>Overview</h4>
-      <p>Public tender for <strong>${t.title}</strong> under the ${t.category} category. Vendors must meet eligibility criteria, submit technical &amp; financial bids, and furnish EMD before the deadline.</p>
+      <p>Public tender for <strong>${t.title}</strong> under the <strong>${t.category}</strong> category (same record used on Analytics Dashboard). Vendors must meet eligibility criteria, submit technical &amp; financial bids, and furnish EMD before the deadline.</p>
     </div>
+
+    ${linkedItems.length ? `<div class="tender-detail-section">
+      <h4>${t.category === 'Drugs' ? 'Drug / item lines covered' : 'Item lines covered'}</h4>
+      <div class="data-table-wrap kpi-detail-table">
+        <table class="data-table data-table--modal">
+          <thead><tr><th>S.No</th><th>Item</th><th>Type</th><th>Est. spend</th><th>Facilities</th></tr></thead>
+          <tbody>
+            ${linkedItems.map((i, idx) => `<tr>
+              <td>${idx + 1}</td>
+              <td><strong>${i.name}</strong></td>
+              <td><span class="badge badge-info">${i.type}</span></td>
+              <td>${i.spend}</td>
+              <td>${i.facilities}</td>
+            </tr>`).join('')}
+          </tbody>
+        </table>
+      </div>
+    </div>` : ''}
 
     <div class="tender-detail-section">
       <h4>Key requirements</h4>
@@ -4064,9 +5374,26 @@ function openTenderDetail(tenderId) {
         <li>EMD approximately <strong>${emdEstimate}</strong> (as per NIT)</li>
       </ul>
     </div>
+
+    ${clarifs.length ? `<div class="tender-detail-section">
+      <h4>Clarifications</h4>
+      <div class="data-table-wrap kpi-detail-table">
+        <table class="data-table data-table--modal">
+          <thead><tr><th>S.No</th><th>Query</th><th>Subject</th><th>Status</th></tr></thead>
+          <tbody>
+            ${clarifs.map((c, i) => `<tr>
+              <td>${i + 1}</td>
+              <td><strong>${c.id}</strong></td>
+              <td>${c.subject}</td>
+              <td><span class="badge badge-${c.status === 'Answered' ? 'success' : c.status === 'Pending' ? 'warning' : 'info'}">${c.status}</span></td>
+            </tr>`).join('')}
+          </tbody>
+        </table>
+      </div>
+    </div>` : ''}
   </div>`;
 
-  openModal(t.id, body, { wide: true });
+  openModal(`${t.id} — ${t.title}`, body, { wide: true, large: true });
 }
 
 function openVendorDetail(id) {
@@ -4088,7 +5415,9 @@ function closeModal() {
   const overlay = document.getElementById('modalOverlay');
   const modal = overlay?.querySelector('.modal');
   overlay?.classList.remove('open');
-  modal?.classList.remove('modal--wide', 'modal--lg');
+  modal?.classList.remove('modal--wide', 'modal--lg', 'modal--xl');
+  modalHistory = [];
+  document.getElementById('modalBackBtn')?.classList.add('hidden');
 }
 
 function bindPageEvents() {
@@ -4108,7 +5437,8 @@ function bindPageEvents() {
       return;
     }
     if (document.getElementById('modalOverlay')?.classList.contains('open')) {
-      closeModal();
+      if (modalHistory.length) modalGoBack();
+      else closeModal();
     }
   });
 }

@@ -419,12 +419,13 @@ const NAV_GOV = [
   { section: 'Procurement Lifecycle' },
   { id: 'workflow', icon: 'fa-arrows-rotate', label: 'Need Identification to Pay', badge: 3 },
   { id: 'vendor-reg', icon: 'fa-clipboard-list', label: 'Vendor Registration', badge: 10 },
-  { id: 'sourcing', icon: 'fa-bullseye', label: 'Sourcing & Award', badge: 5 },
-  { id: 'master-data', icon: 'fa-database', label: 'Master Data & Workflow', badge: 2 },
-  { id: 'tor', icon: 'fa-triangle-exclamation', label: 'TOR Coverage & Red Flags', badge: 4 },
+  { id: 'sourcing', icon: 'fa-bullseye', label: 'Sourcing & Award', badge: 0 },
+  { section: 'Operations' },
+  { id: 'work-queue', icon: 'fa-bell', label: 'Alerts & Work Queue', badge: 0 },
+  { id: 'sla-desk', icon: 'fa-headset', label: 'SLA Communication', badge: 0 },
   { section: 'Performance' },
   { id: 'vendor-matrix', icon: 'fa-chart-bar', label: 'Vendor Performance Matrix', badge: 0 },
-  { id: 'reports', icon: 'fa-file-lines', label: 'Reports & Analytics', badge: 1 },
+  { id: 'reports', icon: 'fa-file-lines', label: 'Reports & Analytics', badge: 0 },
   { id: 'settings', icon: 'fa-gear', label: 'Settings & Branding', badge: 0 }
 ];
 
@@ -547,6 +548,114 @@ const VENDOR_WORK_QUEUE = [
   }
 ];
 
+/** Resource Manager — Alerts & Work Queue (aligned with Analytics action queue) */
+const GOV_WORK_QUEUE = [
+  {
+    id: 'GWQ-001',
+    category: 'sla',
+    severity: 'high',
+    unread: true,
+    title: 'Vendor SLA breach — response overdue',
+    detail: 'MediSupply India · CNT-2026-0089 · 48-hour response window exceeded',
+    timeline: 'Today',
+    owner: 'Contract Manager',
+    ref: 'SLA-2026-014',
+    actionPage: 'sla-desk'
+  },
+  {
+    id: 'GWQ-002',
+    category: 'approvals',
+    severity: 'high',
+    unread: true,
+    title: 'Financial sanction pending — Oncology Drug Top-up',
+    detail: 'PR-2026-1220 · Drugs · ₹2.8 Cr · Owner: GM Finance · 6 days',
+    timeline: 'Today',
+    owner: 'GM Finance',
+    ref: 'PR-2026-1220',
+    actionPage: 'sourcing'
+  },
+  {
+    id: 'GWQ-003',
+    category: 'payments',
+    severity: 'high',
+    unread: true,
+    title: 'Payment delay — PharmaCare invoice overdue',
+    detail: 'INV-0901 · ₹48.0 L · 8 days overdue · GRN batch discrepancy',
+    timeline: 'Today',
+    owner: 'GM Finance',
+    ref: 'INV-0901',
+    actionPage: 'sourcing'
+  },
+  {
+    id: 'GWQ-004',
+    category: 'tenders',
+    severity: 'medium',
+    unread: true,
+    title: 'Open tender evaluation due — CT Scanner',
+    detail: 'TND-2026-MP-0055 · Equipment · 4 bids · Deadline 05-09-2026',
+    timeline: '2 days',
+    owner: 'Technical Committee',
+    ref: 'TND-2026-MP-0055',
+    actionPage: 'sourcing'
+  },
+  {
+    id: 'GWQ-005',
+    category: 'vendors',
+    severity: 'medium',
+    unread: true,
+    title: 'Vendor KYC pending review',
+    detail: 'MedEquip Solutions · Equipment · 3/5 documents uploaded',
+    timeline: '2 days',
+    owner: 'Vendor Registry',
+    ref: 'REG-2026-0892',
+    actionPage: 'vendor-reg'
+  },
+  {
+    id: 'GWQ-006',
+    category: 'approvals',
+    severity: 'medium',
+    unread: false,
+    title: 'Administrative approval — CT Scanner Replacement',
+    detail: 'PR-2026-1190 · Equipment · ₹3.2 Cr · 5 days in queue',
+    timeline: '5 days',
+    owner: 'Director Procurement',
+    ref: 'PR-2026-1190',
+    actionPage: 'sourcing'
+  },
+  {
+    id: 'GWQ-007',
+    category: 'sla',
+    severity: 'medium',
+    unread: false,
+    title: 'Vendor escalation — invoice verification delay',
+    detail: 'SLA-2026-011 · MediSupply India · INV-0892 · In progress',
+    timeline: '3 days',
+    owner: 'GM Finance',
+    ref: 'SLA-2026-011',
+    actionPage: 'sla-desk'
+  },
+  {
+    id: 'GWQ-008',
+    category: 'tenders',
+    severity: 'info',
+    unread: false,
+    title: 'Corrigendum issued — Essential Medicines RC',
+    detail: 'TND-2026-MP-0042 · Drugs · BOQ amendment published',
+    timeline: 'Read',
+    owner: 'Procurement Cell',
+    ref: 'TND-2026-MP-0042',
+    actionPage: 'sourcing'
+  }
+];
+
+/** Internal gov response chain for SLA desk (vendor-facing) */
+const GOV_SLA_HIERARCHY = [
+  { level: 1, role: 'Stores Officer', org: 'Receiving Facility', sla: 'Acknowledge vendor delivery queries within 24 hrs', contact: 'stores.bhopal@mphp.gov.in' },
+  { level: 2, role: 'Contract Manager', org: 'Procurement Cell', sla: 'Respond to vendor SLA threads within 5 working days', contact: 'contracts@mphp.gov.in' },
+  { level: 3, role: 'GM Finance', org: 'Finance Wing', sla: 'Clear invoice / payment escalations within 7 working days', contact: 'finance.gm@mphp.gov.in' },
+  { level: 4, role: 'Director (Procurement)', org: 'DoPHFW, GoMP', sla: 'Critical vendor escalations within 10 working days', contact: 'dir.proc@mphp.gov.in' }
+];
+
 /** SLA hierarchy — vendor ↔ government escalation chain communication */
 const SLA_HIERARCHY = [
   { level: 1, role: 'Stores Officer', org: 'Receiving Facility', sla: 'Acknowledge delivery queries within 24 hrs', contact: 'stores.bhopal@mphp.gov.in' },
@@ -639,8 +748,40 @@ const CHART_DATA = {
     quality: [92, 88, 85, 90, 87],
     leadTime: [86, 78, 91, 84, 80],
     cost: [81, 75, 88, 79, 83]
+  },
+  /** Tender pipeline progress — processed / pending / delayed */
+  tenderProgress: {
+    year: {
+      labels: ['FY16-17', 'FY17-18', 'FY18-19', 'FY19-20', 'FY20-21', 'FY21-22', 'FY22-23', 'FY23-24', 'FY24-25', 'FY25-26'],
+      processed: [88, 95, 102, 108, 115, 122, 128, 135, 142, 148],
+      pending: [24, 22, 20, 19, 18, 17, 16, 15, 14, 12],
+      delayed: [14, 13, 12, 11, 10, 9, 8, 7, 6, 5]
+    },
+    quarter: {
+      labels: ['Q1 (Jan–Mar)', 'Q2 (Apr–Jun)', 'Q3 (Jul–Sep)', 'Q4 (Oct–Dec)'],
+      processed: [32, 36, 39, 41],
+      pending: [10, 9, 8, 7],
+      delayed: [5, 4, 4, 3]
+    },
+    month: {
+      labels: ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'],
+      processed: [10, 11, 11, 12, 12, 12, 13, 13, 14, 13, 14, 15],
+      pending: [3, 3, 2, 2, 2, 2, 2, 2, 2, 2, 1, 1],
+      delayed: [2, 2, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1]
+    }
   }
 };
+
+const ANALYTICS_QUARTER_OPTIONS = [
+  { id: 'Q1', label: 'Q1', range: 'Jan–Mar' },
+  { id: 'Q2', label: 'Q2', range: 'Apr–Jun' },
+  { id: 'Q3', label: 'Q3', range: 'Jul–Sep' },
+  { id: 'Q4', label: 'Q4', range: 'Oct–Dec' }
+];
+
+const ANALYTICS_MONTH_OPTIONS = [
+  'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'
+];
 
 const ANALYTICS_FY_OPTIONS = [
   'all',
