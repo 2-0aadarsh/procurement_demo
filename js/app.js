@@ -114,6 +114,71 @@ const vendorProfileState = {
   pendingEdit: null
 };
 
+/** Stage 3 — Indent Raised (gov) state */
+const govIndentState = {
+  mode: null, // null | 'manual' | 'automated'
+  saved: false,
+  indentId: '',
+  manual: {
+    facility: 'Gandhi Medical College',
+    district: 'Bhopal',
+    category: 'Drugs',
+    itemName: '',
+    quantity: '',
+    unit: 'Packs',
+    priority: 'High',
+    requiredBy: '',
+    justification: '',
+    raisedBy: 'Store Manager — Bhopal',
+    approvingAuthority: 'CMO / Competent Authority',
+    remarks: ''
+  },
+  automated: {
+    status: 'idle', // idle | running | ready | failed
+    lines: [],
+    generatedAt: null
+  }
+};
+
+/** Stage 1 — Need Identification (gov) period filter */
+const govNeedState = { year: 'all', viewBy: 'quarter', period: 'all' };
+
+/** Stage 4 — Demand Consolidation (gov) state */
+const govConsolidationState = {
+  approved: false,
+  district: 'Bhopal',
+  status: 'Pending Review',
+  clarificationSent: false,
+  lastClarificationRef: '',
+  year: 'all',
+  viewBy: 'quarter',
+  period: 'all'
+};
+
+/** Stage 5 — PR & Budget Approval (gov) state */
+const govBudgetState = {
+  verified: false,
+  fetchedDocs: {}, // deptId -> [{...}]
+  year: 'all',
+  viewBy: 'quarter',
+  period: 'all'
+};
+
+/** Stage 6 — Tender Preparation (gov) state */
+const govTenderPrepState = {
+  finalReady: false,
+  consensusAck: false,
+  preparedPage: 1,
+  year: 'all',
+  viewBy: 'quarter',
+  period: 'all'
+};
+
+/** Stage 7–9 gov states (period filters + pagination) */
+const govBidEvalState = { page: 1, year: 'all', viewBy: 'quarter', period: 'all' };
+const govContractState = { page: 1, year: 'all', viewBy: 'quarter', period: 'all' };
+const govAwardState = { page: 1, year: 'all', viewBy: 'quarter', period: 'all' };
+
 function maskSensitiveValue(value) {
   if (!value) return '₹ ●●●';
   return String(value).replace(/[\d.,]+/g, '●●●');
@@ -1527,10 +1592,27 @@ function vendorCanEditStage(stepId, progress) {
 function renderWorkflowStepNav(step, total) {
   const nextDisabled = step.id >= total || (
     currentRole === 'vendor' && !vendorCanAdvanceFrom(step.id)
+  ) || (
+    currentRole === 'gov' && step.id === 3 && !govIndentState.saved
+  ) || (
+    currentRole === 'gov' && step.id === 4 && !govConsolidationState.approved
+  ) || (
+    currentRole === 'gov' && step.id === 5 && !govBudgetState.verified
+  ) || (
+    currentRole === 'gov' && step.id === 6 && !govTenderPrepState.finalReady
   );
-  const nextTitle = nextDisabled && currentRole === 'vendor' && step.id < total
-    ? 'Complete the required actions on this stage before moving ahead'
-    : '';
+  let nextTitle = '';
+  if (nextDisabled && currentRole === 'vendor' && step.id < total) {
+    nextTitle = 'Complete the required actions on this stage before moving ahead';
+  } else if (nextDisabled && currentRole === 'gov' && step.id === 3) {
+    nextTitle = 'Save the indent (Manual or Automated) before proceeding';
+  } else if (nextDisabled && currentRole === 'gov' && step.id === 4) {
+    nextTitle = 'Approve consolidated demand before proceeding';
+  } else if (nextDisabled && currentRole === 'gov' && step.id === 5) {
+    nextTitle = 'Complete budget verification before proceeding';
+  } else if (nextDisabled && currentRole === 'gov' && step.id === 6) {
+    nextTitle = 'Prepare final NIT/RFP after division consensus before proceeding';
+  }
   return `<div class="wf-step-nav">
     <button type="button" class="btn btn-outline" onclick="goWorkflowStep(-1)" ${step.id <= 1 ? 'disabled' : ''}>
       <i class="fa-solid fa-arrow-left"></i> Previous Stage
@@ -1543,8 +1625,8 @@ function renderWorkflowStepNav(step, total) {
 }
 
 function renderWorkflowChecklist(step) {
-  // Stage 1 gov: checklist replaced by API-populated Need Identification panel
-  if (currentRole === 'gov' && step.id === 1) return '';
+  // Stage 1–4 gov: checklist replaced by dedicated stage panels where applicable
+  if (currentRole === 'gov' && (step.id >= 1 && step.id <= 9)) return '';
   const checklist = currentRole === 'gov'
     ? GOV_STAGE_CHECKLIST[step.id]
     : VENDOR_STAGE_CHECKLIST[step.id];
@@ -1583,15 +1665,2163 @@ function needStatusBadge(status) {
     High: 'danger',
     Medium: 'info',
     Synced: 'success',
-    'Action Required': 'warning'
+    'Not synced': 'danger',
+    Failed: 'danger',
+    'Action Required': 'warning',
+    Verified: 'success',
+    Available: 'success',
+    Tracked: 'info',
+    'Action Ready': 'warning',
+    Surplus: 'success',
+    Recommended: 'success',
+    Review: 'warning',
+    Hold: 'muted',
+    'On Track': 'success',
+    'At Risk': 'danger',
+    'High Confidence': 'success',
+    'Medium Confidence': 'info',
+    Approved: 'success',
+    'Not Approved': 'danger',
+    'Under Review': 'warning',
+    Partial: 'warning',
+    'Pending review': 'warning',
+    'In progress': 'info',
+    Done: 'success',
+    Pending: 'muted',
+    Published: 'info',
+    'Draft prepared': 'warning',
+    'Under checker review': 'warning',
+    'Under Evaluation': 'info',
+    Awarded: 'success',
+    'Consensus uploaded': 'success',
+    'Under review': 'warning',
+    'Evaluation complete': 'success',
+    'Under evaluation': 'info',
+    'Technical screening': 'warning',
+    'Agreement signed': 'success',
+    'NOA issued': 'info',
+    'Awaiting L1 lock': 'warning',
+    'Award active': 'success',
+    'PBG pending': 'warning',
+    'LOA issued': 'info',
+    'Awaiting award': 'muted',
+    Received: 'success',
+    Acknowledged: 'success',
+    Cleared: 'success',
+    'Not started': 'muted',
+    'Not due yet': 'muted'
   };
   return map[status] || 'info';
+}
+
+function renderApiSyncBadge(status) {
+  const synced = status === 'Synced';
+  return `<span class="badge badge-${synced ? 'success' : 'danger'}">
+    <i class="fa-solid ${synced ? 'fa-check-double' : 'fa-triangle-exclamation'}"></i>
+    ${synced ? 'Synced' : 'Not synced'}
+  </span>`;
+}
+
+function getStockCheckData() {
+  const base = typeof STOCK_CHECK_API !== 'undefined' ? STOCK_CHECK_API : null;
+  if (!base) return null;
+  const cat = currentCategory;
+  return {
+    ...base,
+    meta: {
+      ...base.meta,
+      categoryFilter: cat,
+      displayNote: cat === 'All'
+        ? 'Verify existing warehouse stock, other locations, approved open POs, and redistributable inventory'
+        : `Stock check emphasis: ${cat} SKUs across warehouse, facilities, open POs & redistribution`
+    }
+  };
+}
+
+function renderStockCheckStage(canEdit = true) {
+  const data = getStockCheckData();
+  if (!data) {
+    return `<div class="need-api-empty"><i class="fa-solid fa-plug-circle-xmark"></i><p>Stock information could not be loaded right now. Please try Re-sync from API, or contact support if this continues.</p></div>`;
+  }
+  const { meta, warehouse, otherLocations, openPos, redistributable } = data;
+  const disabled = canEdit ? '' : ' disabled';
+  const blocks = [
+    { key: 'warehouse', icon: 'fa-warehouse', color: 'blue', data: warehouse,
+      metrics: [
+        { label: 'Sites verified', value: warehouse.sites },
+        { label: 'SKUs verified', value: warehouse.skusVerified },
+        { label: 'Surplus value', value: warehouse.surplusValue },
+        { label: 'Deficit SKUs', value: warehouse.deficitSkus }
+      ] },
+    { key: 'other', icon: 'fa-hospital', color: 'teal', data: otherLocations,
+      metrics: [
+        { label: 'Surplus facilities', value: otherLocations.facilitiesWithSurplus },
+        { label: 'Transferable SKUs', value: otherLocations.transferableSkus },
+        { label: 'Est. transfer value', value: otherLocations.estTransferValue },
+        { label: 'Lead time', value: otherLocations.leadDays + ' days' }
+      ] },
+    { key: 'openpo', icon: 'fa-file-invoice', color: 'orange', data: openPos,
+      metrics: [
+        { label: 'Open POs', value: openPos.openCount },
+        { label: 'Pipeline value', value: openPos.pipelineValue },
+        { label: 'Arriving ≤7 days', value: openPos.arriving7d },
+        { label: 'At risk / delayed', value: openPos.delayed }
+      ] },
+    { key: 'redistribute', icon: 'fa-shuffle', color: 'red', data: redistributable,
+      metrics: [
+        { label: 'Candidates', value: redistributable.candidates },
+        { label: 'Recommended now', value: redistributable.recommendedNow },
+        { label: 'Est. savings', value: redistributable.estSavings },
+        { label: 'ML confidence', value: redistributable.confidence }
+      ] }
+  ];
+
+  return `<div class="need-api stock-check-api">
+    <div class="need-api-banner">
+      <div class="need-api-banner-icon"><i class="fa-solid fa-cloud-arrow-down"></i></div>
+      <div class="need-api-banner-text">
+        <strong>Auto-populated via API integration</strong>
+        <p>Data synced from <strong>${meta.source}</strong> · Endpoint <code>${meta.endpoint}</code> · ${meta.algorithm} · Last synced <strong>${meta.lastSynced}</strong></p>
+        <p class="need-api-meta-line">${meta.district} · ${meta.facilities} facilities · Period ${meta.assessmentPeriod} · ${meta.displayNote}</p>
+      </div>
+      <div class="need-api-banner-actions">
+        ${renderApiSyncBadge(meta.status)}
+        <button type="button" class="btn btn-outline btn-sm" onclick="refreshStockCheckApi()"${disabled}>
+          <i class="fa-solid fa-arrows-rotate"></i> Refresh API
+        </button>
+      </div>
+    </div>
+
+    <div class="need-metric-grid">
+      ${blocks.map(b => `
+        <button type="button" class="need-metric-card need-metric-card--${b.color}" onclick="scrollToStockSection('${b.key}')">
+          <div class="need-metric-head">
+            <span class="need-metric-icon"><i class="fa-solid ${b.icon}"></i></span>
+            <span class="badge badge-${needStatusBadge(b.data.status)}">${b.data.status}</span>
+          </div>
+          <h4>${b.data.label}</h4>
+          <p>${b.data.summary}</p>
+          <div class="need-metric-stats">
+            ${b.metrics.map(m => `<div><span>${m.label}</span><strong>${m.value}</strong></div>`).join('')}
+          </div>
+        </button>`).join('')}
+    </div>
+
+    <div class="need-section" id="stock-sec-warehouse">
+      <div class="need-section-head">
+        <h4><i class="fa-solid fa-warehouse"></i> ${warehouse.label} — Item / Facility</h4>
+        <span class="meta-chip">AI/ML score ranks release vs hold</span>
+      </div>
+      <div class="data-table-wrap need-table">
+        <table class="data-table">
+          <thead><tr><th>Facility</th><th>Item</th><th>On hand</th><th>Usable</th><th>ML score</th><th>Recommendation</th><th>Status</th></tr></thead>
+          <tbody>
+            ${warehouse.rows.map((r, i) => `<tr class="need-row-clickable" role="button" tabindex="0" onclick="openStockCheckRowDetail('warehouse',${i})" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();openStockCheckRowDetail('warehouse',${i})}">
+              <td><strong>${r.facility}</strong></td><td>${r.item}</td>
+              <td>${r.onHand}</td><td>${r.usable}</td>
+              <td><strong>${r.mlScore}</strong></td><td>${r.recommendation}</td>
+              <td><span class="badge badge-${needStatusBadge(r.status)}">${r.status}</span></td>
+            </tr>`).join('')}
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <div class="need-section" id="stock-sec-other">
+      <div class="need-section-head">
+        <h4><i class="fa-solid fa-hospital"></i> ${otherLocations.label} — Facility-wise transfer</h4>
+        <span class="meta-chip">Inter-facility redistribution candidates</span>
+      </div>
+      <div class="data-table-wrap need-table">
+        <table class="data-table">
+          <thead><tr><th>From</th><th>To</th><th>Item</th><th>Qty</th><th>Cover gain</th><th>ML score</th><th>Status</th></tr></thead>
+          <tbody>
+            ${otherLocations.rows.map((r, i) => `<tr class="need-row-clickable" role="button" tabindex="0" onclick="openStockCheckRowDetail('other',${i})" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();openStockCheckRowDetail('other',${i})}">
+              <td><strong>${r.from}</strong></td><td>${r.to}</td><td>${r.item}</td>
+              <td>${r.qty}</td><td>${r.coverGain}</td><td><strong>${r.mlScore}</strong></td>
+              <td><span class="badge badge-${needStatusBadge(r.status)}">${r.status}</span></td>
+            </tr>`).join('')}
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <div class="need-section" id="stock-sec-openpo">
+      <div class="need-section-head">
+        <h4><i class="fa-solid fa-file-invoice"></i> ${openPos.label}</h4>
+        <span class="meta-chip">Offset fresh indent with in-flight supply</span>
+      </div>
+      <div class="data-table-wrap need-table">
+        <table class="data-table">
+          <thead><tr><th>PO</th><th>Vendor</th><th>Item</th><th>Facility</th><th>ETA</th><th>ML score</th><th>Status</th></tr></thead>
+          <tbody>
+            ${openPos.rows.map((r, i) => `<tr class="need-row-clickable" role="button" tabindex="0" onclick="openStockCheckRowDetail('openpo',${i})" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();openStockCheckRowDetail('openpo',${i})}">
+              <td><strong>${r.po}</strong></td><td>${r.vendor}</td><td>${r.item}</td>
+              <td>${r.facility}</td><td>${r.eta}</td><td><strong>${r.mlScore}</strong></td>
+              <td><span class="badge badge-${needStatusBadge(r.status)}">${r.status}</span></td>
+            </tr>`).join('')}
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <div class="need-section" id="stock-sec-redistribute">
+      <div class="need-section-head">
+        <h4><i class="fa-solid fa-shuffle"></i> ${redistributable.label} — AI/ML outcomes</h4>
+        <span class="meta-chip">Est. savings ${redistributable.estSavings} · Confidence ${redistributable.confidence}</span>
+      </div>
+      <div class="data-table-wrap need-table">
+        <table class="data-table">
+          <thead><tr><th>Item</th><th>From</th><th>To</th><th>Qty</th><th>Savings</th><th>ML score</th><th>Status</th></tr></thead>
+          <tbody>
+            ${redistributable.rows.map((r, i) => `<tr class="need-row-clickable" role="button" tabindex="0" onclick="openStockCheckRowDetail('redistribute',${i})" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();openStockCheckRowDetail('redistribute',${i})}">
+              <td><strong>${r.item}</strong></td><td>${r.from}</td><td>${r.to}</td>
+              <td>${r.qty}</td><td>${r.savings}</td><td><strong>${r.mlScore}</strong></td>
+              <td><span class="badge badge-${needStatusBadge(r.status)}">${r.status}</span></td>
+            </tr>`).join('')}
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <div class="wf-actions mt-2">
+      <button class="btn btn-outline" onclick="refreshStockCheckApi()"${disabled}><i class="fa-solid fa-arrows-rotate"></i> Re-sync from API</button>
+    </div>
+  </div>`;
+}
+
+function scrollToStockSection(key) {
+  const map = { warehouse: 'warehouse', other: 'other', openpo: 'openpo', redistribute: 'redistribute' };
+  document.getElementById(`stock-sec-${map[key] || key}`)?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+}
+
+function openStockCheckRowDetail(section, index) {
+  const data = getStockCheckData();
+  if (!data) return;
+  const i = Number(index);
+  let title = 'Stock Check Detail';
+  let body = '';
+
+  if (section === 'warehouse') {
+    const r = data.warehouse.rows[i];
+    if (!r) return;
+    title = `${r.item} — ${r.facility}`;
+    body = `<div class="kpi-detail need-row-detail">
+      <p class="need-row-detail-lead">Warehouse verification outcome from <strong>related apis</strong> + AI/ML ranking.</p>
+      <div class="tender-detail-stats tender-detail-stats--4">
+        <div class="tender-stat"><span>On hand</span><strong>${r.onHand}</strong></div>
+        <div class="tender-stat"><span>Usable</span><strong>${r.usable}</strong></div>
+        <div class="tender-stat"><span>Reorder</span><strong>${r.reorder}</strong></div>
+        <div class="tender-stat"><span>ML score</span><strong>${r.mlScore}</strong></div>
+      </div>
+      <div class="tender-detail-section">
+        <h4>AI/ML recommendation</h4>
+        <p><span class="badge badge-${needStatusBadge(r.status)}">${r.status}</span> · ${r.recommendation}</p>
+        <p class="report-footnote mt-2"><i class="fa-solid fa-circle-info"></i> Prefer warehouse release / redistribution before raising a fresh indent for this SKU.</p>
+      </div>
+      <div class="modal-inline-actions">
+        <button type="button" class="btn btn-outline" onclick="modalGoBack()"><i class="fa-solid fa-arrow-left"></i> Back</button>
+      </div>
+    </div>`;
+  } else if (section === 'other') {
+    const r = data.otherLocations.rows[i];
+    if (!r) return;
+    title = `Transfer — ${r.item}`;
+    body = `<div class="kpi-detail need-row-detail">
+      <p class="need-row-detail-lead">Inter-facility redistribution candidate ranked by cover-day gain and surplus margin.</p>
+      <div class="tender-detail-stats tender-detail-stats--4">
+        <div class="tender-stat"><span>From</span><strong>${r.from}</strong></div>
+        <div class="tender-stat"><span>To</span><strong>${r.to}</strong></div>
+        <div class="tender-stat"><span>Qty</span><strong>${r.qty}</strong></div>
+        <div class="tender-stat"><span>Cover gain</span><strong>${r.coverGain}</strong></div>
+      </div>
+      <div class="tender-detail-section">
+        <h4>Recommendation</h4>
+        <p>ML score <strong>${r.mlScore}</strong> · <span class="badge badge-${needStatusBadge(r.status)}">${r.status}</span></p>
+        <p>${r.recommendation}</p>
+      </div>
+      <div class="modal-inline-actions">
+        <button type="button" class="btn btn-outline" onclick="modalGoBack()"><i class="fa-solid fa-arrow-left"></i> Back</button>
+      </div>
+    </div>`;
+  } else if (section === 'openpo') {
+    const r = data.openPos.rows[i];
+    if (!r) return;
+    title = `${r.po} — ${r.item}`;
+    body = `<div class="kpi-detail need-row-detail">
+      <p class="need-row-detail-lead">Approved open PO that can offset fresh procurement demand.</p>
+      <div class="tender-detail-stats tender-detail-stats--4">
+        <div class="tender-stat"><span>Vendor</span><strong>${r.vendor}</strong></div>
+        <div class="tender-stat"><span>Facility</span><strong>${r.facility}</strong></div>
+        <div class="tender-stat"><span>Qty</span><strong>${r.qty}</strong></div>
+        <div class="tender-stat"><span>ETA</span><strong>${r.eta}</strong></div>
+      </div>
+      <div class="tender-detail-section">
+        <h4>AI/ML recommendation</h4>
+        <p>ML score <strong>${r.mlScore}</strong> · <span class="badge badge-${needStatusBadge(r.status)}">${r.status}</span></p>
+        <p>${r.recommendation}</p>
+      </div>
+      <div class="modal-inline-actions">
+        <button type="button" class="btn btn-outline" onclick="modalGoBack()"><i class="fa-solid fa-arrow-left"></i> Back</button>
+      </div>
+    </div>`;
+  } else if (section === 'redistribute') {
+    const r = data.redistributable.rows[i];
+    if (!r) return;
+    title = `Redistribute — ${r.item}`;
+    body = `<div class="kpi-detail need-row-detail">
+      <p class="need-row-detail-lead">AI/ML allocation proposal to fulfill demand without new tender.</p>
+      <div class="tender-detail-stats tender-detail-stats--4">
+        <div class="tender-stat"><span>From</span><strong>${r.from}</strong></div>
+        <div class="tender-stat"><span>To</span><strong>${r.to}</strong></div>
+        <div class="tender-stat"><span>Qty</span><strong>${r.qty}</strong></div>
+        <div class="tender-stat"><span>Savings</span><strong>${r.savings}</strong></div>
+      </div>
+      <div class="tender-detail-section">
+        <h4>Outcome</h4>
+        <p>ML score <strong>${r.mlScore}</strong> · <span class="badge badge-${needStatusBadge(r.status)}">${r.status}</span></p>
+        <p>${r.recommendation}</p>
+      </div>
+      <div class="modal-inline-actions">
+        <button type="button" class="btn btn-outline" onclick="modalGoBack()"><i class="fa-solid fa-arrow-left"></i> Back</button>
+      </div>
+    </div>`;
+  } else {
+    return;
+  }
+
+  openModal(title, body, { wide: true });
+}
+
+function refreshStockCheckApi() {
+  const btn = document.querySelector('.stock-check-api .need-api-banner-actions .btn');
+  if (btn) {
+    btn.disabled = true;
+    btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Syncing…';
+  }
+  setTimeout(() => {
+    // Prototype: occasional sync failure so users can see the "Not synced" error state
+    const failed = Math.random() < 0.28;
+    if (typeof STOCK_CHECK_API !== 'undefined') {
+      if (failed) {
+        STOCK_CHECK_API.meta.status = 'Not synced';
+      } else {
+        const now = new Date();
+        const pad = n => String(n).padStart(2, '0');
+        STOCK_CHECK_API.meta.lastSynced =
+          `${pad(now.getDate())}-${pad(now.getMonth() + 1)}-${now.getFullYear()} ${pad(now.getHours())}:${pad(now.getMinutes())} IST`;
+        STOCK_CHECK_API.meta.status = 'Synced';
+      }
+    }
+    refreshWorkflowUI();
+    if (failed) {
+      openModal('Sync unsuccessful', `
+        <div class="sync-success-msg sync-error-msg">
+          <div class="sync-success-icon sync-error-icon"><i class="fa-solid fa-triangle-exclamation"></i></div>
+          <h4>Stock status could not be updated</h4>
+          <p>We could not refresh warehouse stock, other locations, open purchase orders, or redistribution suggestions right now. The banner shows <strong>Not synced</strong>. Please try again in a moment.</p>
+        </div>
+      `);
+      return;
+    }
+    openModal('Data refreshed', `
+      <div class="sync-success-msg">
+        <div class="sync-success-icon"><i class="fa-solid fa-circle-check"></i></div>
+        <h4>Latest stock status is updated successfully</h4>
+        <p>Warehouse stock, other facility locations, open purchase orders, and redistribution suggestions have been updated so you can verify availability before raising a new indent.</p>
+      </div>
+    `);
+  }, 650);
+}
+
+function setIndentMode(mode) {
+  if (mode !== 'manual' && mode !== 'automated') return;
+  if (govIndentState.mode === mode) return;
+  govIndentState.mode = mode;
+  govIndentState.saved = false;
+  if (mode === 'automated' && govIndentState.automated.status === 'idle') {
+    govIndentState.automated.status = 'idle';
+  }
+  refreshWorkflowUI();
+}
+
+function buildAutomatedIndentLines() {
+  const need = typeof NEED_IDENTIFICATION_API !== 'undefined' ? NEED_IDENTIFICATION_API : null;
+  const stock = typeof STOCK_CHECK_API !== 'undefined' ? STOCK_CHECK_API : null;
+  const lines = [];
+
+  (need?.gapAnalysis?.rows || []).forEach((r, i) => {
+    if (!/fresh|tender|rate contract|top-up/i.test(r.action || '')) return;
+    lines.push({
+      id: `IND-AUTO-${String(i + 1).padStart(2, '0')}`,
+      item: r.item,
+      quantity: r.gap,
+      source: 'Need Identification · Gap Analysis',
+      reason: r.action,
+      facility: 'Bhopal Division (consolidated)',
+      priority: /fresh tender/i.test(r.action) ? 'High' : 'Medium',
+      mlConfidence: 90 - i * 3
+    });
+  });
+
+  (stock?.warehouse?.rows || []).forEach((r, i) => {
+    if (r.status !== 'Low' && r.status !== 'Critical') return;
+    lines.push({
+      id: `IND-STK-${String(i + 1).padStart(2, '0')}`,
+      item: r.item,
+      quantity: r.reorder,
+      source: 'Stock Check · Warehouse',
+      reason: r.recommendation,
+      facility: r.facility,
+      priority: r.status === 'Critical' ? 'Critical' : 'High',
+      mlConfidence: r.mlScore
+    });
+  });
+
+  if (!lines.length) {
+    lines.push(
+      { id: 'IND-AUTO-01', item: 'Paracetamol 500mg Tab', quantity: '6.3 L packs', source: 'Need Identification · Gap Analysis', reason: 'Fresh tender', facility: 'Bhopal Division (consolidated)', priority: 'High', mlConfidence: 92 },
+      { id: 'IND-AUTO-02', item: 'IV Normal Saline 500ml', quantity: '1.3 L units', source: 'Need Identification · Gap Analysis', reason: 'Fresh tender', facility: 'Bhopal Division (consolidated)', priority: 'High', mlConfidence: 88 },
+      { id: 'IND-STK-01', item: 'Amoxicillin 250mg', quantity: '1.5 L packs', source: 'Stock Check · Warehouse', reason: 'Top-up via open PO / indent', facility: 'Regional Store — Jabalpur', priority: 'High', mlConfidence: 71 }
+    );
+  }
+  return lines;
+}
+
+function runAutomatedIndentProcess() {
+  govIndentState.mode = 'automated';
+  govIndentState.saved = false;
+  govIndentState.automated.status = 'running';
+  refreshWorkflowUI();
+
+  setTimeout(() => {
+    govIndentState.automated.lines = buildAutomatedIndentLines();
+    govIndentState.automated.status = 'ready';
+    govIndentState.automated.generatedAt = formatDateDMY(APP_TODAY) + ' ' +
+      new Date().toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' }) + ' IST';
+    govIndentState.saved = true;
+    govIndentState.indentId = govIndentState.indentId || `IND-AUTO-${APP_TODAY.replace(/-/g, '').slice(2)}`;
+    refreshWorkflowUI();
+    openModal('Automated indent ready', `
+      <div class="sync-success-msg">
+        <div class="sync-success-icon"><i class="fa-solid fa-wand-magic-sparkles"></i></div>
+        <h4>Indent lines prepared from prior stages</h4>
+        <p>The model used Need Identification (gap analysis) and Stock Check (warehouse deficits) to propose <strong>${govIndentState.automated.lines.length}</strong> indent line(s). Indent <strong>${govIndentState.indentId}</strong> is ready — you may proceed to Demand Consolidation.</p>
+      </div>
+    `);
+  }, 900);
+}
+
+function captureManualIndentForm() {
+  const m = govIndentState.manual;
+  m.facility = document.getElementById('indentFacility')?.value?.trim() || m.facility;
+  m.district = (typeof getCustomSelectValue === 'function' ? getCustomSelectValue('indentDistrict') : null) || m.district;
+  m.category = (typeof getCustomSelectValue === 'function' ? getCustomSelectValue('indentCategory') : null) || m.category;
+  m.itemName = document.getElementById('indentItem')?.value?.trim() || '';
+  m.quantity = document.getElementById('indentQty')?.value?.trim() || '';
+  m.unit = (typeof getCustomSelectValue === 'function' ? getCustomSelectValue('indentUnit') : null) || m.unit;
+  m.priority = (typeof getCustomSelectValue === 'function' ? getCustomSelectValue('indentPriority') : null) || m.priority;
+  m.requiredBy = document.getElementById('indentRequiredBy')?.value?.trim() || '';
+  m.justification = document.getElementById('indentJustification')?.value?.trim() || '';
+  m.raisedBy = document.getElementById('indentRaisedBy')?.value?.trim() || m.raisedBy;
+  m.approvingAuthority = document.getElementById('indentAuthority')?.value?.trim() || m.approvingAuthority;
+  m.remarks = document.getElementById('indentRemarks')?.value?.trim() || '';
+}
+
+function saveManualIndent() {
+  captureManualIndentForm();
+  const m = govIndentState.manual;
+  if (!m.facility || !m.district || !m.category || !m.itemName || !m.quantity || !m.unit || !m.priority || !m.requiredBy || !m.justification || !m.raisedBy || !m.approvingAuthority) {
+    showWfAlert('Please fill all mandatory fields marked with * before saving the indent.');
+    return;
+  }
+  govIndentState.mode = 'manual';
+  govIndentState.saved = true;
+  govIndentState.indentId = govIndentState.indentId || `IND-MP-${APP_TODAY.replace(/-/g, '').slice(2)}-001`;
+  refreshWorkflowUI();
+  openModal('Indent saved', `
+    <div class="sync-success-msg">
+      <div class="sync-success-icon"><i class="fa-solid fa-circle-check"></i></div>
+      <h4>Manual indent saved successfully</h4>
+      <p>Indent <strong>${govIndentState.indentId}</strong> for <strong>${m.itemName}</strong> has been recorded. You may now proceed to Demand Consolidation.</p>
+    </div>
+  `);
+}
+
+function renderIndentRaisedStage(canEdit = true) {
+  const disabled = canEdit ? '' : ' disabled';
+  const mode = govIndentState.mode;
+  const saved = govIndentState.saved;
+  const m = govIndentState.manual;
+  const auto = govIndentState.automated;
+  const catOptions = (typeof CATEGORIES !== 'undefined' ? CATEGORIES.filter(c => c !== 'All') : ['Drugs', 'Equipment', 'Services', 'Consumables', 'Others']);
+
+  return `<div class="indent-stage">
+    <div class="indent-mode-banner">
+      <div>
+        <strong>Select how you want to raise the indent</strong>
+        <p>Manual entry follows GFR-aligned store indent practice. Automated uses AI/ML outcomes from Need Identification and Stock Check.</p>
+      </div>
+      ${saved ? `<span class="badge badge-success"><i class="fa-solid fa-check"></i> Indent saved · ${govIndentState.indentId || '—'}</span>`
+        : `<span class="badge badge-warning"><i class="fa-solid fa-lock"></i> Save required to proceed</span>`}
+    </div>
+
+    <div class="indent-mode-grid" role="radiogroup" aria-label="Indent raising method">
+      <button type="button" class="indent-mode-card${mode === 'manual' ? ' active' : ''}" ${disabled} onclick="setIndentMode('manual')" role="radio" aria-checked="${mode === 'manual'}">
+        <span class="indent-mode-icon"><i class="fa-solid fa-pen-to-square"></i></span>
+        <span class="indent-mode-body">
+          <strong>Manual way</strong>
+          <span>Fill a government indent form — facility, item, quantity, justification, and approving authority.</span>
+        </span>
+      </button>
+      <button type="button" class="indent-mode-card${mode === 'automated' ? ' active' : ''}" ${disabled} onclick="setIndentMode('automated')" role="radio" aria-checked="${mode === 'automated'}">
+        <span class="indent-mode-icon"><i class="fa-solid fa-robot"></i></span>
+        <span class="indent-mode-body">
+          <strong>Automated way</strong>
+          <span>Model fetches residual gaps from Need Identification and Stock Check and proposes indent lines.</span>
+        </span>
+      </button>
+    </div>
+
+    ${!mode ? `<div class="indent-empty-hint">
+      <i class="fa-solid fa-hand-pointer"></i>
+      <p>Choose <strong>Manual</strong> or <strong>Automated</strong> above to continue.</p>
+    </div>` : ''}
+
+    ${mode === 'manual' ? `<div class="indent-panel indent-panel--manual">
+      <div class="indent-panel-head">
+        <div>
+          <span class="report-eyebrow">Manual indent form</span>
+          <h4>Store Indent — Form IND-01</h4>
+          <p>As per store procedure: raise indent only when stock / open PO cannot meet requirement. Fields marked * are mandatory.</p>
+        </div>
+        <span class="meta-chip">DoPHFW · GoMP</span>
+      </div>
+      <div class="form-grid wf-form-grid indent-form-grid">
+        <div class="form-group"><label>${reqLabel('Facility / Store')}</label><input id="indentFacility" type="text" value="${m.facility}" placeholder="e.g. Gandhi Medical College"${disabled ? ' readonly' : ''}></div>
+        ${customSelectHTML('District', 'indentDistrict', ['Bhopal', 'Indore', 'Jabalpur', 'Gwalior', 'Rewa'], m.district, true)}
+        ${customSelectHTML('Category', 'indentCategory', catOptions, m.category || 'Drugs', true)}
+        <div class="form-group"><label>${reqLabel('Item / SKU name')}</label><input id="indentItem" type="text" value="${m.itemName}" placeholder="e.g. Paracetamol 500mg Tab"${disabled ? ' readonly' : ''}></div>
+        <div class="form-group"><label>${reqLabel('Quantity')}</label><input id="indentQty" type="text" value="${m.quantity}" placeholder="e.g. 6.3 L"${disabled ? ' readonly' : ''}></div>
+        ${customSelectHTML('Unit', 'indentUnit', ['Packs', 'Units', 'Vials', 'Pairs', 'Kits', 'Bottles'], m.unit, true)}
+        ${customSelectHTML('Priority', 'indentPriority', ['Critical', 'High', 'Medium', 'Routine'], m.priority, true)}
+        <div class="form-group"><label>${reqLabel('Required by (DD-MM-YYYY)')}</label><input id="indentRequiredBy" type="text" value="${m.requiredBy}" placeholder="e.g. 20-09-2026"${disabled ? ' readonly' : ''}></div>
+        <div class="form-group"><label>${reqLabel('Raised by')}</label><input id="indentRaisedBy" type="text" value="${m.raisedBy}"${disabled ? ' readonly' : ''}></div>
+        <div class="form-group"><label>${reqLabel('Approving authority')}</label><input id="indentAuthority" type="text" value="${m.approvingAuthority}"${disabled ? ' readonly' : ''}></div>
+        <div class="form-group full"><label>${reqLabel('Justification (why stock / open PO cannot meet need)')}</label>
+          <textarea id="indentJustification" rows="3" placeholder="State stock search outcome, open PO status, and clinical / programme urgency…"${disabled ? ' readonly' : ''}>${m.justification}</textarea>
+        </div>
+        <div class="form-group full"><label>Remarks (optional)</label>
+          <textarea id="indentRemarks" rows="2" placeholder="Additional notes for CMO / consolidation cell…"${disabled ? ' readonly' : ''}>${m.remarks}</textarea>
+        </div>
+      </div>
+      <div class="wf-actions mt-2">
+        <button type="button" class="btn btn-primary" onclick="saveManualIndent()"${disabled}><i class="fa-solid fa-floppy-disk"></i> Save indent</button>
+      </div>
+    </div>` : ''}
+
+    ${mode === 'automated' ? `<div class="indent-panel indent-panel--auto">
+      <div class="indent-panel-head">
+        <div>
+          <span class="report-eyebrow">Automated process</span>
+          <h4>AI/ML indent generation</h4>
+          <p>Pulls residual demand from Need Identification (gap analysis) and Stock Check (warehouse deficits / redistribution residuals).</p>
+        </div>
+        <span class="badge badge-${auto.status === 'ready' ? 'success' : auto.status === 'running' ? 'info' : auto.status === 'failed' ? 'danger' : 'muted'}">${
+          auto.status === 'ready' ? 'Indent ready' : auto.status === 'running' ? 'Generating…' : auto.status === 'failed' ? 'Failed' : 'Not run yet'
+        }</span>
+      </div>
+
+      <div class="indent-auto-steps">
+        <div class="indent-auto-step"><span>1</span><div><strong>Need Identification</strong><small>Gap items needing fresh tender / top-up</small></div></div>
+        <div class="indent-auto-step"><span>2</span><div><strong>Stock Check</strong><small>Low / critical warehouse SKUs after redistribution</small></div></div>
+        <div class="indent-auto-step"><span>3</span><div><strong>Indent pack</strong><small>Consolidated line items for CMO approval path</small></div></div>
+      </div>
+
+      <div class="wf-actions" style="margin-bottom:1rem">
+        <button type="button" class="btn btn-primary" onclick="runAutomatedIndentProcess()"${disabled || auto.status === 'running' ? ' disabled' : ''}>
+          <i class="fa-solid fa-wand-magic-sparkles"></i> ${auto.status === 'ready' ? 'Re-run automated process' : 'Run automated process'}
+        </button>
+      </div>
+
+      ${auto.status === 'running' ? `<div class="indent-empty-hint"><i class="fa-solid fa-spinner fa-spin"></i><p>Fetching indent recommendations from prior stages…</p></div>` : ''}
+
+      ${auto.status === 'ready' ? `
+        <div class="data-table-wrap need-table">
+          <table class="data-table">
+            <thead><tr><th>Indent line</th><th>Item</th><th>Qty</th><th>Facility</th><th>Source</th><th>Priority</th><th>ML conf.</th><th>Reason</th></tr></thead>
+            <tbody>
+              ${auto.lines.map(l => `<tr>
+                <td><strong>${l.id}</strong></td>
+                <td>${l.item}</td>
+                <td>${l.quantity}</td>
+                <td>${l.facility}</td>
+                <td>${l.source}</td>
+                <td><span class="badge badge-${needStatusBadge(l.priority)}">${l.priority}</span></td>
+                <td><strong>${l.mlConfidence}</strong></td>
+                <td>${l.reason}</td>
+              </tr>`).join('')}
+            </tbody>
+          </table>
+        </div>
+        <p class="report-footnote"><i class="fa-solid fa-circle-info"></i> Generated ${auto.generatedAt || '—'} · Indent saved automatically. You may proceed to the next stage.</p>
+      ` : (auto.status === 'idle' ? `<div class="indent-empty-hint"><i class="fa-solid fa-robot"></i><p>Click <strong>Run automated process</strong> to generate indent lines.</p></div>` : '')}
+    </div>` : ''}
+  </div>`;
+}
+
+function getConsolidationEstimatedValueRange() {
+  if (currentCategory === 'Drugs') return { low: '₹14.6 Cr', high: '₹17.8 Cr', mid: '₹16.2 Cr' };
+  if (currentCategory === 'Equipment') return { low: '₹8.4 Cr', high: '₹11.2 Cr', mid: '₹9.6 Cr' };
+  if (currentCategory === 'Services') return { low: '₹3.1 Cr', high: '₹4.5 Cr', mid: '₹3.8 Cr' };
+  if (currentCategory === 'Consumables') return { low: '₹2.2 Cr', high: '₹3.4 Cr', mid: '₹2.8 Cr' };
+  if (currentCategory === 'Others') return { low: '₹0.9 Cr', high: '₹1.6 Cr', mid: '₹1.2 Cr' };
+  return { low: '₹16.8 Cr', high: '₹21.5 Cr', mid: '₹18.6 Cr' };
+}
+
+function renderDemandConsolidationStage(canEdit = true) {
+  const disabled = canEdit ? '' : ' disabled';
+  const regs = filterByCategory(VENDOR_REGISTRATIONS);
+  const itemsLabel = currentCategory === 'All'
+    ? '47 line items across 12 facilities'
+    : `${Math.max(regs.length * 4, 8)} line items for ${currentCategory}`;
+  const value = getConsolidationEstimatedValueRange();
+  const st = govConsolidationState;
+
+  return `<div class="consolidation-stage">
+    <div class="indent-mode-banner">
+      <div>
+        <strong>District demand consolidation</strong>
+        <p>Review duplicates, net stock optimization sources, and approve the consolidated requirement before PR &amp; budget sanction.</p>
+      </div>
+      ${st.approved
+        ? `<span class="badge badge-success"><i class="fa-solid fa-check"></i> Approved</span>`
+        : `<span class="badge badge-warning"><i class="fa-solid fa-lock"></i> Approval required to proceed</span>`}
+    </div>
+
+    ${renderWorkflowPeriodFilter('consol', st)}
+    <p class="report-footnote" style="margin:-0.35rem 0 0.85rem"><i class="fa-solid fa-calendar-days"></i> Viewing period: <strong>${getWfPeriodFilterLabel(st)}</strong></p>
+
+    <div class="form-grid wf-form-grid">
+      ${customSelectHTML('District', 'consolDistrict', ['Bhopal', 'Indore', 'Jabalpur', 'Gwalior', 'Rewa'], st.district)}
+      ${customSelectHTML('Consolidation Status', 'consolStatus', ['Pending Review', 'Verified', 'Clarification Sought', 'Approved'], st.approved ? 'Approved' : st.status)}
+      <div class="form-group"><label>Items Consolidated${currentCategory !== 'All' ? ` — ${currentCategory}` : ''}</label><input type="text" value="${itemsLabel}" readonly></div>
+      <div class="form-group">
+        <label>Estimated Value (range)</label>
+        <div class="value-range-box">
+          <strong>${value.low} – ${value.high}</strong>
+          <span>Indicative midpoint ${value.mid} · subject to L1 / rate-contract outcome</span>
+        </div>
+      </div>
+    </div>
+
+    <div class="form-group full" style="margin-top:0.25rem">
+      <label>Optimization Sources</label>
+      <p class="consol-opt-hint">Click a source to view item-wise / district-wise detail before approval.</p>
+      <div class="consol-opt-grid">
+        <button type="button" class="consol-opt-card" onclick="openOptimizationSourceDetail('warehouse')">
+          <strong>12</strong><span>Warehouse Stock</span>
+        </button>
+        <button type="button" class="consol-opt-card" onclick="openOptimizationSourceDetail('other')">
+          <strong>8</strong><span>Other Locations</span>
+        </button>
+        <button type="button" class="consol-opt-card" onclick="openOptimizationSourceDetail('openpo')">
+          <strong>5</strong><span>Open POs</span>
+        </button>
+        <button type="button" class="consol-opt-card" onclick="openOptimizationSourceDetail('redistribute')">
+          <strong>3</strong><span>Redistributable</span>
+        </button>
+      </div>
+    </div>
+
+    <div class="wf-actions mt-2">
+      <button type="button" class="btn btn-primary" onclick="approveConsolidatedDemand()"${disabled || st.approved ? ' disabled' : ''}>
+        <i class="fa-solid fa-check"></i> ${st.approved ? 'Demand Approved' : 'Approve Consolidated Demand'}
+      </button>
+      <button type="button" class="btn btn-outline" onclick="openConsolidationClarificationForm()"${disabled}>Request Clarification</button>
+      <button type="button" class="btn btn-outline" onclick="openConsolidationDocuments()"><i class="fa-solid fa-file-lines"></i> View Documents</button>
+    </div>
+    ${st.clarificationSent ? `<p class="report-footnote"><i class="fa-solid fa-envelope-open-text"></i> Clarification issued · Ref <strong>${st.lastClarificationRef}</strong></p>` : ''}
+  </div>`;
+}
+
+function openOptimizationSourceDetail(source) {
+  const stock = typeof STOCK_CHECK_API !== 'undefined' ? STOCK_CHECK_API : null;
+
+  const wrap = (title, lead, statsHtml, tableHtml) => {
+    openModal(title, `
+      <div class="consol-detail-modal">
+        <p class="consol-detail-lead">${lead}</p>
+        <div class="consol-detail-stats">${statsHtml}</div>
+        <div class="consol-detail-table-wrap">${tableHtml}</div>
+        <div class="modal-inline-actions">
+          <button type="button" class="btn btn-outline" onclick="modalGoBack()"><i class="fa-solid fa-arrow-left"></i> Back</button>
+        </div>
+      </div>
+    `, { wide: true, large: true, extraWide: true });
+  };
+
+  const stat = (label, value) => `<div class="consol-detail-stat"><span>${label}</span><strong>${value}</strong></div>`;
+
+  if (source === 'warehouse') {
+    const rows = stock?.warehouse?.rows || [];
+    wrap(
+      'Warehouse Stock — Optimization Detail',
+      'Central / regional warehouse on-hand that can offset fresh procurement for the consolidated district demand.',
+      `${stat('SKUs considered', '12')}${stat('Surplus value', '₹0.85 Cr – ₹1.05 Cr')}${stat('Action', 'Stock transfer')}`,
+      `<table class="data-table consol-detail-table">
+        <thead><tr><th>Facility / Warehouse</th><th>Item</th><th>On hand</th><th>Usable</th><th>Recommendation</th><th>Status</th></tr></thead>
+        <tbody>
+          ${rows.map(r => `<tr>
+            <td><strong>${r.facility}</strong></td>
+            <td>${r.item}</td>
+            <td>${r.onHand}</td>
+            <td>${r.usable}</td>
+            <td class="consol-detail-note">${r.recommendation}</td>
+            <td><span class="badge badge-${needStatusBadge(r.status)}">${r.status}</span></td>
+          </tr>`).join('')}
+        </tbody>
+      </table>`
+    );
+    return;
+  }
+
+  if (source === 'other') {
+    const rows = stock?.otherLocations?.rows || [];
+    wrap(
+      'Other Locations — District-wise Detail',
+      'Inter-facility surplus available for redistribution across districts before raising fresh procurement.',
+      `${stat('Transfer candidates', '8')}${stat('Est. value', '₹0.55 Cr – ₹0.70 Cr')}${stat('Lead time', '2–5 days')}`,
+      `<table class="data-table consol-detail-table">
+        <thead><tr><th>From (district / facility)</th><th>To</th><th>Item</th><th>Qty</th><th>Cover gain</th><th>Status</th></tr></thead>
+        <tbody>
+          ${rows.map(r => `<tr>
+            <td><strong>${r.from}</strong></td>
+            <td>${r.to}</td>
+            <td>${r.item}</td>
+            <td>${r.qty}</td>
+            <td>${r.coverGain}</td>
+            <td><span class="badge badge-${needStatusBadge(r.status)}">${r.status}</span></td>
+          </tr>`).join('')}
+        </tbody>
+      </table>`
+    );
+    return;
+  }
+
+  if (source === 'openpo') {
+    const rows = stock?.openPos?.rows || [];
+    wrap(
+      'Open POs — Pipeline Detail',
+      'Approved open purchase orders that can be netted against consolidated demand to avoid duplicate procurement.',
+      `${stat('Open POs', '5')}${stat('Pipeline value', '₹0.32 Cr – ₹0.45 Cr')}${stat('Arriving ≤7 days', '2')}`,
+      `<table class="data-table consol-detail-table">
+        <thead><tr><th>PO</th><th>Vendor</th><th>Item</th><th>Facility</th><th>ETA</th><th>Status</th></tr></thead>
+        <tbody>
+          ${rows.map(r => `<tr>
+            <td><strong>${r.po}</strong></td>
+            <td>${r.vendor}</td>
+            <td class="consol-detail-note">${r.item}</td>
+            <td>${r.facility}</td>
+            <td>${r.eta}</td>
+            <td><span class="badge badge-${needStatusBadge(r.status)}">${r.status}</span></td>
+          </tr>`).join('')}
+        </tbody>
+      </table>`
+    );
+    return;
+  }
+
+  if (source === 'redistribute') {
+    const rows = (stock?.redistributable?.rows || []).slice(0, 3);
+    wrap(
+      'Redistributable Inventory — Detail',
+      'AI/ML-ranked surplus that can fulfill consolidated demand without a new tender.',
+      `${stat('Candidates', '3')}${stat('Est. savings', '₹1.8 Cr – ₹2.4 Cr')}${stat('Confidence', '87%')}`,
+      `<table class="data-table consol-detail-table">
+        <thead><tr><th>Item</th><th>From</th><th>To</th><th>Qty</th><th>Savings</th><th>Status</th></tr></thead>
+        <tbody>
+          ${rows.map(r => `<tr>
+            <td><strong>${r.item}</strong></td>
+            <td>${r.from}</td>
+            <td>${r.to}</td>
+            <td>${r.qty}</td>
+            <td>${r.savings}</td>
+            <td><span class="badge badge-${needStatusBadge(r.status)}">${r.status}</span></td>
+          </tr>`).join('')}
+        </tbody>
+      </table>`
+    );
+  }
+}
+
+function approveConsolidatedDemand() {
+  const status = typeof getCustomSelectValue === 'function' ? getCustomSelectValue('consolStatus') : govConsolidationState.status;
+  const district = typeof getCustomSelectValue === 'function' ? getCustomSelectValue('consolDistrict') : govConsolidationState.district;
+  govConsolidationState.district = district || govConsolidationState.district;
+  govConsolidationState.status = 'Approved';
+  govConsolidationState.approved = true;
+  // Mark workflow stage complete for progress tracking
+  if (typeof GOV_WORKFLOW !== 'undefined') {
+    const s4 = GOV_WORKFLOW.find(s => s.id === 4);
+    const s5 = GOV_WORKFLOW.find(s => s.id === 5);
+    if (s4) s4.status = 'done';
+    if (s5 && s5.status === 'pending') s5.status = 'active';
+  }
+  refreshWorkflowUI();
+  openModal('Demand approved', `
+    <div class="sync-success-msg">
+      <div class="sync-success-icon"><i class="fa-solid fa-circle-check"></i></div>
+      <h4>Consolidated demand approved</h4>
+      <p>District <strong>${govConsolidationState.district}</strong> consolidation is approved. You may now proceed to <strong>PR &amp; Budget Approval</strong>.</p>
+    </div>
+  `);
+}
+
+function openConsolidationClarificationForm() {
+  const district = typeof getCustomSelectValue === 'function'
+    ? (getCustomSelectValue('consolDistrict') || govConsolidationState.district)
+    : govConsolidationState.district;
+  openModal('Request Clarification — Form CLR-01', `
+    <div class="clarification-form-modal">
+      <div class="doc-letter-head" style="margin-bottom:0.85rem">
+        <strong>MP Health Procurement Solution</strong><br>
+        Department of Public Health &amp; Family Welfare, Government of Madhya Pradesh
+      </div>
+      <p class="need-row-detail-lead">Official clarification request from consolidating authority to lower formation (Store / Facility / Indenting officer). All fields marked * are mandatory.</p>
+      <div class="form-grid wf-form-grid">
+        <div class="form-group"><label>${reqLabel('From (Authority)')}</label><input id="clrFrom" type="text" value="Stock Manager / Consolidation Cell — ${district}"></div>
+        <div class="form-group"><label>${reqLabel('To (Lower authority)')}</label>
+          <select id="clrTo" class="form-native-select">
+            <option>Store Manager — Facility</option>
+            <option>Indenting Officer</option>
+            <option>CMO Office (District)</option>
+            <option>Warehouse In-charge</option>
+          </select>
+        </div>
+        <div class="form-group"><label>${reqLabel('Reference Indent / DEM No.')}</label><input id="clrRef" type="text" value="${govIndentState.indentId || 'DEM-MP-2026-334'}" placeholder="e.g. IND-MP-260903-001"></div>
+        <div class="form-group"><label>${reqLabel('Subject')}</label><input id="clrSubject" type="text" placeholder="e.g. Clarification on quantity / facility stock certificate"></div>
+        <div class="form-group full"><label>${reqLabel('Clarification sought')}</label>
+          <textarea id="clrBody" rows="4" placeholder="State the specific points requiring clarification (quantity mismatch, stock certificate, duplicate indent, priority justification, etc.)"></textarea>
+        </div>
+        <div class="form-group"><label>${reqLabel('Response due by (DD-MM-YYYY)')}</label><input id="clrDue" type="text" placeholder="e.g. 10-09-2026"></div>
+        <div class="form-group"><label>Priority</label>
+          <select id="clrPriority" class="form-native-select">
+            <option>Routine</option>
+            <option selected>Urgent</option>
+            <option>Immediate</option>
+          </select>
+        </div>
+      </div>
+      <div class="modal-inline-actions">
+        <button type="button" class="btn btn-outline" onclick="modalGoBack()"><i class="fa-solid fa-arrow-left"></i> Back</button>
+        <button type="button" class="btn btn-primary" onclick="submitConsolidationClarification()"><i class="fa-solid fa-paper-plane"></i> Issue clarification</button>
+      </div>
+    </div>
+  `, { wide: true, large: true });
+}
+
+function submitConsolidationClarification() {
+  const subject = document.getElementById('clrSubject')?.value?.trim();
+  const body = document.getElementById('clrBody')?.value?.trim();
+  const due = document.getElementById('clrDue')?.value?.trim();
+  const ref = document.getElementById('clrRef')?.value?.trim();
+  const from = document.getElementById('clrFrom')?.value?.trim();
+  if (!subject || !body || !due || !ref || !from) {
+    showWfAlert('Please fill all mandatory fields marked with * before issuing the clarification.');
+    return;
+  }
+  const clrId = `CLR-MP-${APP_TODAY.replace(/-/g, '').slice(2)}-${String(Math.floor(Math.random() * 90) + 10)}`;
+  govConsolidationState.clarificationSent = true;
+  govConsolidationState.lastClarificationRef = clrId;
+  govConsolidationState.status = 'Clarification Sought';
+  govConsolidationState.approved = false;
+  refreshWorkflowUI();
+  openModal('Clarification issued', `
+    <div class="sync-success-msg">
+      <div class="sync-success-icon"><i class="fa-solid fa-envelope-circle-check"></i></div>
+      <h4>Clarification sent to lower authority</h4>
+      <p>Reference <strong>${clrId}</strong> has been recorded against <strong>${ref}</strong>. Consolidation remains pending until the response is received and demand is re-approved.</p>
+    </div>
+  `);
+}
+
+function openConsolidationDocuments() {
+  const value = getConsolidationEstimatedValueRange();
+  const district = (typeof getCustomSelectValue === 'function' && getCustomSelectValue('consolDistrict'))
+    || govConsolidationState.district
+    || 'Bhopal';
+  const cat = currentCategory === 'All' ? 'All categories' : currentCategory;
+  openModal('Consolidation Document Pack', `
+    <div class="doc-modal doc-letter consolidation-doc">
+      <div class="doc-letter-head">
+        <strong>MP Health Procurement Solution</strong><br>
+        Department of Public Health &amp; Family Welfare, Government of Madhya Pradesh<br>
+        <span style="font-size:0.8rem;opacity:0.85">Stock Consolidation Cell · Official Record</span>
+      </div>
+      <p class="doc-letter-ref">Doc No: CONSOL/${district.toUpperCase().slice(0, 3)}/2026/0${govConsolidationState.approved ? '92' : '41'} &nbsp;|&nbsp; Date: ${formatDateDMY(APP_TODAY)} &nbsp;|&nbsp; Category: ${cat}</p>
+      <h3 style="margin:0.75rem 0 0.5rem;font-size:1.05rem;color:var(--primary)">Demand Consolidation Report</h3>
+      <p><strong>Subject:</strong> District-wise consolidated demand after stock optimization — ${district} Division</p>
+      <p>This report summarises consolidated indent requirements after duplicate check and netting of warehouse stock, inter-facility surplus, approved open POs, and redistributable inventory.</p>
+
+      <table class="data-table data-table--modal" style="margin:1rem 0">
+        <tbody>
+          <tr><td>District / Division</td><td><strong>${district}</strong></td></tr>
+          <tr><td>Line items consolidated</td><td><strong>47</strong> across 12 facilities</td></tr>
+          <tr><td>Estimated value (range)</td><td><strong>${value.low} – ${value.high}</strong> (midpoint ${value.mid})</td></tr>
+          <tr><td>Fulfillable from existing stock</td><td><strong>28 items</strong></td></tr>
+          <tr><td>Est. savings from optimization</td><td><strong>₹1.8 Cr – ₹2.4 Cr</strong></td></tr>
+          <tr><td>Fresh procurement residual</td><td><strong>19 items</strong></td></tr>
+          <tr><td>Status</td><td><strong>${govConsolidationState.approved ? 'Approved' : govConsolidationState.status}</strong></td></tr>
+        </tbody>
+      </table>
+
+      <h4 style="margin:1rem 0 0.45rem;font-size:0.92rem">Optimization summary</h4>
+      <table class="data-table data-table--modal">
+        <thead><tr><th>Source</th><th>Items</th><th>Est. value</th><th>Action</th></tr></thead>
+        <tbody>
+          <tr><td>Warehouse Stock</td><td>12</td><td>₹0.85 Cr – ₹1.05 Cr</td><td>Issue stock transfer</td></tr>
+          <tr><td>Other Locations</td><td>8</td><td>₹0.55 Cr – ₹0.70 Cr</td><td>Inter-facility redistribute</td></tr>
+          <tr><td>Open POs</td><td>5</td><td>₹0.32 Cr – ₹0.45 Cr</td><td>Expedite / net against gap</td></tr>
+          <tr><td>Redistributable</td><td>3</td><td>₹0.12 Cr – ₹0.18 Cr</td><td>Auto-allocate surplus</td></tr>
+        </tbody>
+      </table>
+
+      <p style="margin-top:1rem;font-size:0.88rem;color:#334155"><strong>Certification:</strong> Certified that duplicate demand has been checked, stock optimization applied, and residual requirement is recommended for PR &amp; budget sanction under applicable GFR / DoPHFW procurement guidelines.</p>
+      <p class="doc-letter-sign">— Stock Manager / Consolidation Cell<br>MP Health Procurement · ${district}</p>
+      <div class="modal-inline-actions">
+        <button type="button" class="btn btn-outline" onclick="modalGoBack()"><i class="fa-solid fa-arrow-left"></i> Back</button>
+        <button type="button" class="btn btn-primary" onclick="window.print()"><i class="fa-solid fa-print"></i> Print / Download</button>
+      </div>
+    </div>
+  `, { wide: true, large: true });
+}
+
+function getPrBudgetData() {
+  return typeof PR_BUDGET_APPROVAL_API !== 'undefined' ? PR_BUDGET_APPROVAL_API : null;
+}
+
+function renderPrBudgetApprovalStage(canEdit = true) {
+  const data = getPrBudgetData();
+  if (!data) {
+    return `<div class="need-api-empty"><i class="fa-solid fa-plug-circle-xmark"></i><p>PR &amp; budget data could not be loaded. Please try again.</p></div>`;
+  }
+  const { meta, checklist, departments } = data;
+  const disabled = canEdit ? '' : ' disabled';
+  const approvedCount = departments.filter(d => d.status === 'Approved').length;
+  const blockedCount = departments.filter(d => d.status === 'Not Approved').length;
+  const reviewCount = departments.filter(d => d.status === 'Under Review' || d.status === 'Partial').length;
+
+  return `<div class="budget-stage">
+    <div class="indent-mode-banner">
+      <div>
+        <strong>Resource Manager — Budget verification</strong>
+        <p>Review the checklist, check each department’s budget decision and reasons, and open supporting documents as needed. This screen is for verification only — department work happens separately.</p>
+      </div>
+      ${govBudgetState.verified
+        ? `<span class="badge badge-success"><i class="fa-solid fa-check"></i> Verification complete</span>`
+        : `<span class="badge badge-warning"><i class="fa-solid fa-lock"></i> Verification required</span>`}
+    </div>
+
+    ${renderWorkflowPeriodFilter('budget', govBudgetState)}
+    <p class="report-footnote" style="margin:-0.35rem 0 0.85rem"><i class="fa-solid fa-calendar-days"></i> Viewing period: <strong>${getWfPeriodFilterLabel(govBudgetState)}</strong></p>
+
+    <div class="budget-pr-summary">
+      <div class="budget-pr-chip"><span>PR Number</span><strong>${meta.prNumber}</strong></div>
+      <div class="budget-pr-chip"><span>District</span><strong>${meta.district}</strong></div>
+      <div class="budget-pr-chip"><span>Category</span><strong>${currentCategory === 'All' ? meta.category : currentCategory}</strong></div>
+      <div class="budget-pr-chip"><span>Estimated value</span><strong>${meta.estimatedRange}</strong></div>
+      <div class="budget-pr-chip"><span>Last updated</span><strong>${meta.lastSynced}</strong></div>
+    </div>
+
+    <section class="budget-section">
+      <div class="budget-section-head">
+        <h4><i class="fa-solid fa-list-check"></i> Stage checklist — who owns each step</h4>
+        <p>Each item shows the responsible section and whether it is complete.</p>
+      </div>
+      <div class="budget-checklist">
+        ${checklist.map(item => `
+          <article class="budget-check-item ${item.done ? 'is-done' : 'is-open'}">
+            <div class="budget-check-icon"><i class="fa-solid ${item.done ? 'fa-circle-check' : 'fa-circle-half-stroke'}"></i></div>
+            <div class="budget-check-body">
+              <div class="budget-check-title-row">
+                <strong>${item.title}</strong>
+                <span class="badge badge-${needStatusBadge(item.status)}">${item.status}</span>
+              </div>
+              <p>${item.detail}</p>
+              <div class="budget-check-meta">
+                <span><i class="fa-solid fa-building"></i> Section: <strong>${item.section}</strong></span>
+                <span><i class="fa-solid fa-user-tie"></i> Owner: <strong>${item.owner}</strong></span>
+              </div>
+            </div>
+          </article>
+        `).join('')}
+      </div>
+    </section>
+
+    <section class="budget-section">
+      <div class="budget-section-head">
+        <h4><i class="fa-solid fa-building-columns"></i> Department budget approvals</h4>
+        <p>Open a department to see why budget was approved or not, read the decision note, and get the related documents.</p>
+      </div>
+      <div class="budget-dept-stats">
+        <div class="budget-dept-stat"><span>Departments</span><strong>${departments.length}</strong></div>
+        <div class="budget-dept-stat"><span>Approved</span><strong>${approvedCount}</strong></div>
+        <div class="budget-dept-stat"><span>Not approved</span><strong>${blockedCount}</strong></div>
+        <div class="budget-dept-stat"><span>Review / partial</span><strong>${reviewCount}</strong></div>
+      </div>
+      <div class="budget-dept-grid">
+        ${departments.map(d => `
+          <button type="button" class="budget-dept-card status-${d.status.toLowerCase().replace(/\s+/g, '-')}" onclick="openDepartmentBudgetDetail('${d.id}')">
+            <div class="budget-dept-card-top">
+              <strong>${d.shortName}</strong>
+              <span class="badge badge-${needStatusBadge(d.status)}">${d.status}</span>
+            </div>
+            <p class="budget-dept-name">${d.name}</p>
+            <div class="budget-dept-figures">
+              <div><span>Allocated</span><strong>${d.allocated}</strong></div>
+              <div><span>Requested</span><strong>${d.requested}</strong></div>
+              <div><span>Available</span><strong>${d.available}</strong></div>
+            </div>
+            <p class="budget-dept-head">Budget head: ${d.budgetHead}</p>
+            <span class="budget-dept-cta">View reasons &amp; documents <i class="fa-solid fa-arrow-right"></i></span>
+          </button>
+        `).join('')}
+      </div>
+    </section>
+
+    <div class="wf-actions mt-2">
+      <button type="button" class="btn btn-primary" onclick="confirmBudgetVerification()"${disabled || govBudgetState.verified ? ' disabled' : ''}>
+        <i class="fa-solid fa-clipboard-check"></i> ${govBudgetState.verified ? 'Budget Verification Confirmed' : 'Confirm Budget Verification'}
+      </button>
+      <button type="button" class="btn btn-outline" onclick="openBudgetDocumentsPack()"><i class="fa-solid fa-file-lines"></i> View PR Summary Document</button>
+    </div>
+  </div>`;
+}
+
+function openDepartmentBudgetDetail(deptId) {
+  const data = getPrBudgetData();
+  const dept = data?.departments?.find(d => d.id === deptId);
+  if (!dept) return;
+  const fetched = govBudgetState.fetchedDocs[deptId] || [];
+  const note = dept.ocrExtract;
+
+  openModal(`${dept.name} — Budget Detail`, `
+    <div class="budget-dept-detail consol-detail-modal">
+      <div class="consol-detail-stats">
+        <div class="consol-detail-stat"><span>Status</span><strong><span class="badge badge-${needStatusBadge(dept.status)}">${dept.status}</span></strong></div>
+        <div class="consol-detail-stat"><span>Budget head</span><strong>${dept.budgetHead}</strong></div>
+        <div class="consol-detail-stat"><span>Scheme</span><strong>${dept.scheme}</strong></div>
+        <div class="consol-detail-stat"><span>Decision by</span><strong>${dept.decisionBy}</strong></div>
+      </div>
+
+      <div class="budget-reason-box status-${dept.status.toLowerCase().replace(/\s+/g, '-')}">
+        <h4><i class="fa-solid fa-stamp"></i> Reason for ${dept.status === 'Approved' ? 'approval' : dept.status === 'Not Approved' ? 'non-approval' : 'current status'}</h4>
+        <p>${dept.reason}</p>
+        <div class="budget-reason-meta">
+          <span>Based on: <strong>${dept.reasonSource}</strong></span>
+          <span>Date: <strong>${dept.decisionDate}</strong></span>
+        </div>
+      </div>
+
+      <div class="budget-figures-row">
+        <div><span>Allocated</span><strong>${dept.allocated}</strong></div>
+        <div><span>Requested</span><strong>${dept.requested}</strong></div>
+        <div><span>Available</span><strong>${dept.available}</strong></div>
+      </div>
+
+      <h4 class="budget-subhead">Work done by this section</h4>
+      <ul class="budget-section-work">${dept.sectionWork.map(w => `<li>${w}</li>`).join('')}</ul>
+
+      ${note ? `
+        <div class="budget-ocr-panel">
+          <div class="budget-ocr-head">
+            <h4><i class="fa-solid fa-file-signature"></i> Decision note summary</h4>
+            <span class="badge badge-info">Readability ${note.confidence}</span>
+          </div>
+          <p class="budget-ocr-source">From document: <strong>${note.sourceDoc}</strong></p>
+          <div class="label-grid">
+            ${note.fields.map(f => `<div class="label-item"><span class="label-key">${f.label}</span><span class="label-val">${f.value}</span></div>`).join('')}
+          </div>
+          <div class="budget-ocr-raw">
+            <span>What the note says</span>
+            <p>${note.rawText}</p>
+          </div>
+        </div>
+      ` : `
+        <div class="budget-ocr-empty"><i class="fa-solid fa-file-circle-check"></i> Decision is recorded on a typed / PDF sanction. No scanned handwritten note for this department.</div>
+      `}
+
+      <h4 class="budget-subhead">Department documents</h4>
+      <div class="consol-detail-table-wrap">
+        <table class="data-table consol-detail-table">
+          <thead><tr><th>Document</th><th>Type</th><th>Uploaded by</th><th>Date</th><th>Reading status</th></tr></thead>
+          <tbody>
+            ${dept.documents.map(doc => `<tr>
+              <td><strong>${doc.name}</strong></td>
+              <td>${doc.kind}</td>
+              <td>${doc.uploadedBy}</td>
+              <td>${doc.uploadedOn}</td>
+              <td>${doc.ocr ? '<span class="badge badge-info">Note summarised</span>' : '<span class="badge badge-muted">As uploaded</span>'}</td>
+            </tr>`).join('')}
+          </tbody>
+        </table>
+      </div>
+
+      <div class="budget-api-fetch">
+        <p><i class="fa-solid fa-folder-open"></i> Get the latest documents submitted by this department for the budget decision.</p>
+        <button type="button" class="btn btn-primary" onclick="fetchDepartmentBudgetDocuments('${dept.id}')">
+          <i class="fa-solid fa-download"></i> Get documents
+        </button>
+        ${fetched.length ? `
+          <div class="budget-fetched-list">
+            <strong>Documents available:</strong>
+            <ul>${fetched.map(f => `<li><i class="fa-solid fa-file"></i> ${f.name}</li>`).join('')}</ul>
+          </div>
+        ` : ''}
+      </div>
+
+      <div class="modal-inline-actions">
+        <button type="button" class="btn btn-outline" onclick="modalGoBack()"><i class="fa-solid fa-arrow-left"></i> Back</button>
+        ${note ? `<button type="button" class="btn btn-outline" onclick="openBudgetOcrDocument('${dept.id}')"><i class="fa-solid fa-magnifying-glass"></i> View scanned note</button>` : ''}
+      </div>
+    </div>
+  `, { wide: true, large: true, extraWide: true });
+}
+
+function fetchDepartmentBudgetDocuments(deptId) {
+  const data = getPrBudgetData();
+  const dept = data?.departments?.find(d => d.id === deptId);
+  if (!dept) return;
+  govBudgetState.fetchedDocs[deptId] = dept.documents.map(d => ({
+    name: d.name,
+    ref: d.id,
+    kind: d.kind
+  }));
+  openModal('Documents ready', `
+    <div class="sync-success-msg">
+      <div class="sync-success-icon"><i class="fa-solid fa-folder-open"></i></div>
+      <h4>Documents retrieved</h4>
+      <p><strong>${dept.documents.length}</strong> document(s) from <strong>${dept.name}</strong> are ready for review.</p>
+      <ul class="budget-fetched-simple">
+        ${dept.documents.map(d => `<li>${d.name}</li>`).join('')}
+      </ul>
+      <div class="modal-inline-actions" style="justify-content:center;margin-top:1rem">
+        <button type="button" class="btn btn-primary" onclick="openDepartmentBudgetDetail('${deptId}')">Back to department detail</button>
+      </div>
+    </div>
+  `);
+}
+
+function openBudgetOcrDocument(deptId) {
+  const dept = getPrBudgetData()?.departments?.find(d => d.id === deptId);
+  const note = dept?.ocrExtract;
+  if (!note) return;
+  openModal('Scanned decision note', `
+    <div class="doc-letter consolidation-doc">
+      <div class="doc-letter-head">
+        <strong>MP Health Procurement Solution</strong><br>
+        Department of Public Health &amp; Family Welfare, Government of Madhya Pradesh<br>
+        <span style="font-size:0.8rem;opacity:0.85">Scanned department note — for Resource Manager review</span>
+      </div>
+      <p class="doc-letter-ref">Document: ${note.sourceDoc} &nbsp;|&nbsp; Readability: ${note.confidence} &nbsp;|&nbsp; Department: ${dept.name}</p>
+      <div class="budget-ocr-scan-preview">
+        <div class="budget-ocr-scan-label"><i class="fa-solid fa-image"></i> Scanned note (preview)</div>
+        <div class="budget-ocr-scan-body">
+          <em>“${note.rawText}”</em>
+          <span>— as written on the uploaded note</span>
+        </div>
+      </div>
+      <h4 style="margin:1rem 0 0.5rem;font-size:0.95rem;color:var(--primary)">Key points from the note</h4>
+      <table class="data-table consol-detail-table">
+        <thead><tr><th>Particular</th><th>Value</th></tr></thead>
+        <tbody>
+          ${note.fields.map(f => `<tr><td><strong>${f.label}</strong></td><td>${f.value}</td></tr>`).join('')}
+        </tbody>
+      </table>
+      <p style="margin-top:1rem;font-size:0.85rem;color:#475569">Use these points to understand why the department approved or did not approve the budget.</p>
+      <div class="modal-inline-actions">
+        <button type="button" class="btn btn-outline" onclick="modalGoBack()"><i class="fa-solid fa-arrow-left"></i> Back</button>
+      </div>
+    </div>
+  `, { wide: true, large: true });
+}
+
+function confirmBudgetVerification() {
+  const data = getPrBudgetData();
+  const blocked = (data?.departments || []).filter(d => d.status === 'Not Approved');
+  govBudgetState.verified = true;
+  if (typeof GOV_WORKFLOW !== 'undefined') {
+    const s5 = GOV_WORKFLOW.find(s => s.id === 5);
+    const s6 = GOV_WORKFLOW.find(s => s.id === 6);
+    if (s5) s5.status = 'done';
+    if (s6 && s6.status === 'pending') s6.status = 'active';
+  }
+  refreshWorkflowUI();
+  openModal('Budget verification confirmed', `
+    <div class="sync-success-msg">
+      <div class="sync-success-icon"><i class="fa-solid fa-clipboard-check"></i></div>
+      <h4>PR &amp; budget verification recorded</h4>
+      <p>Resource Manager has verified section checklist and department budget positions for <strong>${data?.meta?.prNumber || 'this PR'}</strong>.</p>
+      ${blocked.length
+        ? `<p class="budget-verify-note"><i class="fa-solid fa-triangle-exclamation"></i> Note: <strong>${blocked.map(d => d.shortName).join(', ')}</strong> remain not approved — revise / reallocate before tender preparation if required.</p>`
+        : '<p>All reviewed departments are clear to proceed toward tender preparation.</p>'}
+      <p>You may now proceed to <strong>Tender Preparation</strong>.</p>
+    </div>
+  `);
+}
+
+function openBudgetDocumentsPack() {
+  const data = getPrBudgetData();
+  if (!data) return;
+  const { meta, departments } = data;
+  openModal('PR & Budget Summary Document', `
+    <div class="doc-letter consolidation-doc">
+      <div class="doc-letter-head">
+        <strong>MP Health Procurement Solution</strong><br>
+        Department of Public Health &amp; Family Welfare, Government of Madhya Pradesh<br>
+        <span style="font-size:0.8rem;opacity:0.85">Resource Manager · PR &amp; Budget Verification Record</span>
+      </div>
+      <p class="doc-letter-ref">PR: ${meta.prNumber} &nbsp;|&nbsp; Date: ${formatDateDMY(APP_TODAY)} &nbsp;|&nbsp; District: ${meta.district}</p>
+      <h3 style="margin:0.75rem 0 0.5rem;font-size:1.05rem;color:var(--primary)">Purchase Requisition &amp; Budget Approval Summary</h3>
+      <p>Estimated procurement value <strong>${meta.estimatedRange}</strong>. Department-wise sanction status is summarised below from notes and files submitted by each department.</p>
+      <table class="data-table consol-detail-table" style="margin-top:1rem">
+        <thead><tr><th>Department</th><th>Budget head</th><th>Requested</th><th>Status</th><th>Decision date</th></tr></thead>
+        <tbody>
+          ${departments.map(d => `<tr>
+            <td><strong>${d.name}</strong></td>
+            <td>${d.budgetHead}</td>
+            <td>${d.requested}</td>
+            <td><span class="badge badge-${needStatusBadge(d.status)}">${d.status}</span></td>
+            <td>${d.decisionDate}</td>
+          </tr>`).join('')}
+        </tbody>
+      </table>
+      <p style="margin-top:1rem;font-size:0.88rem;color:#334155"><strong>Certification:</strong> Resource Manager has reviewed section ownership, department reasons, and supporting documents for this purchase requisition.</p>
+      <p class="doc-letter-sign">— Resource Manager<br>MP Health Procurement</p>
+      <div class="modal-inline-actions">
+        <button type="button" class="btn btn-outline" onclick="modalGoBack()"><i class="fa-solid fa-arrow-left"></i> Back</button>
+        <button type="button" class="btn btn-primary" onclick="window.print()"><i class="fa-solid fa-print"></i> Print / Download</button>
+      </div>
+    </div>
+  `, { wide: true, large: true });
+}
+
+function getTenderPreparationData() {
+  return typeof TENDER_PREPARATION_DATA !== 'undefined' ? TENDER_PREPARATION_DATA : null;
+}
+
+function getTenderPrepRows() {
+  const data = getTenderPreparationData();
+  if (!data) return [];
+  let rows = data.tenders.slice();
+  if (currentCategory && currentCategory !== 'All') {
+    rows = rows.filter(t => t.category === currentCategory);
+  }
+  return applyStagePeriodFilter(rows, govTenderPrepState, 'preparedOn');
+}
+
+function getTenderPrepById(tenderId) {
+  return getTenderPrepRows().find(t => t.id === tenderId)
+    || getTenderPreparationData()?.tenders?.find(t => t.id === tenderId)
+    || null;
+}
+
+function setTenderPrepPreparedPage(page) {
+  govTenderPrepState.preparedPage = Math.max(1, Number(page) || 1);
+  refreshWorkflowUI();
+  document.getElementById('tenderPrepPreparedTable')?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+}
+
+function renderTenderPreparationStage(canEdit = true) {
+  const data = getTenderPreparationData();
+  if (!data) {
+    return `<div class="need-api-empty"><i class="fa-solid fa-file-circle-xmark"></i><p>Tender preparation data could not be loaded. Please try again.</p></div>`;
+  }
+  const { meta, processSteps, checkers } = data;
+  const rows = getTenderPrepRows();
+  const disabled = canEdit ? '' : ' disabled';
+  const byCategory = {};
+  rows.forEach(t => {
+    byCategory[t.category] = (byCategory[t.category] || 0) + 1;
+  });
+  const consensusCount = checkers.filter(c => c.status === 'Consensus uploaded').length;
+  const paged = paginateItems(rows, govTenderPrepState.preparedPage, 10);
+  govTenderPrepState.preparedPage = paged.page;
+
+  return `<div class="tender-prep-stage">
+    <div class="indent-mode-banner">
+      <div>
+        <strong>Tender preparation — auto draft &amp; division check</strong>
+        <p>The system prepares the NIT/RFP draft from earlier stage data. Division checkers review the details, upload consensus, and then the final NIT/RFP is issued.</p>
+      </div>
+      ${govTenderPrepState.finalReady
+        ? `<span class="badge badge-success"><i class="fa-solid fa-check"></i> Final NIT ready</span>`
+        : `<span class="badge badge-warning"><i class="fa-solid fa-file-pen"></i> Draft under check</span>`}
+    </div>
+
+    ${renderWorkflowPeriodFilter('tender', govTenderPrepState)}
+    <p class="report-footnote" style="margin:-0.35rem 0 0.85rem"><i class="fa-solid fa-calendar-days"></i> Viewing period: <strong>${getWfPeriodFilterLabel(govTenderPrepState)}</strong></p>
+
+    <div class="budget-pr-summary">
+      <div class="budget-pr-chip"><span>Current draft</span><strong>${meta.draftId}</strong></div>
+      <div class="budget-pr-chip"><span>Linked PR</span><strong>${meta.linkedPr}</strong></div>
+      <div class="budget-pr-chip"><span>Prepared on</span><strong>${meta.preparedOn}</strong></div>
+      <div class="budget-pr-chip"><span>Evaluation</span><strong>${meta.evaluationMethod}</strong></div>
+      <div class="budget-pr-chip"><span>Checker consensus</span><strong>${consensusCount}/${checkers.length}</strong></div>
+    </div>
+
+    <section class="budget-section">
+      <div class="budget-section-head">
+        <h4><i class="fa-solid fa-route"></i> How this stage works</h4>
+        <p>Draft comes from prerequisite data already approved in earlier stages. Checkers from different divisions confirm details before the final tender is prepared.</p>
+      </div>
+      <div class="tender-prep-steps">
+        ${processSteps.map(s => `
+          <article class="tender-prep-step status-${s.status.toLowerCase().replace(/\s+/g, '-')}">
+            <span class="tender-prep-step-num">${s.id}</span>
+            <div>
+              <div class="budget-check-title-row">
+                <strong>${s.title}</strong>
+                <span class="badge badge-${needStatusBadge(s.status)}">${s.status}</span>
+              </div>
+              <p>${s.detail}</p>
+            </div>
+          </article>
+        `).join('')}
+      </div>
+    </section>
+
+    <section class="budget-section">
+      <div class="budget-section-head">
+        <h4><i class="fa-solid fa-file-lines"></i> Auto-prepared drafts — tender wise</h4>
+        <p>Each row is one tender draft. Click a row to open scope, BOQ, eligibility, EMD, timelines and other draft details.</p>
+      </div>
+      <div class="consol-detail-table-wrap">
+        <table class="data-table consol-detail-table tender-prep-table">
+          <thead>
+            <tr>
+              <th>Tender ID</th>
+              <th>Title</th>
+              <th>Division</th>
+              <th>Category</th>
+              <th>BOQ lines</th>
+              <th>Est. value</th>
+              <th>Draft status</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${rows.length ? rows.map(t => `
+              <tr class="tender-prep-row" onclick="openTenderDraftDetail('${t.id}')" title="View draft details">
+                <td><strong>${t.id}</strong></td>
+                <td>${t.title}</td>
+                <td>${t.division}</td>
+                <td>${t.category}</td>
+                <td>${t.boqLines}</td>
+                <td>${t.value}</td>
+                <td><span class="badge badge-${needStatusBadge(t.status)}">${t.status}</span></td>
+              </tr>
+            `).join('') : `<tr><td colspan="7" style="text-align:center;color:#64748b;padding:1.25rem">No tender drafts for the selected category.</td></tr>`}
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <section class="budget-section">
+      <div class="budget-section-head">
+        <h4><i class="fa-solid fa-users"></i> Division checkers — consensus</h4>
+        <p>Each division reviews the draft and uploads concurrence. Click a row for full checker details.</p>
+      </div>
+      <div class="consol-detail-table-wrap">
+        <table class="data-table consol-detail-table tender-checker-table">
+          <thead><tr><th>Division</th><th>Officer</th><th>Status</th><th>Remark</th><th>Uploaded on</th></tr></thead>
+          <tbody>
+            ${checkers.map(c => `
+              <tr class="tender-prep-row" onclick="openTenderCheckerDetail('${c.id}')" title="View checker details">
+                <td><strong>${c.division}</strong></td>
+                <td>${c.officer}</td>
+                <td><span class="badge badge-${needStatusBadge(c.status)}">${c.status}</span></td>
+                <td class="consol-detail-note">${c.remark}</td>
+                <td>${c.uploadedOn}</td>
+              </tr>
+            `).join('')}
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <section class="budget-section" id="tenderPrepPreparedTable">
+      <div class="budget-section-head">
+        <h4><i class="fa-solid fa-table"></i> Tenders prepared — status by category &amp; division</h4>
+        <p>Counts across Drugs, Equipment and other categories. Click a row for full tender details. Showing 10 per page.</p>
+      </div>
+      <div class="budget-dept-stats tender-prep-counts">
+        <div class="budget-dept-stat"><span>Total shown</span><strong>${rows.length}</strong></div>
+        ${Object.keys(byCategory).map(cat => `
+          <div class="budget-dept-stat"><span>${cat}</span><strong>${byCategory[cat]}</strong></div>
+        `).join('')}
+      </div>
+      <div class="consol-detail-table-wrap">
+        <table class="data-table consol-detail-table tender-prep-table">
+          <thead>
+            <tr>
+              <th>Tender ID</th>
+              <th>Title</th>
+              <th>State / Division</th>
+              <th>Category</th>
+              <th>Status</th>
+              <th>Est. value</th>
+              <th>Prepared on</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${paged.items.length ? paged.items.map(t => `
+              <tr class="tender-prep-row" onclick="openTenderPrepRowDetail('${t.id}')" title="View tender details">
+                <td><strong>${t.id}</strong></td>
+                <td>${t.title}</td>
+                <td>${t.state}<br><span class="cell-sub">${t.division}</span></td>
+                <td>${t.category}</td>
+                <td><span class="badge badge-${needStatusBadge(t.status)}">${t.status}</span></td>
+                <td>${t.value}</td>
+                <td>${t.preparedOn}</td>
+              </tr>
+            `).join('') : `<tr><td colspan="7" style="text-align:center;color:#64748b;padding:1.25rem">No tenders for the selected category.</td></tr>`}
+          </tbody>
+        </table>
+      </div>
+      ${renderPaginationControls(paged.page, paged.totalPages, paged.total, paged.from, paged.to, 'setTenderPrepPreparedPage')}
+    </section>
+
+    <div class="wf-actions mt-2">
+      <button type="button" class="btn btn-primary" onclick="confirmFinalNitRfp()"${disabled || govTenderPrepState.finalReady ? ' disabled' : ''}>
+        <i class="fa-solid fa-file-circle-check"></i> ${govTenderPrepState.finalReady ? 'Final NIT / RFP Prepared' : 'Prepare Final NIT / RFP'}
+      </button>
+      <button type="button" class="btn btn-outline" onclick="openTenderDraftDetail('TND-2026-MP-DRAFT')"><i class="fa-solid fa-eye"></i> View current draft</button>
+    </div>
+  </div>`;
+}
+
+function openTenderDraftDetail(tenderId) {
+  const t = getTenderPrepById(tenderId);
+  if (!t) return;
+  const data = getTenderPreparationData();
+  openModal(`${t.id} — Tender draft`, `
+    <div class="doc-letter consolidation-doc consol-detail-modal">
+      <div class="doc-letter-head">
+        <strong>MP Health Procurement Solution</strong><br>
+        Department of Public Health &amp; Family Welfare, Government of Madhya Pradesh<br>
+        <span style="font-size:0.8rem;opacity:0.85">Auto-prepared tender draft</span>
+      </div>
+      <p class="doc-letter-ref">Draft / NIT: ${t.nitNo} &nbsp;|&nbsp; PR: ${t.linkedPr || data?.meta?.linkedPr || '—'} &nbsp;|&nbsp; Prepared: ${t.preparedOn}</p>
+      <h3 style="margin:0.75rem 0 0.5rem;font-size:1.05rem;color:var(--primary)">${t.title}</h3>
+      <p class="consol-detail-lead">${t.category} · ${t.state} (${t.division} Division) · <span class="badge badge-${needStatusBadge(t.status)}">${t.status}</span></p>
+
+      <div class="consol-detail-stats" style="grid-template-columns:repeat(4,minmax(0,1fr))">
+        <div class="consol-detail-stat"><span>Est. value</span><strong>${t.value}</strong></div>
+        <div class="consol-detail-stat"><span>EMD</span><strong>${t.emd}</strong></div>
+        <div class="consol-detail-stat"><span>BOQ lines</span><strong>${t.boqLines}</strong></div>
+        <div class="consol-detail-stat"><span>Method</span><strong>${t.method}</strong></div>
+      </div>
+
+      <div class="consol-detail-table-wrap">
+        <table class="data-table consol-detail-table">
+          <tbody>
+            <tr><td>Scope</td><td><strong>${t.scope}</strong></td></tr>
+            <tr><td>Eligibility</td><td>${t.eligibility}</td></tr>
+            <tr><td>Bid deadline</td><td><strong>${t.bidDeadline}</strong></td></tr>
+            <tr><td>Bid opening</td><td><strong>${t.bidOpening}</strong></td></tr>
+            <tr><td>Delivery period</td><td><strong>${t.deliveryPeriod}</strong></td></tr>
+            <tr><td>Division checkers</td><td><strong>${t.checkersDone} consensus received</strong></td></tr>
+            <tr><td>Built from</td><td>${data?.meta?.sourceStages || 'Prior procurement stages'}</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <div class="modal-inline-actions">
+        <button type="button" class="btn btn-outline" onclick="modalGoBack()"><i class="fa-solid fa-arrow-left"></i> Back</button>
+        <button type="button" class="btn btn-primary" onclick="window.print()"><i class="fa-solid fa-print"></i> Print / Download</button>
+      </div>
+    </div>
+  `, { wide: true, large: true });
+}
+
+function openTenderCheckerDetail(checkerId) {
+  const checker = getTenderPreparationData()?.checkers?.find(c => c.id === checkerId);
+  if (!checker) return;
+  openModal(`${checker.division} — Checker details`, `
+    <div class="consol-detail-modal">
+      <p class="consol-detail-lead">Consensus review by <strong>${checker.officer}</strong> on draft <strong>${checker.linkedDraft}</strong>.</p>
+      <div class="consol-detail-stats" style="grid-template-columns:repeat(3,minmax(0,1fr))">
+        <div class="consol-detail-stat"><span>Status</span><strong><span class="badge badge-${needStatusBadge(checker.status)}">${checker.status}</span></strong></div>
+        <div class="consol-detail-stat"><span>Decision</span><strong>${checker.decision}</strong></div>
+        <div class="consol-detail-stat"><span>Uploaded on</span><strong>${checker.uploadedOn}</strong></div>
+      </div>
+
+      <div class="budget-reason-box status-${checker.status.toLowerCase().replace(/\s+/g, '-')}">
+        <h4><i class="fa-solid fa-comment-dots"></i> Summary remark</h4>
+        <p>${checker.remark}</p>
+      </div>
+
+      <h4 class="budget-subhead">Detailed observation</h4>
+      <p style="margin:0 0 1rem;font-size:0.92rem;line-height:1.5;color:#0f172a">${checker.detail}</p>
+
+      <h4 class="budget-subhead">Sections reviewed</h4>
+      <ul class="budget-section-work">${(checker.reviewed || []).map(r => `<li>${r}</li>`).join('')}</ul>
+
+      <div class="consol-detail-table-wrap">
+        <table class="data-table consol-detail-table">
+          <tbody>
+            <tr><td>Division</td><td><strong>${checker.division}</strong></td></tr>
+            <tr><td>Officer</td><td><strong>${checker.officer}</strong></td></tr>
+            <tr><td>Linked draft</td><td><strong>${checker.linkedDraft}</strong></td></tr>
+            <tr><td>Consensus document</td><td><strong>${checker.document}</strong></td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <div class="modal-inline-actions">
+        <button type="button" class="btn btn-outline" onclick="modalGoBack()"><i class="fa-solid fa-arrow-left"></i> Back</button>
+      </div>
+    </div>
+  `, { wide: true, large: true });
+}
+
+function openTenderPrepRowDetail(tenderId) {
+  const t = getTenderPrepById(tenderId);
+  if (!t) return;
+  openModal(`${t.id} — Tender details`, `
+    <div class="consol-detail-modal">
+      <p class="consol-detail-lead">${t.title} · ${t.category} · ${t.state} (${t.division} Division)</p>
+      <div class="consol-detail-stats" style="grid-template-columns:repeat(4,minmax(0,1fr))">
+        <div class="consol-detail-stat"><span>Status</span><strong><span class="badge badge-${needStatusBadge(t.status)}">${t.status}</span></strong></div>
+        <div class="consol-detail-stat"><span>Est. value</span><strong>${t.value}</strong></div>
+        <div class="consol-detail-stat"><span>EMD</span><strong>${t.emd}</strong></div>
+        <div class="consol-detail-stat"><span>Method</span><strong>${t.method}</strong></div>
+      </div>
+      <div class="consol-detail-table-wrap">
+        <table class="data-table consol-detail-table">
+          <tbody>
+            <tr><td>NIT / Draft No.</td><td><strong>${t.nitNo}</strong></td></tr>
+            <tr><td>Linked PR</td><td><strong>${t.linkedPr || '—'}</strong></td></tr>
+            <tr><td>State</td><td><strong>${t.state}</strong></td></tr>
+            <tr><td>Division</td><td><strong>${t.division}</strong></td></tr>
+            <tr><td>Category</td><td><strong>${t.category}</strong></td></tr>
+            <tr><td>Prepared on</td><td><strong>${t.preparedOn}</strong></td></tr>
+            <tr><td>Scope</td><td>${t.scope}</td></tr>
+            <tr><td>BOQ lines</td><td><strong>${t.boqLines}</strong></td></tr>
+            <tr><td>Eligibility</td><td>${t.eligibility}</td></tr>
+            <tr><td>Bid deadline</td><td><strong>${t.bidDeadline}</strong></td></tr>
+            <tr><td>Bid opening</td><td><strong>${t.bidOpening}</strong></td></tr>
+            <tr><td>Delivery period</td><td><strong>${t.deliveryPeriod}</strong></td></tr>
+            <tr><td>Division checkers</td><td><strong>${t.checkersDone} consensus received</strong></td></tr>
+          </tbody>
+        </table>
+      </div>
+      <div class="modal-inline-actions">
+        <button type="button" class="btn btn-outline" onclick="modalGoBack()"><i class="fa-solid fa-arrow-left"></i> Back</button>
+        <button type="button" class="btn btn-primary" onclick="openTenderDraftDetail('${t.id}')"><i class="fa-solid fa-file-lines"></i> Open full draft</button>
+      </div>
+    </div>
+  `, { wide: true, large: true });
+}
+
+function confirmFinalNitRfp() {
+  const data = getTenderPreparationData();
+  const pending = (data?.checkers || []).filter(c => c.status !== 'Consensus uploaded');
+  govTenderPrepState.finalReady = true;
+  govTenderPrepState.consensusAck = true;
+  if (typeof GOV_WORKFLOW !== 'undefined') {
+    const s6 = GOV_WORKFLOW.find(s => s.id === 6);
+    const s7 = GOV_WORKFLOW.find(s => s.id === 7);
+    if (s6) s6.status = 'done';
+    if (s7 && s7.status === 'pending') s7.status = 'active';
+  }
+  refreshWorkflowUI();
+  openModal('Final NIT / RFP prepared', `
+    <div class="sync-success-msg">
+      <div class="sync-success-icon"><i class="fa-solid fa-file-circle-check"></i></div>
+      <h4>Final tender document is ready</h4>
+      <p>Draft <strong>${data?.meta?.draftId || ''}</strong> has been finalised as NIT/RFP after division checker review. You may proceed to <strong>Bid Evaluation</strong>.</p>
+      ${pending.length
+        ? `<p class="budget-verify-note"><i class="fa-solid fa-triangle-exclamation"></i> Note: ${pending.map(c => c.division).join(', ')} were still pending at confirmation — follow up if needed before publication.</p>`
+        : ''}
+    </div>
+  `);
+}
+
+function filterCategoryRows(rows) {
+  if (!rows) return [];
+  if (currentCategory && currentCategory !== 'All') return rows.filter(r => r.category === currentCategory);
+  return rows.slice();
+}
+
+function renderCategoryCountStrip(rows) {
+  const byCategory = {};
+  rows.forEach(t => { byCategory[t.category] = (byCategory[t.category] || 0) + 1; });
+  return `<div class="budget-dept-stats tender-prep-counts">
+    <div class="budget-dept-stat"><span>Total shown</span><strong>${rows.length}</strong></div>
+    ${Object.keys(byCategory).map(cat => `
+      <div class="budget-dept-stat"><span>${cat}</span><strong>${byCategory[cat]}</strong></div>
+    `).join('')}
+  </div>`;
+}
+
+function renderProcessSteps(steps) {
+  return `<div class="tender-prep-steps">
+    ${steps.map(s => `
+      <article class="tender-prep-step status-${s.status.toLowerCase().replace(/\s+/g, '-')}">
+        <span class="tender-prep-step-num">${s.id}</span>
+        <div>
+          <div class="budget-check-title-row">
+            <strong>${s.title}</strong>
+            <span class="badge badge-${needStatusBadge(s.status)}">${s.status}</span>
+          </div>
+          <p>${s.detail}</p>
+        </div>
+      </article>
+    `).join('')}
+  </div>`;
+}
+
+function markGovStageDone(fromId, toId) {
+  if (typeof GOV_WORKFLOW === 'undefined') return;
+  const from = GOV_WORKFLOW.find(s => s.id === fromId);
+  const to = GOV_WORKFLOW.find(s => s.id === toId);
+  if (from) from.status = 'done';
+  if (to && to.status === 'pending') to.status = 'active';
+}
+
+
+/** Parse DD-MM-YYYY into FY / quarter / month for stage filters */
+function getStageDateParts(dateStr) {
+  if (!dateStr || dateStr === '—' || !/^\d{2}-\d{2}-\d{4}$/.test(String(dateStr).trim())) return null;
+  const [, mm, yyyy] = String(dateStr).trim().split('-').map(Number);
+  if (!mm || !yyyy) return null;
+  const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+  const quarter = mm <= 3 ? 'Q1' : mm <= 6 ? 'Q2' : mm <= 9 ? 'Q3' : 'Q4';
+  const fyStart = mm >= 4 ? yyyy : yyyy - 1;
+  const fy = `FY${String(fyStart).slice(2)}-${String(fyStart + 1).slice(2)}`;
+  return { fy, quarter, month: months[mm - 1], yyyy, mm };
+}
+
+function applyStagePeriodFilter(rows, filterState, dateField) {
+  return rows.filter(r => {
+    if (filterState.year === 'all') return true;
+    const parts = getStageDateParts(r[dateField]);
+    if (!parts) return false;
+    if (parts.fy !== filterState.year) return false;
+    if (filterState.period === 'all') return true;
+    if (filterState.viewBy === 'quarter') return parts.quarter === filterState.period;
+    return parts.month === filterState.period;
+  });
+}
+
+function renderWorkflowPeriodFilter(stageKey, filterState) {
+  const fyOptions = typeof ANALYTICS_FY_OPTIONS !== 'undefined' ? ANALYTICS_FY_OPTIONS : ['all'];
+  const years = fyOptions.filter(y => y !== 'all');
+  const quarters = typeof ANALYTICS_QUARTER_OPTIONS !== 'undefined' ? ANALYTICS_QUARTER_OPTIONS : [];
+  const months = typeof ANALYTICS_MONTH_OPTIONS !== 'undefined' ? ANALYTICS_MONTH_OPTIONS : [];
+  const yearSelected = filterState.year !== 'all';
+  const fyLabel = filterState.year === 'all' ? 'All years' : filterState.year;
+
+  return `<div class="wf-period-filter">
+    <div class="wf-period-filter-head">
+      <strong><i class="fa-solid fa-filter"></i> Filter by period</strong>
+      <span>Choose a financial year, then filter by quarter or month.</span>
+    </div>
+    <div class="analytics-filter-controls">
+      <div class="analytics-control">
+        <span class="analytics-control-label">Focus year</span>
+        <div class="wf-period-year-label">${fyLabel}</div>
+      </div>
+      <div class="analytics-control ${yearSelected ? '' : 'analytics-control--muted'}">
+        <span class="analytics-control-label">View by ${yearSelected ? '' : '(select a year first)'}</span>
+        <div class="analytics-segment ${yearSelected ? '' : 'is-disabled'}" role="group">
+          <button type="button" class="analytics-seg-btn ${filterState.viewBy === 'quarter' ? 'active' : ''}" onclick="setWfStagePeriodView('${stageKey}','quarter')" ${yearSelected ? '' : 'disabled'}><i class="fa-solid fa-table-cells"></i> Quarter</button>
+          <button type="button" class="analytics-seg-btn ${filterState.viewBy === 'month' ? 'active' : ''}" onclick="setWfStagePeriodView('${stageKey}','month')" ${yearSelected ? '' : 'disabled'}><i class="fa-solid fa-calendar-days"></i> Month</button>
+        </div>
+      </div>
+    </div>
+    <div class="analytics-fy-chips" role="group" aria-label="Year select">
+      <button type="button" class="analytics-fy-chip ${filterState.year === 'all' ? 'active' : ''}" onclick="setWfStagePeriodYear('${stageKey}','all')">All years</button>
+      ${years.map(y => `<button type="button" class="analytics-fy-chip ${filterState.year === y ? 'active' : ''}" onclick="setWfStagePeriodYear('${stageKey}','${y}')">${y.replace('FY', '')}</button>`).join('')}
+    </div>
+    ${yearSelected ? `<div class="analytics-period-row">
+      <span class="analytics-control-label">Select ${filterState.viewBy === 'quarter' ? 'quarter' : 'month'} in ${filterState.year}</span>
+      <div class="analytics-fy-chips" role="group">
+        <button type="button" class="analytics-fy-chip ${filterState.period === 'all' ? 'active' : ''}" onclick="setWfStagePeriodFocus('${stageKey}','all')">All</button>
+        ${filterState.viewBy === 'quarter'
+          ? quarters.map(q => `<button type="button" class="analytics-fy-chip ${filterState.period === q.id ? 'active' : ''}" onclick="setWfStagePeriodFocus('${stageKey}','${q.id}')" title="${q.range}">${q.label} <em>${q.range}</em></button>`).join('')
+          : months.map(m => `<button type="button" class="analytics-fy-chip ${filterState.period === m ? 'active' : ''}" onclick="setWfStagePeriodFocus('${stageKey}','${m}')">${m}</button>`).join('')}
+      </div>
+    </div>` : `<p class="analytics-filter-hint"><i class="fa-solid fa-circle-info"></i> All years selected. Pick a financial year to filter by quarter or month.</p>`}
+  </div>`;
+}
+
+function getWfStageFilterState(stageKey) {
+  if (stageKey === 'need') return govNeedState;
+  if (stageKey === 'consol') return govConsolidationState;
+  if (stageKey === 'budget') return govBudgetState;
+  if (stageKey === 'tender') return govTenderPrepState;
+  if (stageKey === 'bid') return govBidEvalState;
+  if (stageKey === 'contract') return govContractState;
+  return govAwardState;
+}
+
+function setWfStagePeriodYear(stageKey, year) {
+  const st = getWfStageFilterState(stageKey);
+  st.year = year;
+  st.period = 'all';
+  st.page = 1;
+  if (st.preparedPage != null) st.preparedPage = 1;
+  if (year === 'all') st.viewBy = 'quarter';
+  refreshWorkflowUI();
+}
+
+function setWfStagePeriodView(stageKey, viewBy) {
+  const st = getWfStageFilterState(stageKey);
+  if (st.year === 'all') return;
+  st.viewBy = viewBy;
+  st.period = 'all';
+  st.page = 1;
+  if (st.preparedPage != null) st.preparedPage = 1;
+  refreshWorkflowUI();
+}
+
+function setWfStagePeriodFocus(stageKey, period) {
+  const st = getWfStageFilterState(stageKey);
+  st.period = period;
+  st.page = 1;
+  if (st.preparedPage != null) st.preparedPage = 1;
+  refreshWorkflowUI();
+}
+
+function getWfPeriodFilterLabel(filterState) {
+  if (filterState.year === 'all') return 'All years';
+  if (filterState.period === 'all') return `${filterState.year} · All ${filterState.viewBy === 'month' ? 'months' : 'quarters'}`;
+  return `${filterState.year} · ${filterState.period}`;
+}
+
+/* ========== Stage 7 Bid Evaluation ========== */
+function getBidEvaluationRows() {
+  const rows = filterCategoryRows(typeof BID_EVALUATION_DATA !== 'undefined' ? BID_EVALUATION_DATA.evaluations : []);
+  return applyStagePeriodFilter(rows, govBidEvalState, 'evalDate');
+}
+
+function setBidEvalPage(page) {
+  govBidEvalState.page = Math.max(1, Number(page) || 1);
+  refreshWorkflowUI();
+  document.getElementById('bidEvalTable')?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+}
+
+function renderBidEvaluationStage(canEdit = true) {
+  const data = typeof BID_EVALUATION_DATA !== 'undefined' ? BID_EVALUATION_DATA : null;
+  if (!data) return `<div class="need-api-empty"><p>Bid evaluation data could not be loaded.</p></div>`;
+  const rows = getBidEvaluationRows();
+  const paged = paginateItems(rows, govBidEvalState.page, 10);
+  govBidEvalState.page = paged.page;
+  const complete = rows.filter(r => r.status === 'Evaluation complete').length;
+  const periodLabel = getWfPeriodFilterLabel(govBidEvalState);
+
+  return `<div class="tender-prep-stage">
+    <div class="indent-mode-banner">
+      <div>
+        <strong>Bid evaluation — system-assisted review</strong>
+        <p>Bid documents are screened and a custom evaluation sheet is prepared for each tender. The committee then records technical and financial outcomes (L1 / QCBS).</p>
+      </div>
+      <span class="badge badge-info"><i class="fa-solid fa-calendar-days"></i> ${periodLabel}</span>
+    </div>
+
+    ${renderWorkflowPeriodFilter('bid', govBidEvalState)}
+
+    <div class="budget-pr-summary">
+      <div class="budget-pr-chip"><span>Process</span><strong>${data.meta.process}</strong></div>
+      <div class="budget-pr-chip"><span>Sheet format</span><strong>${data.meta.sheetFormat}</strong></div>
+      <div class="budget-pr-chip"><span>Committee</span><strong>${data.meta.committee}</strong></div>
+      <div class="budget-pr-chip"><span>Complete</span><strong>${complete} / ${rows.length}</strong></div>
+      <div class="budget-pr-chip"><span>Last updated</span><strong>${data.meta.lastUpdated}</strong></div>
+    </div>
+
+    <section class="budget-section">
+      <div class="budget-section-head">
+        <h4><i class="fa-solid fa-route"></i> How evaluation works</h4>
+        <p>From uploaded bidder documents to a ready evaluation outcome for contract approval.</p>
+      </div>
+      ${renderProcessSteps(data.processSteps)}
+    </section>
+
+    <section class="budget-section" id="bidEvalTable">
+      <div class="budget-section-head">
+        <h4><i class="fa-solid fa-table"></i> Bids evaluated — status by category &amp; division</h4>
+        <p>State-wise / division-wise view across Drugs, Equipment and other categories. Click a row for the evaluation sheet and bidder details.</p>
+      </div>
+      ${renderCategoryCountStrip(rows)}
+      <div class="consol-detail-table-wrap">
+        <table class="data-table consol-detail-table tender-prep-table">
+          <thead>
+            <tr>
+              <th>Eval ID</th>
+              <th>Tender</th>
+              <th>State / Division</th>
+              <th>Category</th>
+              <th>Method</th>
+              <th>Status</th>
+              <th>L1 / H1</th>
+              <th>Bids</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${paged.items.length ? paged.items.map(r => `
+              <tr class="tender-prep-row" onclick="openBidEvaluationDetail('${r.id}')" title="View evaluation details">
+                <td><strong>${r.id}</strong></td>
+                <td>${r.title}<br><span class="cell-sub">${r.tenderId}</span></td>
+                <td>${r.state}<br><span class="cell-sub">${r.division}</span></td>
+                <td>${r.category}</td>
+                <td>${r.method}</td>
+                <td><span class="badge badge-${needStatusBadge(r.status)}">${r.status}</span></td>
+                <td>${r.l1Vendor}</td>
+                <td>${r.bidsReceived}</td>
+              </tr>
+            `).join('') : `<tr><td colspan="8" style="text-align:center;color:#64748b;padding:1.25rem">No evaluations match the selected category and period.</td></tr>`}
+          </tbody>
+        </table>
+      </div>
+      ${renderPaginationControls(paged.page, paged.totalPages, paged.total, paged.from, paged.to, 'setBidEvalPage')}
+    </section>
+  </div>`;
+}
+
+function openBidEvaluationDetail(evalId) {
+  const r = (typeof BID_EVALUATION_DATA !== 'undefined' ? BID_EVALUATION_DATA.evaluations : []).find(e => e.id === evalId);
+  if (!r) return;
+  openModal(`${r.id} — Bid evaluation`, `
+    <div class="consol-detail-modal">
+      <p class="consol-detail-lead">${r.title} · ${r.category} · ${r.state} (${r.division})</p>
+      <div class="consol-detail-stats" style="grid-template-columns:repeat(4,minmax(0,1fr))">
+        <div class="consol-detail-stat"><span>Status</span><strong><span class="badge badge-${needStatusBadge(r.status)}">${r.status}</span></strong></div>
+        <div class="consol-detail-stat"><span>Method</span><strong>${r.method}</strong></div>
+        <div class="consol-detail-stat"><span>Sheet No.</span><strong>${r.sheetNo}</strong></div>
+        <div class="consol-detail-stat"><span>Est. value</span><strong>${r.l1Value}</strong></div>
+      </div>
+      <div class="consol-detail-table-wrap" style="margin-bottom:1rem">
+        <table class="data-table consol-detail-table">
+          <tbody>
+            <tr><td>Tender ID</td><td><strong>${r.tenderId}</strong></td></tr>
+            <tr><td>Bids received</td><td><strong>${r.bidsReceived}</strong></td></tr>
+            <tr><td>Technically qualified</td><td><strong>${r.techQualified}</strong></td></tr>
+            <tr><td>Technical score / stage</td><td><strong>${r.techScore}</strong></td></tr>
+            <tr><td>Financial outcome</td><td><strong>${r.finScore}</strong></td></tr>
+            <tr><td>Recommended L1 / H1</td><td><strong>${r.l1Vendor}</strong></td></tr>
+            <tr><td>Evaluation date</td><td><strong>${r.evalDate}</strong></td></tr>
+            <tr><td>Remarks</td><td>${r.remarks}</td></tr>
+            <tr><td>Custom sheet</td><td>Generated from bidder documents for this tender (technical + financial format)</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <h4 class="budget-subhead">Bidder comparison</h4>
+      <div class="consol-detail-table-wrap">
+        <table class="data-table consol-detail-table">
+          <thead><tr><th>Bidder</th><th>Technical</th><th>Rank</th><th>Quote</th></tr></thead>
+          <tbody>
+            ${(r.bidders || []).map(b => `<tr>
+              <td><strong>${b.name}</strong></td>
+              <td>${b.tech}</td>
+              <td>${b.rank}</td>
+              <td>${b.quote}</td>
+            </tr>`).join('')}
+          </tbody>
+        </table>
+      </div>
+      <div class="modal-inline-actions">
+        <button type="button" class="btn btn-outline" onclick="modalGoBack()"><i class="fa-solid fa-arrow-left"></i> Back</button>
+      </div>
+    </div>
+  `, { wide: true, large: true, extraWide: true });
+}
+
+/* ========== Stage 8 Contract Approval ========== */
+function getContractApprovalRows() {
+  const rows = filterCategoryRows(typeof CONTRACT_APPROVAL_DATA !== 'undefined' ? CONTRACT_APPROVAL_DATA.contracts : []);
+  return applyStagePeriodFilter(rows, govContractState, 'noaDate');
+}
+
+function setContractApprovalPage(page) {
+  govContractState.page = Math.max(1, Number(page) || 1);
+  refreshWorkflowUI();
+  document.getElementById('contractApprovalTable')?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+}
+
+function renderContractApprovalStage(canEdit = true) {
+  const data = typeof CONTRACT_APPROVAL_DATA !== 'undefined' ? CONTRACT_APPROVAL_DATA : null;
+  if (!data) return `<div class="need-api-empty"><p>Contract approval data could not be loaded.</p></div>`;
+  const rows = getContractApprovalRows();
+  const paged = paginateItems(rows, govContractState.page, 10);
+  govContractState.page = paged.page;
+  const signed = rows.filter(r => r.status === 'Agreement signed').length;
+  const periodLabel = getWfPeriodFilterLabel(govContractState);
+
+  return `<div class="tender-prep-stage">
+    <div class="indent-mode-banner">
+      <div>
+        <strong>Contract approval — L1, NOA &amp; agreement</strong>
+        <p>${data.meta.note}</p>
+      </div>
+      <span class="badge badge-info"><i class="fa-solid fa-calendar-days"></i> ${periodLabel}</span>
+    </div>
+
+    ${renderWorkflowPeriodFilter('contract', govContractState)}
+
+    <div class="budget-pr-summary">
+      <div class="budget-pr-chip"><span>Policy gate</span><strong>${data.meta.gate}</strong></div>
+      <div class="budget-pr-chip"><span>Agreements signed</span><strong>${signed} / ${rows.length}</strong></div>
+      <div class="budget-pr-chip"><span>Last updated</span><strong>${data.meta.lastUpdated}</strong></div>
+    </div>
+
+    <section class="budget-section">
+      <div class="budget-section-head">
+        <h4><i class="fa-solid fa-route"></i> How contract approval works</h4>
+        <p>From bid evaluation outcome to a signed agreement ready for award / PO.</p>
+      </div>
+      ${renderProcessSteps(data.processSteps)}
+    </section>
+
+    <section class="budget-section" id="contractApprovalTable">
+      <div class="budget-section-head">
+        <h4><i class="fa-solid fa-table"></i> Contract approvals — status by category &amp; division</h4>
+        <p>Click a row for L1, NOA, legal / finance clearance and agreement details.</p>
+      </div>
+      ${renderCategoryCountStrip(rows)}
+      <div class="consol-detail-table-wrap">
+        <table class="data-table consol-detail-table tender-prep-table">
+          <thead>
+            <tr>
+              <th>Contract</th>
+              <th>Tender</th>
+              <th>State / Division</th>
+              <th>Category</th>
+              <th>L1 bidder</th>
+              <th>Status</th>
+              <th>Est. value</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${paged.items.length ? paged.items.map(r => `
+              <tr class="tender-prep-row" onclick="openContractApprovalDetail('${r.id}')" title="View contract details">
+                <td><strong>${r.id}</strong></td>
+                <td>${r.title}<br><span class="cell-sub">${r.tenderId}</span></td>
+                <td>${r.state}<br><span class="cell-sub">${r.division}</span></td>
+                <td>${r.category}</td>
+                <td>${r.l1Vendor}</td>
+                <td><span class="badge badge-${needStatusBadge(r.status)}">${r.status}</span></td>
+                <td>${r.value}</td>
+              </tr>
+            `).join('') : `<tr><td colspan="7" style="text-align:center;color:#64748b;padding:1.25rem">No contracts match the selected category and period.</td></tr>`}
+          </tbody>
+        </table>
+      </div>
+      ${renderPaginationControls(paged.page, paged.totalPages, paged.total, paged.from, paged.to, 'setContractApprovalPage')}
+    </section>
+  </div>`;
+}
+
+function openContractApprovalDetail(contractId) {
+  const r = (typeof CONTRACT_APPROVAL_DATA !== 'undefined' ? CONTRACT_APPROVAL_DATA.contracts : []).find(c => c.id === contractId);
+  if (!r) return;
+  openModal(`${r.id} — Contract approval`, `
+    <div class="consol-detail-modal">
+      <p class="consol-detail-lead">${r.title} · ${r.category} · ${r.state} (${r.division})</p>
+      <div class="consol-detail-stats" style="grid-template-columns:repeat(4,minmax(0,1fr))">
+        <div class="consol-detail-stat"><span>Status</span><strong><span class="badge badge-${needStatusBadge(r.status)}">${r.status}</span></strong></div>
+        <div class="consol-detail-stat"><span>L1 bidder</span><strong>${r.l1Vendor}</strong></div>
+        <div class="consol-detail-stat"><span>NOA</span><strong>${r.noaNo}</strong></div>
+        <div class="consol-detail-stat"><span>Est. value</span><strong>${r.value}</strong></div>
+      </div>
+      <div class="consol-detail-table-wrap">
+        <table class="data-table consol-detail-table">
+          <tbody>
+            <tr><td>Tender ID</td><td><strong>${r.tenderId}</strong></td></tr>
+            <tr><td>NOA date</td><td><strong>${r.noaDate}</strong></td></tr>
+            <tr><td>Agreement No.</td><td><strong>${r.agreementNo}</strong></td></tr>
+            <tr><td>Legal clearance</td><td><span class="badge badge-${needStatusBadge(r.legalStatus)}">${r.legalStatus}</span></td></tr>
+            <tr><td>Finance clearance</td><td><span class="badge badge-${needStatusBadge(r.financeStatus)}">${r.financeStatus}</span></td></tr>
+            <tr><td>Signed on</td><td><strong>${r.signedOn}</strong></td></tr>
+            <tr><td>Remarks</td><td>${r.remarks}</td></tr>
+            <tr><td>Flow</td><td>Bid evaluation → L1 identified → NOA issued → Agreement approved</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <div class="modal-inline-actions">
+        <button type="button" class="btn btn-outline" onclick="modalGoBack()"><i class="fa-solid fa-arrow-left"></i> Back</button>
+      </div>
+    </div>
+  `, { wide: true, large: true });
+}
+
+/* ========== Stage 9 Award ========== */
+function getAwardStageRows() {
+  const rows = filterCategoryRows(typeof AWARD_STAGE_DATA !== 'undefined' ? AWARD_STAGE_DATA.awards : []);
+  return applyStagePeriodFilter(rows, govAwardState, 'loaDate');
+}
+
+function setAwardStagePage(page) {
+  govAwardState.page = Math.max(1, Number(page) || 1);
+  refreshWorkflowUI();
+  document.getElementById('awardStageTable')?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+}
+
+function renderAwardStage(canEdit = true) {
+  const data = typeof AWARD_STAGE_DATA !== 'undefined' ? AWARD_STAGE_DATA : null;
+  if (!data) return `<div class="need-api-empty"><p>Award data could not be loaded.</p></div>`;
+  const rows = getAwardStageRows();
+  const paged = paginateItems(rows, govAwardState.page, 10);
+  govAwardState.page = paged.page;
+  const active = rows.filter(r => r.status === 'Award active').length;
+  const pbgPending = rows.filter(r => r.pbgStatus === 'Pending').length;
+  const periodLabel = getWfPeriodFilterLabel(govAwardState);
+
+  return `<div class="tender-prep-stage">
+    <div class="indent-mode-banner">
+      <div>
+        <strong>Award — LOA, PBG &amp; checklist</strong>
+        <p>${data.meta.note}</p>
+      </div>
+      <span class="badge badge-info"><i class="fa-solid fa-calendar-days"></i> ${periodLabel}</span>
+    </div>
+
+    ${renderWorkflowPeriodFilter('award', govAwardState)}
+
+    <div class="budget-pr-summary">
+      <div class="budget-pr-chip"><span>Awards active</span><strong>${active}</strong></div>
+      <div class="budget-pr-chip"><span>PBG pending</span><strong>${pbgPending}</strong></div>
+      <div class="budget-pr-chip"><span>Shown</span><strong>${rows.length}</strong></div>
+      <div class="budget-pr-chip"><span>Last updated</span><strong>${data.meta.lastUpdated}</strong></div>
+    </div>
+
+    <section class="budget-section">
+      <div class="budget-section-head">
+        <h4><i class="fa-solid fa-list-check"></i> Award checklist (standard)</h4>
+        <p>Each awarded tender is tracked against these items. Open a row to see item-wise status for that award.</p>
+      </div>
+      <div class="budget-checklist">
+        ${data.checklistTemplate.map(item => `
+          <article class="budget-check-item is-open">
+            <div class="budget-check-icon"><i class="fa-solid fa-circle-check"></i></div>
+            <div class="budget-check-body">
+              <strong>${item.title}</strong>
+              <p>${item.detail}</p>
+            </div>
+          </article>
+        `).join('')}
+      </div>
+    </section>
+
+    <section class="budget-section" id="awardStageTable">
+      <div class="budget-section-head">
+        <h4><i class="fa-solid fa-table"></i> Tenders awarded — status by category &amp; division</h4>
+        <p>Click a row for LOA details, PBG collection status and checklist progress.</p>
+      </div>
+      ${renderCategoryCountStrip(rows)}
+      <div class="consol-detail-table-wrap">
+        <table class="data-table consol-detail-table tender-prep-table">
+          <thead>
+            <tr>
+              <th>Award</th>
+              <th>Tender</th>
+              <th>State / Division</th>
+              <th>Category</th>
+              <th>Vendor</th>
+              <th>Status</th>
+              <th>PBG</th>
+              <th>Est. value</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${paged.items.length ? paged.items.map(r => `
+              <tr class="tender-prep-row" onclick="openAwardStageDetail('${r.id}')" title="View award details">
+                <td><strong>${r.id}</strong></td>
+                <td>${r.title}<br><span class="cell-sub">${r.tenderId}</span></td>
+                <td>${r.state}<br><span class="cell-sub">${r.division}</span></td>
+                <td>${r.category}</td>
+                <td>${r.vendor}</td>
+                <td><span class="badge badge-${needStatusBadge(r.status)}">${r.status}</span></td>
+                <td><span class="badge badge-${needStatusBadge(r.pbgStatus)}">${r.pbgStatus}</span></td>
+                <td>${r.value}</td>
+              </tr>
+            `).join('') : `<tr><td colspan="8" style="text-align:center;color:#64748b;padding:1.25rem">No awards match the selected category and period.</td></tr>`}
+          </tbody>
+        </table>
+      </div>
+      ${renderPaginationControls(paged.page, paged.totalPages, paged.total, paged.from, paged.to, 'setAwardStagePage')}
+    </section>
+  </div>`;
+}
+
+function openAwardStageDetail(awardId) {
+  const data = typeof AWARD_STAGE_DATA !== 'undefined' ? AWARD_STAGE_DATA : null;
+  const r = data?.awards?.find(a => a.id === awardId);
+  if (!r) return;
+  const checks = data.checklistTemplate.map(item => {
+    const done = !!(r.checklist && r.checklist[item.id]);
+    return `<article class="budget-check-item ${done ? 'is-done' : 'is-open'}">
+      <div class="budget-check-icon"><i class="fa-solid ${done ? 'fa-circle-check' : 'fa-circle'}"></i></div>
+      <div class="budget-check-body">
+        <div class="budget-check-title-row">
+          <strong>${item.title}</strong>
+          <span class="badge badge-${done ? 'success' : 'muted'}">${done ? 'Done' : 'Pending'}</span>
+        </div>
+        <p>${item.detail}</p>
+      </div>
+    </article>`;
+  }).join('');
+
+  openModal(`${r.id} — Award details`, `
+    <div class="consol-detail-modal">
+      <p class="consol-detail-lead">${r.title} · ${r.category} · ${r.state} (${r.division})</p>
+      <div class="consol-detail-stats" style="grid-template-columns:repeat(4,minmax(0,1fr))">
+        <div class="consol-detail-stat"><span>Status</span><strong><span class="badge badge-${needStatusBadge(r.status)}">${r.status}</span></strong></div>
+        <div class="consol-detail-stat"><span>Vendor</span><strong>${r.vendor}</strong></div>
+        <div class="consol-detail-stat"><span>PBG</span><strong><span class="badge badge-${needStatusBadge(r.pbgStatus)}">${r.pbgStatus}</span></strong></div>
+        <div class="consol-detail-stat"><span>Est. value</span><strong>${r.value}</strong></div>
+      </div>
+
+      <h4 class="budget-subhead">LOA details</h4>
+      <div class="consol-detail-table-wrap" style="margin-bottom:1rem">
+        <table class="data-table consol-detail-table">
+          <tbody>
+            <tr><td>Tender ID</td><td><strong>${r.tenderId}</strong></td></tr>
+            <tr><td>LOA No.</td><td><strong>${r.loaNo}</strong></td></tr>
+            <tr><td>LOA date</td><td><strong>${r.loaDate}</strong></td></tr>
+            <tr><td>LOA acknowledgement</td><td><span class="badge badge-${needStatusBadge(r.loaAck)}">${r.loaAck}</span></td></tr>
+            <tr><td>Contract ID</td><td><strong>${r.contractId}</strong></td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <h4 class="budget-subhead">PBG collection</h4>
+      <div class="consol-detail-table-wrap" style="margin-bottom:1rem">
+        <table class="data-table consol-detail-table">
+          <tbody>
+            <tr><td>PBG status</td><td><span class="badge badge-${needStatusBadge(r.pbgStatus)}">${r.pbgStatus}</span></td></tr>
+            <tr><td>PBG amount (range)</td><td><strong>${r.pbgAmount}</strong></td></tr>
+            <tr><td>Due by</td><td><strong>${r.pbgDue}</strong></td></tr>
+            <tr><td>BG / SFMS reference</td><td><strong>${r.pbgRef}</strong></td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <h4 class="budget-subhead">Award checklist for this tender</h4>
+      <div class="budget-checklist">${checks}</div>
+
+      <div class="modal-inline-actions">
+        <button type="button" class="btn btn-outline" onclick="modalGoBack()"><i class="fa-solid fa-arrow-left"></i> Back</button>
+      </div>
+    </div>
+  `, { wide: true, large: true, extraWide: true });
 }
 
 function renderNeedIdentificationStage(canEdit = true) {
   const data = getNeedIdentificationData();
   if (!data) {
-    return `<div class="need-api-empty"><i class="fa-solid fa-plug-circle-xmark"></i><p>Need Identification API unavailable. Configure integration endpoint to auto-populate this stage.</p></div>`;
+    return `<div class="need-api-empty"><i class="fa-solid fa-plug-circle-xmark"></i><p>Need assessment data could not be loaded right now. Please try Re-sync from API, or contact support if this continues.</p></div>`;
   }
   const { meta, stockLevels, patientLoad, diseaseBurden, gapAnalysis } = data;
   const disabled = canEdit ? '' : ' disabled';
@@ -1626,16 +3856,21 @@ function renderNeedIdentificationStage(canEdit = true) {
       ] }
   ];
 
+  const periodLabel = getWfPeriodFilterLabel(govNeedState);
+  const periodDisplay = govNeedState.year === 'all' ? meta.assessmentPeriod : periodLabel;
+
   return `<div class="need-api">
+    ${renderWorkflowPeriodFilter('need', govNeedState)}
+
     <div class="need-api-banner">
       <div class="need-api-banner-icon"><i class="fa-solid fa-cloud-arrow-down"></i></div>
       <div class="need-api-banner-text">
         <strong>Auto-populated via API integration</strong>
         <p>Data synced from <strong>${meta.source}</strong> · Endpoint <code>${meta.endpoint}</code> · Last synced <strong>${meta.lastSynced}</strong></p>
-        <p class="need-api-meta-line">${meta.district} · ${meta.facilities} facilities · Period ${meta.assessmentPeriod} · ${meta.displayNote}</p>
+        <p class="need-api-meta-line">${meta.district} · ${meta.facilities} facilities · Period <strong>${periodDisplay}</strong> · ${meta.displayNote}</p>
       </div>
       <div class="need-api-banner-actions">
-        <span class="badge badge-${needStatusBadge(meta.status)}"><i class="fa-solid fa-check-double"></i> ${meta.status}</span>
+        ${renderApiSyncBadge(meta.status)}
         <button type="button" class="btn btn-outline btn-sm" onclick="refreshNeedIdentificationApi()"${disabled}>
           <i class="fa-solid fa-arrows-rotate"></i> Refresh API
         </button>
@@ -1666,7 +3901,7 @@ function renderNeedIdentificationStage(canEdit = true) {
         <table class="data-table">
           <thead><tr><th>Facility</th><th>SKU / Item</th><th>On hand</th><th>Reorder point</th><th>Cover (days)</th><th>Status</th></tr></thead>
           <tbody>
-            ${stockLevels.rows.map(r => `<tr>
+            ${stockLevels.rows.map((r, i) => `<tr class="need-row-clickable" role="button" tabindex="0" onclick="openNeedRowDetail('stock',${i})" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();openNeedRowDetail('stock',${i})}">
               <td><strong>${r.facility}</strong></td><td>${r.sku}</td>
               <td>${r.onHand.toLocaleString('en-IN')}</td><td>${r.reorder.toLocaleString('en-IN')}</td>
               <td>${r.coverDays}</td>
@@ -1686,7 +3921,7 @@ function renderNeedIdentificationStage(canEdit = true) {
         <table class="data-table">
           <thead><tr><th>Facility</th><th>Type</th><th>OPD (month)</th><th>IPD bed occ.</th><th>Trend</th></tr></thead>
           <tbody>
-            ${patientLoad.rows.map(r => `<tr>
+            ${patientLoad.rows.map((r, i) => `<tr class="need-row-clickable" role="button" tabindex="0" onclick="openNeedRowDetail('patient',${i})" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();openNeedRowDetail('patient',${i})}">
               <td><strong>${r.facility}</strong></td><td>${r.category}</td>
               <td>${r.opd.toLocaleString('en-IN')}</td><td>${r.ipdBedOcc}</td><td>${r.trend}</td>
             </tr>`).join('')}
@@ -1704,7 +3939,7 @@ function renderNeedIdentificationStage(canEdit = true) {
         <table class="data-table">
           <thead><tr><th>Condition / Programme</th><th>Cases</th><th>Trend</th><th>SKU focus</th><th>Priority</th></tr></thead>
           <tbody>
-            ${diseaseBurden.rows.map(r => `<tr>
+            ${diseaseBurden.rows.map((r, i) => `<tr class="need-row-clickable" role="button" tabindex="0" onclick="openNeedRowDetail('disease',${i})" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();openNeedRowDetail('disease',${i})}">
               <td><strong>${r.condition}</strong></td><td>${r.cases}</td><td>${r.trend}</td>
               <td>${r.skuFocus}</td>
               <td><span class="badge badge-${needStatusBadge(r.priority)}">${r.priority}</span></td>
@@ -1723,7 +3958,7 @@ function renderNeedIdentificationStage(canEdit = true) {
         <table class="data-table">
           <thead><tr><th>Item</th><th>Required</th><th>Available</th><th>Open PO</th><th>Gap</th><th>Recommended action</th></tr></thead>
           <tbody>
-            ${gapAnalysis.rows.map(r => `<tr>
+            ${gapAnalysis.rows.map((r, i) => `<tr class="need-row-clickable" role="button" tabindex="0" onclick="openNeedRowDetail('gap',${i})" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();openNeedRowDetail('gap',${i})}">
               <td><strong>${r.item}</strong></td><td>${r.required}</td><td>${r.available}</td>
               <td>${r.openPo}</td><td><strong>${r.gap}</strong></td><td>${r.action}</td>
             </tr>`).join('')}
@@ -1733,9 +3968,7 @@ function renderNeedIdentificationStage(canEdit = true) {
     </div>
 
     <div class="wf-actions mt-2">
-      <button class="btn btn-primary" onclick="saveWorkflowStage(1)"${disabled}>Confirm Need Assessment</button>
       <button class="btn btn-outline" onclick="refreshNeedIdentificationApi()"${disabled}><i class="fa-solid fa-arrows-rotate"></i> Re-sync from API</button>
-      <button class="btn btn-outline" onclick="openLifecycleGuideModal(1)">Stage 1 Guide</button>
       <button class="btn btn-outline" onclick="openAuditTrailModal()">Audit Trail</button>
     </div>
   </div>`;
@@ -1745,30 +3978,277 @@ function scrollToNeedSection(key) {
   document.getElementById(`need-sec-${key}`)?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
 }
 
+function openNeedRowDetail(section, index) {
+  const data = getNeedIdentificationData();
+  if (!data) return;
+  const i = Number(index);
+  let title = 'Need Identification Detail';
+  let body = '';
+
+  if (section === 'stock') {
+    const r = data.stockLevels.rows[i];
+    if (!r) return;
+    const shortfall = Math.max(0, r.reorder - r.onHand);
+    const fillPct = r.reorder ? Math.round((r.onHand / r.reorder) * 100) : 0;
+    title = `${r.sku} — ${r.facility}`;
+    body = `<div class="kpi-detail need-row-detail">
+      <p class="need-row-detail-lead">Stock position vs reorder policy for this facility SKU. Data from <strong>related apis</strong>.</p>
+      <div class="tender-detail-stats tender-detail-stats--4">
+        <div class="tender-stat"><span>On hand</span><strong>${r.onHand.toLocaleString('en-IN')}</strong></div>
+        <div class="tender-stat"><span>Reorder point</span><strong>${r.reorder.toLocaleString('en-IN')}</strong></div>
+        <div class="tender-stat"><span>Days of cover</span><strong>${r.coverDays}</strong></div>
+        <div class="tender-stat"><span>Status</span><strong><span class="badge badge-${needStatusBadge(r.status)}">${r.status}</span></strong></div>
+      </div>
+      <div class="tender-detail-section">
+        <h4>Assessment</h4>
+        <div class="data-table-wrap">
+          <table class="data-table data-table--modal">
+            <tbody>
+              <tr><td>Facility</td><td><strong>${r.facility}</strong></td></tr>
+              <tr><td>SKU / Item</td><td>${r.sku}</td></tr>
+              <tr><td>Fill vs reorder</td><td>${fillPct}%</td></tr>
+              <tr><td>Shortfall to reorder</td><td>${shortfall.toLocaleString('en-IN')} units</td></tr>
+              <tr><td>Recommended next step</td><td>${r.status === 'Critical' || r.status === 'Low' ? 'Prioritize indent / redistribution before fresh tender' : 'Monitor consumption; no immediate action'}</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+      <div class="modal-inline-actions">
+        <button type="button" class="btn btn-outline" onclick="modalGoBack()"><i class="fa-solid fa-arrow-left"></i> Back</button>
+      </div>
+    </div>`;
+  } else if (section === 'patient') {
+    const r = data.patientLoad.rows[i];
+    if (!r) return;
+    title = `Patient Load — ${r.facility}`;
+    body = `<div class="kpi-detail need-row-detail">
+      <p class="need-row-detail-lead">OPD / IPD load driving consumption forecast at this facility.</p>
+      <div class="tender-detail-stats tender-detail-stats--4">
+        <div class="tender-stat"><span>Facility type</span><strong>${r.category}</strong></div>
+        <div class="tender-stat"><span>OPD (month)</span><strong>${r.opd.toLocaleString('en-IN')}</strong></div>
+        <div class="tender-stat"><span>IPD bed occ.</span><strong>${r.ipdBedOcc}</strong></div>
+        <div class="tender-stat"><span>Trend</span><strong>${r.trend}</strong></div>
+      </div>
+      <div class="tender-detail-section">
+        <h4>Demand implication</h4>
+        <p>Higher OPD and bed occupancy increase formulary burn-rate for antipyretics, IV fluids, and antibiotics. Use this load signal when consolidating district demand (Stage 4).</p>
+      </div>
+      <div class="modal-inline-actions">
+        <button type="button" class="btn btn-outline" onclick="modalGoBack()"><i class="fa-solid fa-arrow-left"></i> Back</button>
+      </div>
+    </div>`;
+  } else if (section === 'disease') {
+    const r = data.diseaseBurden.rows[i];
+    if (!r) return;
+    title = `Disease Burden — ${r.condition}`;
+    body = `<div class="kpi-detail need-row-detail">
+      <p class="need-row-detail-lead">Programme-driven demand signal for formulary planning.</p>
+      <div class="tender-detail-stats tender-detail-stats--4">
+        <div class="tender-stat"><span>Cases</span><strong>${r.cases}</strong></div>
+        <div class="tender-stat"><span>Trend</span><strong>${r.trend}</strong></div>
+        <div class="tender-stat"><span>SKU focus</span><strong>${r.skuFocus}</strong></div>
+        <div class="tender-stat"><span>Priority</span><strong><span class="badge badge-${needStatusBadge(r.priority)}">${r.priority}</span></strong></div>
+      </div>
+      <div class="tender-detail-section">
+        <h4>Procurement focus</h4>
+        <p>Ensure buffer stock and open-PO coverage for <strong>${r.skuFocus}</strong>. Priority <strong>${r.priority}</strong> items should be flagged in Gap Analysis before indent raise.</p>
+      </div>
+      <div class="modal-inline-actions">
+        <button type="button" class="btn btn-outline" onclick="modalGoBack()"><i class="fa-solid fa-arrow-left"></i> Back</button>
+      </div>
+    </div>`;
+  } else if (section === 'gap') {
+    const r = data.gapAnalysis.rows[i];
+    if (!r) return;
+    title = `Gap Analysis — ${r.item}`;
+    body = `<div class="kpi-detail need-row-detail">
+      <p class="need-row-detail-lead">Net requirement after on-hand stock and open PO netting.</p>
+      <div class="tender-detail-stats tender-detail-stats--4">
+        <div class="tender-stat"><span>Required</span><strong>${r.required}</strong></div>
+        <div class="tender-stat"><span>Available</span><strong>${r.available}</strong></div>
+        <div class="tender-stat"><span>Open PO</span><strong>${r.openPo}</strong></div>
+        <div class="tender-stat"><span>Gap</span><strong>${r.gap}</strong></div>
+      </div>
+      <div class="tender-detail-section">
+        <h4>Recommended action</h4>
+        <p><span class="badge badge-info">${r.action}</span></p>
+        <p class="report-footnote mt-2"><i class="fa-solid fa-circle-info"></i> Prefer redistribution / open-PO utilization before raising a fresh tender for the residual gap.</p>
+      </div>
+      <div class="modal-inline-actions">
+        <button type="button" class="btn btn-outline" onclick="modalGoBack()"><i class="fa-solid fa-arrow-left"></i> Back</button>
+      </div>
+    </div>`;
+  } else {
+    return;
+  }
+
+  openModal(title, body, { wide: true });
+}
+
+function openGovWorkflowSectionModal(section) {
+  if (section === 'demand') {
+    const rows = [
+      { source: 'Central warehouse', items: 12, value: '₹0.95 Cr', action: 'Issue stock transfer' },
+      { source: 'Other facilities', items: 8, value: '₹0.62 Cr', action: 'Inter-facility redistribute' },
+      { source: 'Approved open POs', items: 5, value: '₹0.38 Cr', action: 'Expedite delivery' },
+      { source: 'Redistributable surplus', items: 3, value: '₹0.15 Cr', action: 'Reallocate to deficit sites' }
+    ];
+    openModal('Demand Optimization', `
+      <div class="kpi-detail">
+        <p class="need-row-detail-lead">Fulfill demand from existing stock and open POs before fresh procurement. Estimated savings <strong>₹2.1 Cr</strong>.</p>
+        <div class="tender-detail-stats tender-detail-stats--4">
+          <div class="tender-stat"><span>Optimizable items</span><strong>28</strong></div>
+          <div class="tender-stat"><span>Warehouse</span><strong>12</strong></div>
+          <div class="tender-stat"><span>Other locations</span><strong>8</strong></div>
+          <div class="tender-stat"><span>Open POs</span><strong>5</strong></div>
+        </div>
+        <div class="tender-detail-section">
+          <h4>Optimization sources</h4>
+          <div class="data-table-wrap">
+            <table class="data-table data-table--modal">
+              <thead><tr><th>Source</th><th>Items</th><th>Est. value</th><th>Next action</th></tr></thead>
+              <tbody>
+                ${rows.map(r => `<tr><td><strong>${r.source}</strong></td><td>${r.items}</td><td>${r.value}</td><td>${r.action}</td></tr>`).join('')}
+              </tbody>
+            </table>
+          </div>
+        </div>
+        <div class="modal-inline-actions">
+          <button type="button" class="btn btn-outline" onclick="modalGoBack()"><i class="fa-solid fa-arrow-left"></i> Back</button>
+          <button type="button" class="btn btn-primary" onclick="selectWorkflowStep(4); closeModal();">Go to Demand Consolidation</button>
+        </div>
+      </div>
+    `, { wide: true, large: true });
+    return;
+  }
+
+  if (section === 'contract') {
+    const pending = [
+      { id: 'CNT-2026-0089', tender: 'TND-2026-MP-0038', title: 'Hospital Linen Supply', status: 'Pending execution', owner: 'Contract Manager', due: '05-09-2026' },
+      { id: 'CNT-2026-0095', tender: 'TND-2026-MP-0061', title: 'HMIS Software Upgrade', status: 'Legal review', owner: 'Legal Cell', due: '08-09-2026' },
+      { id: 'CNT-2025-0234', tender: 'TND-2025-MP-0198', title: 'Essential Medicines RC', status: 'PBG renewal', owner: 'Finance Wing', due: '12-09-2026' }
+    ];
+    openModal('Contract Gate', `
+      <div class="kpi-detail">
+        <p class="need-row-detail-lead">Policy gate: <strong>contract approval and execution must precede PO generation</strong>. ${pending.length} contracts require action.</p>
+        <div class="tender-detail-stats tender-detail-stats--3">
+          <div class="tender-stat"><span>Pending contracts</span><strong>3</strong></div>
+          <div class="tender-stat"><span>Policy stage</span><strong>Stage 8</strong></div>
+          <div class="tender-stat"><span>Status</span><strong><span class="badge badge-warning">Action Required</span></strong></div>
+        </div>
+        <div class="tender-detail-section">
+          <h4>Contracts awaiting clearance</h4>
+          <div class="data-table-wrap">
+            <table class="data-table data-table--modal">
+              <thead><tr><th>Contract</th><th>Tender</th><th>Title</th><th>Status</th><th>Owner</th><th>Due</th></tr></thead>
+              <tbody>
+                ${pending.map(c => `<tr>
+                  <td><strong>${c.id}</strong></td><td>${c.tender}</td><td>${c.title}</td>
+                  <td><span class="badge badge-warning">${c.status}</span></td>
+                  <td>${c.owner}</td><td>${c.due}</td>
+                </tr>`).join('')}
+              </tbody>
+            </table>
+          </div>
+        </div>
+        <div class="modal-inline-actions">
+          <button type="button" class="btn btn-outline" onclick="modalGoBack()"><i class="fa-solid fa-arrow-left"></i> Back</button>
+          <button type="button" class="btn btn-primary" onclick="selectWorkflowStep(8); closeModal();">Go to Contract Approval</button>
+        </div>
+      </div>
+    `, { wide: true, large: true });
+    return;
+  }
+
+  if (section === 'eval') {
+    const members = [
+      { role: 'Procurement', name: 'Dr. Sharma', status: 'Chair' },
+      { role: 'Stores', name: 'Store Manager — Bhopal', status: 'Member' },
+      { role: 'Finance', name: 'GM Finance', status: 'Member' },
+      { role: 'Quality', name: 'Biomedical / QC Lead', status: 'Member' },
+      { role: 'Evaluation', name: 'Technical Committee', status: 'Scoring' }
+    ];
+    const tenders = (typeof TENDERS !== 'undefined' ? TENDERS : []).filter(t => t.status === 'Evaluation');
+    openModal('Evaluation Committee', `
+      <div class="kpi-detail">
+        <p class="need-row-detail-lead">Technical + financial evaluation using L1 / QCBS. Committee spans Procurement, Stores, Finance, Quality, and Evaluation roles.</p>
+        <div class="tender-detail-stats tender-detail-stats--3">
+          <div class="tender-stat"><span>Tenders in evaluation</span><strong>${tenders.length || 2}</strong></div>
+          <div class="tender-stat"><span>Method</span><strong>L1 / QCBS</strong></div>
+          <div class="tender-stat"><span>Status</span><strong><span class="badge badge-info">In Progress</span></strong></div>
+        </div>
+        <div class="tender-detail-section">
+          <h4>Committee composition</h4>
+          <div class="data-table-wrap">
+            <table class="data-table data-table--modal">
+              <thead><tr><th>Role</th><th>Officer</th><th>Assignment</th></tr></thead>
+              <tbody>
+                ${members.map(m => `<tr><td><strong>${m.role}</strong></td><td>${m.name}</td><td>${m.status}</td></tr>`).join('')}
+              </tbody>
+            </table>
+          </div>
+        </div>
+        <div class="tender-detail-section">
+          <h4>Tenders under evaluation</h4>
+          <div class="data-table-wrap">
+            <table class="data-table data-table--modal">
+              <thead><tr><th>Tender ID</th><th>Title</th><th>Category</th><th>Bids</th><th>Deadline</th></tr></thead>
+              <tbody>
+                ${(tenders.length ? tenders : [
+                  { id: 'TND-2026-MP-0042', title: 'Essential Medicines Rate Contract', category: 'Drugs', bids: 8, deadline: '2026-09-15' },
+                  { id: 'TND-2026-MP-0085', title: 'Ambulance Fleet Maintenance', category: 'Others', bids: 3, deadline: '2026-09-12' }
+                ]).map(t => `<tr>
+                  <td><strong>${t.id}</strong></td><td>${t.title}</td><td>${t.category}</td>
+                  <td>${t.bids}</td><td>${formatDateDMY(t.deadline)}</td>
+                </tr>`).join('')}
+              </tbody>
+            </table>
+          </div>
+        </div>
+        <div class="modal-inline-actions">
+          <button type="button" class="btn btn-outline" onclick="modalGoBack()"><i class="fa-solid fa-arrow-left"></i> Back</button>
+          <button type="button" class="btn btn-primary" onclick="selectWorkflowStep(7); closeModal();">Go to Bid Evaluation</button>
+        </div>
+      </div>
+    `, { wide: true, large: true });
+  }
+}
+
 function refreshNeedIdentificationApi() {
-  const btn = document.querySelector('.need-api-banner-actions .btn');
+  const btn = document.querySelector('.need-api:not(.stock-check-api) .need-api-banner-actions .btn');
   if (btn) {
     btn.disabled = true;
     btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Syncing…';
   }
-  // Prototype: simulate network latency then refresh panel with updated timestamp
   setTimeout(() => {
+    const failed = Math.random() < 0.28;
     if (typeof NEED_IDENTIFICATION_API !== 'undefined') {
-      const now = new Date();
-      const pad = n => String(n).padStart(2, '0');
-      NEED_IDENTIFICATION_API.meta.lastSynced =
-        `${pad(now.getDate())}-${pad(now.getMonth() + 1)}-${now.getFullYear()} ${pad(now.getHours())}:${pad(now.getMinutes())} IST`;
-      NEED_IDENTIFICATION_API.meta.status = 'Synced';
+      if (failed) {
+        NEED_IDENTIFICATION_API.meta.status = 'Not synced';
+      } else {
+        const now = new Date();
+        const pad = n => String(n).padStart(2, '0');
+        NEED_IDENTIFICATION_API.meta.lastSynced =
+          `${pad(now.getDate())}-${pad(now.getMonth() + 1)}-${now.getFullYear()} ${pad(now.getHours())}:${pad(now.getMinutes())} IST`;
+        NEED_IDENTIFICATION_API.meta.status = 'Synced';
+      }
     }
     refreshWorkflowUI();
-    openModal('Need Identification API', `
-      <div class="kpi-detail">
-        <div class="tender-detail-stats tender-detail-stats--3">
-          <div class="tender-stat"><span>Source</span><strong>DHIS2 + e-Aushadhi</strong></div>
-          <div class="tender-stat"><span>Status</span><strong>200 OK</strong></div>
-          <div class="tender-stat"><span>Records</span><strong>4 domains</strong></div>
+    if (failed) {
+      openModal('Sync unsuccessful', `
+        <div class="sync-success-msg sync-error-msg">
+          <div class="sync-success-icon sync-error-icon"><i class="fa-solid fa-triangle-exclamation"></i></div>
+          <h4>Need assessment could not be updated</h4>
+          <p>We could not refresh stock levels, patient load, disease burden, or gap analysis right now. The banner shows <strong>Not synced</strong>. Please try again in a moment.</p>
         </div>
-        <p class="report-footnote"><i class="fa-solid fa-circle-check"></i> Stock levels, patient load, disease burden, and gap analysis refreshed successfully.</p>
+      `);
+      return;
+    }
+    openModal('Data refreshed', `
+      <div class="sync-success-msg">
+        <div class="sync-success-icon"><i class="fa-solid fa-circle-check"></i></div>
+        <h4>Latest need assessment is ready</h4>
+        <p>Stock levels, patient load, disease burden, and gap analysis have been updated with the newest information from connected systems. You can review the tables below and continue with planning.</p>
       </div>
     `);
   }, 650);
@@ -1803,27 +4283,36 @@ function renderWorkflowDetail(step, canEdit = true) {
     return renderNeedIdentificationStage(canEdit);
   }
 
+  if (currentRole === 'gov' && step.id === 2) {
+    return renderStockCheckStage(canEdit);
+  }
+
+  if (currentRole === 'gov' && step.id === 3) {
+    return renderIndentRaisedStage(canEdit);
+  }
+
   if (currentRole === 'gov' && step.id === 4) {
-    const regs = filterByCategory(VENDOR_REGISTRATIONS);
-    return `<div class="form-grid">
-      ${customSelectHTML('District', 'district', ['Bhopal', 'Indore', 'Jabalpur', 'Gwalior'], 'Bhopal')}
-      ${customSelectHTML('Consolidation Status', 'consolidation', ['Pending Review', 'Verified', 'Approved'], 'Pending Review')}
-      <div class="form-group"><label>Items Consolidated${catNote}</label><input type="text" value="${currentCategory === 'All' ? '47 line items across 12 facilities' : regs.length + ' line items for ' + currentCategory}"${readonly}></div>
-      <div class="form-group"><label>Estimated Value</label><div class="masked-value">₹ ●●●●●●● (Masked)</div></div>
-      <div class="form-group full"><label>Optimization Sources</label>
-        <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:0.5rem;margin-top:0.5rem">
-          <div class="info-card" style="padding:0.75rem;text-align:center"><strong>12</strong><br><small>Warehouse Stock</small></div>
-          <div class="info-card" style="padding:0.75rem;text-align:center"><strong>8</strong><br><small>Other Locations</small></div>
-          <div class="info-card" style="padding:0.75rem;text-align:center"><strong>5</strong><br><small>Open POs</small></div>
-          <div class="info-card" style="padding:0.75rem;text-align:center"><strong>3</strong><br><small>Redistributable</small></div>
-        </div>
-      </div>
-    </div>
-    <div class="wf-actions mt-2">
-      <button class="btn btn-primary"${disabled}>Approve Consolidated Demand</button>
-      <button class="btn btn-outline"${disabled}>Request Clarification</button>
-      <button class="btn btn-outline" onclick="openWorkflowDocument('consolidation-report')">View Documents</button>
-    </div>`;
+    return renderDemandConsolidationStage(canEdit);
+  }
+
+  if (currentRole === 'gov' && step.id === 5) {
+    return renderPrBudgetApprovalStage(canEdit);
+  }
+
+  if (currentRole === 'gov' && step.id === 6) {
+    return renderTenderPreparationStage(canEdit);
+  }
+
+  if (currentRole === 'gov' && step.id === 7) {
+    return renderBidEvaluationStage(canEdit);
+  }
+
+  if (currentRole === 'gov' && step.id === 8) {
+    return renderContractApprovalStage(canEdit);
+  }
+
+  if (currentRole === 'gov' && step.id === 9) {
+    return renderAwardStage(canEdit);
   }
 
   if (currentRole === 'vendor' && step.id === 1) {
@@ -2570,7 +5059,7 @@ function openWorkflowDocument(docId) {
     return;
   }
   if (docId === 'consolidation-report') {
-    openDrillDown('stock', 'Demand Consolidation Report', 'District-wise consolidated demand for Drugs category. 28 items can be fulfilled from existing stock — estimated savings ₹2.1 Cr.');
+    openConsolidationDocuments();
     return;
   }
   openLifecycleGuideModal();
@@ -2800,15 +5289,15 @@ function renderVendorCodeLetterModal() {
 
 function renderGovWorkflowExtras() {
   return `<div class="cards-grid">
-    <div class="info-card" onclick="openDrillDown('stock','Stock Optimization','Fulfill from warehouse: 12 items, Other locations: 8 items, Open POs: 5 items.')">
+    <div class="info-card info-card--interactive" role="button" tabindex="0" onclick="openGovWorkflowSectionModal('demand')" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();openGovWorkflowSectionModal('demand')}">
       <h4><i class="fa-solid fa-boxes-stacked"></i> Demand Optimization</h4><p>Fulfill from existing stock before fresh procurement</p>
       <div class="card-meta"><span>28 items optimizable</span><span class="badge badge-success">₹2.1 Cr saved</span></div>
     </div>
-    <div class="info-card" onclick="openDrillDown('contract','Contract Before PO','Contract approval must precede PO generation per policy.')">
+    <div class="info-card info-card--interactive" role="button" tabindex="0" onclick="openGovWorkflowSectionModal('contract')" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();openGovWorkflowSectionModal('contract')}">
       <h4><i class="fa-solid fa-file-contract"></i> Contract Gate</h4><p>Contract approval and execution before PO</p>
       <div class="card-meta"><span>3 pending contracts</span><span class="badge badge-warning">Action Required</span></div>
     </div>
-    <div class="info-card" onclick="openDrillDown('eval','Bid Evaluation','Technical + Financial evaluation using L1/QCBS.')">
+    <div class="info-card info-card--interactive" role="button" tabindex="0" onclick="openGovWorkflowSectionModal('eval')" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();openGovWorkflowSectionModal('eval')}">
       <h4><i class="fa-solid fa-scale-balanced"></i> Evaluation Committee</h4><p>Procurement, Stores, Finance, Quality, Evaluation roles</p>
       <div class="card-meta"><span>2 tenders in evaluation</span><span class="badge badge-info">In Progress</span></div>
     </div>
@@ -2839,6 +5328,22 @@ function selectWorkflowStep(id) {
   const steps = getWorkflowSteps();
   const step = steps.find(s => s.id === id);
   if (!step) return;
+  if (currentRole === 'gov' && id > 3 && currentWorkflowStep === 3 && !govIndentState.saved) {
+    showWfAlert('Please save the indent (Manual or Automated) before proceeding to the next stage.');
+    return;
+  }
+  if (currentRole === 'gov' && id > 4 && currentWorkflowStep === 4 && !govConsolidationState.approved) {
+    showWfAlert('Please approve the consolidated demand before proceeding to the next stage.');
+    return;
+  }
+  if (currentRole === 'gov' && id > 5 && currentWorkflowStep === 5 && !govBudgetState.verified) {
+    showWfAlert('Please complete budget verification before proceeding to the next stage.');
+    return;
+  }
+  if (currentRole === 'gov' && id > 6 && currentWorkflowStep === 6 && !govTenderPrepState.finalReady) {
+    showWfAlert('Please prepare the final NIT/RFP after division consensus before proceeding to the next stage.');
+    return;
+  }
   currentWorkflowStep = id;
   refreshWorkflowUI();
   document.getElementById('wfDetail')?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
@@ -2859,6 +5364,26 @@ function goWorkflowStep(delta) {
       showWfAlert(err || 'Complete the required actions on this stage before moving to the next stage.');
       return;
     }
+  }
+
+  if (currentRole === 'gov' && delta > 0 && currentWorkflowStep === 3 && !govIndentState.saved) {
+    showWfAlert('Please save the indent (Manual or Automated) before proceeding to the next stage.');
+    return;
+  }
+
+  if (currentRole === 'gov' && delta > 0 && currentWorkflowStep === 4 && !govConsolidationState.approved) {
+    showWfAlert('Please approve the consolidated demand before proceeding to the next stage.');
+    return;
+  }
+
+  if (currentRole === 'gov' && delta > 0 && currentWorkflowStep === 5 && !govBudgetState.verified) {
+    showWfAlert('Please complete budget verification before proceeding to the next stage.');
+    return;
+  }
+
+  if (currentRole === 'gov' && delta > 0 && currentWorkflowStep === 6 && !govTenderPrepState.finalReady) {
+    showWfAlert('Please prepare the final NIT/RFP after division consensus before proceeding to the next stage.');
+    return;
   }
 
   selectWorkflowStep(next);
@@ -3729,7 +6254,7 @@ function downloadGovReportPack(format) {
 function openGovReportPdf(pack) {
   const ds = getGovReportDataset();
   const tablesHtml = pack.sheets.map(sheet => `
-    <h3 style="margin:18px 0 8px;font-size:14px;color:#0d47a1">${sheet.name.replace(/_/g, ' ')}</h3>
+    <h3 style="margin:18px 0 8px;font-size:14px;color:#003D5D">${sheet.name.replace(/_/g, ' ')}</h3>
     <table style="width:100%;border-collapse:collapse;font-size:11px">
       <thead>
         <tr>${sheet.headers.map(h => `<th style="border:1px solid #cbd5e1;background:#f1f5f9;padding:6px 8px;text-align:left">${h}</th>`).join('')}</tr>
@@ -3751,7 +6276,7 @@ function openGovReportPdf(pack) {
       h1{font-size:20px;margin:0 0 4px}
       .meta{color:#64748b;font-size:12px;margin-bottom:16px}
       .actions{margin:16px 0 20px}
-      .actions button{padding:8px 14px;border-radius:8px;border:1px solid #cbd5e1;background:#0d47a1;color:#fff;cursor:pointer;font-weight:600}
+      .actions button{padding:8px 14px;border-radius:8px;border:1px solid #cbd5e1;background:#003D5D;color:#fff;cursor:pointer;font-weight:600}
       @media print{.actions{display:none} body{padding:0}}
     </style>
   </head><body>
@@ -3767,7 +6292,7 @@ function openGovReportPdf(pack) {
 function openVendorReportPdf(pack) {
   const ds = getVendorReportDataset();
   const tablesHtml = pack.sheets.map(sheet => `
-    <h3 style="margin:18px 0 8px;font-size:14px;color:#0d47a1">${sheet.name}</h3>
+    <h3 style="margin:18px 0 8px;font-size:14px;color:#003D5D">${sheet.name}</h3>
     <table style="width:100%;border-collapse:collapse;font-size:11px">
       <thead>
         <tr>${sheet.headers.map(h => `<th style="border:1px solid #cbd5e1;background:#f1f5f9;padding:6px 8px;text-align:left">${h}</th>`).join('')}</tr>
@@ -3789,7 +6314,7 @@ function openVendorReportPdf(pack) {
       h1{font-size:20px;margin:0 0 4px}
       .meta{color:#64748b;font-size:12px;margin-bottom:16px}
       .actions{margin:16px 0 20px}
-      .actions button{padding:8px 14px;border-radius:8px;border:1px solid #cbd5e1;background:#0d47a1;color:#fff;cursor:pointer;font-weight:600}
+      .actions button{padding:8px 14px;border-radius:8px;border:1px solid #cbd5e1;background:#003D5D;color:#fff;cursor:pointer;font-weight:600}
       @media print{.actions{display:none} body{padding:0}}
     </style>
   </head><body>
@@ -3808,7 +6333,7 @@ function renderSettings() {
       <div class="form-group"><label>Organization Name</label><input type="text" value="MP Health Procurement"></div>
       <div class="form-group"><label>Solution Branding</label><input type="text" value="MP Health Procurement Solution"></div>
       <div class="form-group full"><label>Logo</label><input type="file" accept="image/*"></div>
-      <div class="form-group"><label>Primary Color</label><input type="color" value="#0d47a1"></div>
+      <div class="form-group"><label>Primary Color</label><input type="color" value="#003D5D"></div>
       <div class="form-group"><label>Accent Color</label><input type="color" value="#00bfa5"></div>
     </div>
     <div class="wf-actions mt-2"><button class="btn btn-primary">Save Configuration</button></div>
@@ -4419,6 +6944,17 @@ function setCategory(cat) {
   if (cat === currentCategory) return;
   currentCategory = cat;
   pipelinePage = 1;
+  govTenderPrepState.preparedPage = 1;
+  govBidEvalState.page = 1;
+  govContractState.page = 1;
+  govAwardState.page = 1;
+  govNeedState.period = 'all';
+  govConsolidationState.period = 'all';
+  govBudgetState.period = 'all';
+  govTenderPrepState.period = 'all';
+  govBidEvalState.period = 'all';
+  govContractState.period = 'all';
+  govAwardState.period = 'all';
   updatePageMeta();
   if (PAGES_WITH_CATEGORY.has(currentPage)) {
     updateCategoryBarInPlace();

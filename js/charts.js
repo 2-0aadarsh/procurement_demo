@@ -3,15 +3,15 @@
 let charts = {};
 
 const chartColors = {
-  primary: '#0d47a1',
+  primary: '#003D5D',
   accent: '#00bfa5',
-  blue: '#1565c0',
+  blue: '#0A5578',
   green: '#2e7d32',
   orange: '#f57c00',
   red: '#d32f2f',
   purple: '#7b1fa2',
   teal: '#00897b',
-  palette: ['#0d47a1', '#00bfa5', '#f57c00', '#7b1fa2', '#d32f2f', '#00897b']
+  palette: ['#003D5D', '#00bfa5', '#f57c00', '#7b1fa2', '#d32f2f', '#00897b']
 };
 
 function destroyChart(id) {
