@@ -174,10 +174,16 @@ const govTenderPrepState = {
   period: 'all'
 };
 
-/** Stage 7–9 gov states (period filters + pagination) */
+/** Stage 7–13 gov states (period filters + pagination) */
 const govBidEvalState = { page: 1, year: 'all', viewBy: 'quarter', period: 'all' };
 const govContractState = { page: 1, year: 'all', viewBy: 'quarter', period: 'all' };
 const govAwardState = { page: 1, year: 'all', viewBy: 'quarter', period: 'all' };
+const govPoState = { page: 1, year: 'all', viewBy: 'quarter', period: 'all' };
+const govGrnState = { page: 1, year: 'all', viewBy: 'quarter', period: 'all' };
+const govInvoiceState = { page: 1, year: 'all', viewBy: 'quarter', period: 'all' };
+const govPaymentState = { page: 1, year: 'all', viewBy: 'quarter', period: 'all' };
+let govLifecycleComplete = false;
+let vendorLifecycleComplete = false;
 
 function maskSensitiveValue(value) {
   if (!value) return '₹ ●●●';
@@ -374,7 +380,7 @@ function getNavBadgeInfo(item) {
     return { count: sum, title: `${sum} action items (Open Tenders + Pending Approvals + Payment Delays)` };
   }
   if (item.id === 'workflow') {
-    return { count: item.badge || 0, title: item.badge ? `${item.badge} stage(s) need attention` : '' };
+    return { count: 0, title: '' };
   }
   if (item.id === 'work-queue') {
     const queue = getWorkQueueSource();
@@ -386,7 +392,7 @@ function getNavBadgeInfo(item) {
     return { count: open, title: `${open} open SLA thread(s)` };
   }
   if (item.id === 'reports') {
-    return { count: 3, title: '3 downloadable report packs (Lifecycle, Sourcing, Operations)' };
+    return { count: 0, title: '' };
   }
   return { count: item.badge || 0, title: item.badge ? `${item.badge} item(s)` : '' };
 }
@@ -1526,10 +1532,6 @@ function renderWorkflow() {
   return `
     <div class="wf-page-header">
       <p class="wf-page-hint">${isGov ? '13 stages · click a step to navigate' : '9 stages · click any step to review or update'}</p>
-      <button type="button" class="wf-guide-download" onclick="openLifecycleGuideModal()">
-        <i class="fa-solid fa-book"></i>
-        <span>Guide</span>
-      </button>
     </div>
     <div class="workflow-timeline" role="tablist" aria-label="Procurement lifecycle stages">
       ${steps.map(s => `<div class="${getWorkflowStepClasses(s, viewId)}" data-step="${s.id}" role="tab" aria-selected="${s.id === viewId}" tabindex="0" onclick="selectWorkflowStep(${s.id})" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();selectWorkflowStep(${s.id})}">
@@ -1590,16 +1592,14 @@ function vendorCanEditStage(stepId, progress) {
 }
 
 function renderWorkflowStepNav(step, total) {
-  const nextDisabled = step.id >= total || (
-    currentRole === 'vendor' && !vendorCanAdvanceFrom(step.id)
-  ) || (
-    currentRole === 'gov' && step.id === 3 && !govIndentState.saved
-  ) || (
-    currentRole === 'gov' && step.id === 4 && !govConsolidationState.approved
-  ) || (
-    currentRole === 'gov' && step.id === 5 && !govBudgetState.verified
-  ) || (
-    currentRole === 'gov' && step.id === 6 && !govTenderPrepState.finalReady
+  const isLast = step.id >= total;
+  const lifecycleDone = currentRole === 'gov' ? govLifecycleComplete : vendorLifecycleComplete;
+  const nextDisabled = !isLast && (
+    (currentRole === 'vendor' && !vendorCanAdvanceFrom(step.id)) ||
+    (currentRole === 'gov' && step.id === 3 && !govIndentState.saved) ||
+    (currentRole === 'gov' && step.id === 4 && !govConsolidationState.approved) ||
+    (currentRole === 'gov' && step.id === 5 && !govBudgetState.verified) ||
+    (currentRole === 'gov' && step.id === 6 && !govTenderPrepState.finalReady)
   );
   let nextTitle = '';
   if (nextDisabled && currentRole === 'vendor' && step.id < total) {
@@ -1613,23 +1613,78 @@ function renderWorkflowStepNav(step, total) {
   } else if (nextDisabled && currentRole === 'gov' && step.id === 6) {
     nextTitle = 'Prepare final NIT/RFP after division consensus before proceeding';
   }
-  return `<div class="wf-step-nav">
+
+  const nextBtn = isLast
+    ? (lifecycleDone
+      ? `<button type="button" class="btn btn-primary" onclick="openLifecycleCompleteSummary()">
+          <i class="fa-solid fa-flag-checkered"></i> View completion summary
+        </button>`
+      : `<button type="button" class="btn btn-primary" onclick="completeProcurementLifecycle()">
+          <i class="fa-solid fa-flag-checkered"></i> Complete lifecycle
+        </button>`)
+    : `<button type="button" class="btn btn-outline" onclick="goWorkflowStep(1)" ${nextDisabled ? 'disabled' : ''} title="${nextTitle}">
+        Next Stage <i class="fa-solid fa-arrow-right"></i>
+      </button>`;
+
+  return `${isLast && lifecycleDone ? renderLifecycleCompleteBanner() : ''}
+  <div class="wf-step-nav">
     <button type="button" class="btn btn-outline" onclick="goWorkflowStep(-1)" ${step.id <= 1 ? 'disabled' : ''}>
       <i class="fa-solid fa-arrow-left"></i> Previous Stage
     </button>
-    <span class="wf-step-indicator">Stage ${step.id} of ${total}</span>
-    <button type="button" class="btn btn-outline" onclick="goWorkflowStep(1)" ${nextDisabled ? 'disabled' : ''} title="${nextTitle}">
-      Next Stage <i class="fa-solid fa-arrow-right"></i>
-    </button>
+    <span class="wf-step-indicator">Stage ${step.id} of ${total}${lifecycleDone && isLast ? ' · Complete' : ''}</span>
+    ${nextBtn}
   </div>`;
 }
 
+function renderLifecycleCompleteBanner() {
+  const label = currentRole === 'gov' ? 'Government procurement lifecycle' : 'Vendor lifecycle';
+  return `<div class="wf-lifecycle-complete">
+    <div class="wf-lifecycle-complete-icon"><i class="fa-solid fa-circle-check"></i></div>
+    <div>
+      <strong>${label} completed</strong>
+      <p>All stages are finished. Payment and closure records are available for audit. You can review any earlier stage or return to the dashboard.</p>
+    </div>
+    <button type="button" class="btn btn-outline btn-sm" onclick="navigateTo('dashboard', true)">Go to dashboard</button>
+  </div>`;
+}
+
+function completeProcurementLifecycle() {
+  if (currentRole === 'gov') {
+    govLifecycleComplete = true;
+    if (typeof GOV_WORKFLOW !== 'undefined') {
+      GOV_WORKFLOW.forEach(s => { s.status = 'done'; });
+    }
+  } else {
+    vendorLifecycleComplete = true;
+    const total = getWorkflowSteps().length;
+    for (let i = 1; i <= total; i++) vendorStageState.completed[i] = true;
+    syncVendorWorkflowStatuses();
+  }
+  refreshWorkflowUI();
+  openLifecycleCompleteSummary();
+}
+
+function openLifecycleCompleteSummary() {
+  const isGov = currentRole === 'gov';
+  openModal(isGov ? 'Procurement lifecycle complete' : 'Vendor lifecycle complete', `
+    <div class="sync-success-msg">
+      <div class="sync-success-icon"><i class="fa-solid fa-flag-checkered"></i></div>
+      <h4>${isGov ? 'End-to-end procurement cycle closed' : 'Vendor journey completed'}</h4>
+      <p>${isGov
+        ? 'Need identification through payment is complete. Contract closure and payment records remain available for review and audit.'
+        : 'Registration through payment tracking is complete. You can revisit any stage or return to your dashboard.'}</p>
+      <div class="modal-inline-actions" style="justify-content:center;margin-top:1rem">
+        <button type="button" class="btn btn-outline" onclick="closeModal()"><i class="fa-solid fa-list-check"></i> Stay on final stage</button>
+        <button type="button" class="btn btn-primary" onclick="closeModal(); navigateTo('dashboard', true);"><i class="fa-solid fa-gauge-high"></i> Go to dashboard</button>
+      </div>
+    </div>
+  `);
+}
+
 function renderWorkflowChecklist(step) {
-  // Stage 1–4 gov: checklist replaced by dedicated stage panels where applicable
-  if (currentRole === 'gov' && (step.id >= 1 && step.id <= 9)) return '';
-  const checklist = currentRole === 'gov'
-    ? GOV_STAGE_CHECKLIST[step.id]
-    : VENDOR_STAGE_CHECKLIST[step.id];
+  // Dedicated stage panels replace checklist for government lifecycle
+  if (currentRole === 'gov') return '';
+  const checklist = VENDOR_STAGE_CHECKLIST[step.id];
   if (!checklist) return '';
   return `<div class="wf-checklist">
     <h4><i class="fa-solid fa-list-check"></i> Stage Checklist</h4>
@@ -1705,6 +1760,29 @@ function needStatusBadge(status) {
     'PBG pending': 'warning',
     'LOA issued': 'info',
     'Awaiting award': 'muted',
+    'PO issued': 'success',
+    'Delivery scheduled': 'success',
+    'Vendor notified': 'info',
+    'Draft PO': 'warning',
+    'Pending contract': 'warning',
+    Notified: 'success',
+    'Not sent': 'muted',
+    Accepted: 'success',
+    'Under inspection': 'info',
+    'Partial receipt': 'warning',
+    'Awaiting delivery': 'muted',
+    'Rejected / held': 'danger',
+    Passed: 'success',
+    Failed: 'danger',
+    Matched: 'success',
+    'Under match': 'info',
+    Mismatch: 'danger',
+    'Awaiting GRN': 'muted',
+    Rejected: 'danger',
+    'On hold': 'warning',
+    Paid: 'success',
+    'In process': 'info',
+    'Awaiting invoice': 'muted',
     Received: 'success',
     Acknowledged: 'success',
     Cleared: 'success',
@@ -2941,10 +3019,6 @@ function renderTenderPreparationStage(canEdit = true) {
   const { meta, processSteps, checkers } = data;
   const rows = getTenderPrepRows();
   const disabled = canEdit ? '' : ' disabled';
-  const byCategory = {};
-  rows.forEach(t => {
-    byCategory[t.category] = (byCategory[t.category] || 0) + 1;
-  });
   const consensusCount = checkers.filter(c => c.status === 'Consensus uploaded').length;
   const paged = paginateItems(rows, govTenderPrepState.preparedPage, 10);
   govTenderPrepState.preparedPage = paged.page;
@@ -3055,12 +3129,7 @@ function renderTenderPreparationStage(canEdit = true) {
         <h4><i class="fa-solid fa-table"></i> Tenders prepared — status by category &amp; division</h4>
         <p>Counts across Drugs, Equipment and other categories. Click a row for full tender details. Showing 10 per page.</p>
       </div>
-      <div class="budget-dept-stats tender-prep-counts">
-        <div class="budget-dept-stat"><span>Total shown</span><strong>${rows.length}</strong></div>
-        ${Object.keys(byCategory).map(cat => `
-          <div class="budget-dept-stat"><span>${cat}</span><strong>${byCategory[cat]}</strong></div>
-        `).join('')}
-      </div>
+      ${renderCategoryCountStrip(rows)}
       <div class="consol-detail-table-wrap">
         <table class="data-table consol-detail-table tender-prep-table">
           <thead>
@@ -3255,13 +3324,19 @@ function filterCategoryRows(rows) {
 }
 
 function renderCategoryCountStrip(rows) {
+  const order = ['Drugs', 'Equipment', 'Consumables', 'Services', 'Others'];
   const byCategory = {};
-  rows.forEach(t => { byCategory[t.category] = (byCategory[t.category] || 0) + 1; });
-  return `<div class="budget-dept-stats tender-prep-counts">
-    <div class="budget-dept-stat"><span>Total shown</span><strong>${rows.length}</strong></div>
-    ${Object.keys(byCategory).map(cat => `
-      <div class="budget-dept-stat"><span>${cat}</span><strong>${byCategory[cat]}</strong></div>
-    `).join('')}
+  rows.forEach(t => {
+    if (!t?.category) return;
+    byCategory[t.category] = (byCategory[t.category] || 0) + 1;
+  });
+  const cats = [
+    ...order.filter(c => byCategory[c] != null),
+    ...Object.keys(byCategory).filter(c => !order.includes(c))
+  ];
+  return `<div class="cat-count-strip" role="group" aria-label="Category counts">
+    <span class="cat-count-item cat-count-item--total"><em>Total</em><strong>${rows.length}</strong></span>
+    ${cats.map(cat => `<span class="cat-count-item"><em>${cat}</em><strong>${byCategory[cat]}</strong></span>`).join('')}
   </div>`;
 }
 
@@ -3364,6 +3439,11 @@ function getWfStageFilterState(stageKey) {
   if (stageKey === 'tender') return govTenderPrepState;
   if (stageKey === 'bid') return govBidEvalState;
   if (stageKey === 'contract') return govContractState;
+  if (stageKey === 'award') return govAwardState;
+  if (stageKey === 'po') return govPoState;
+  if (stageKey === 'grn') return govGrnState;
+  if (stageKey === 'invoice') return govInvoiceState;
+  if (stageKey === 'payment') return govPaymentState;
   return govAwardState;
 }
 
@@ -3818,6 +3898,533 @@ function openAwardStageDetail(awardId) {
   `, { wide: true, large: true, extraWide: true });
 }
 
+/* ========== Stage 10 Purchase Order ========== */
+function getPurchaseOrderRows() {
+  const rows = filterCategoryRows(typeof PURCHASE_ORDER_DATA !== 'undefined' ? PURCHASE_ORDER_DATA.orders : []);
+  return applyStagePeriodFilter(rows, govPoState, 'poDate');
+}
+
+function setPurchaseOrderPage(page) {
+  govPoState.page = Math.max(1, Number(page) || 1);
+  refreshWorkflowUI();
+  document.getElementById('purchaseOrderTable')?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+}
+
+function renderPurchaseOrderStage(canEdit = true) {
+  const data = typeof PURCHASE_ORDER_DATA !== 'undefined' ? PURCHASE_ORDER_DATA : null;
+  if (!data) return `<div class="need-api-empty"><p>Purchase order data could not be loaded.</p></div>`;
+  const rows = getPurchaseOrderRows();
+  const paged = paginateItems(rows, govPoState.page, 10);
+  govPoState.page = paged.page;
+  const issued = rows.filter(r => r.status === 'PO issued' || r.status === 'Delivery scheduled' || r.status === 'Vendor notified').length;
+  const draft = rows.filter(r => r.status === 'Draft PO' || r.status === 'Pending contract').length;
+  const awaiting = rows.filter(r => r.status === 'Awaiting award').length;
+  const periodLabel = getWfPeriodFilterLabel(govPoState);
+
+  return `<div class="tender-prep-stage">
+    <div class="indent-mode-banner">
+      <div>
+        <strong>Purchase order — post-contract generation</strong>
+        <p>${data.meta.note}</p>
+      </div>
+      <span class="badge badge-info"><i class="fa-solid fa-calendar-days"></i> ${periodLabel}</span>
+    </div>
+
+    ${renderWorkflowPeriodFilter('po', govPoState)}
+
+    <div class="budget-pr-summary">
+      <div class="budget-pr-chip"><span>POs awarded / active</span><strong>${issued}</strong></div>
+      <div class="budget-pr-chip"><span>Draft / pending</span><strong>${draft}</strong></div>
+      <div class="budget-pr-chip"><span>Awaiting award</span><strong>${awaiting}</strong></div>
+      <div class="budget-pr-chip"><span>Shown</span><strong>${rows.length}</strong></div>
+      <div class="budget-pr-chip"><span>Last updated</span><strong>${data.meta.lastUpdated}</strong></div>
+    </div>
+
+    <section class="budget-section">
+      <div class="budget-section-head">
+        <h4><i class="fa-solid fa-route"></i> How purchase orders are raised</h4>
+        <p>From executed contract to vendor notification with delivery schedule and terms.</p>
+      </div>
+      ${renderProcessSteps(data.processSteps)}
+    </section>
+
+    <section class="budget-section" id="purchaseOrderTable">
+      <div class="budget-section-head">
+        <h4><i class="fa-solid fa-table"></i> Purchase orders — status by category &amp; division</h4>
+        <p>State-wise / division-wise view of awarded POs across Drugs, Equipment and other categories. Click a row for delivery schedule, terms and vendor notification details.</p>
+      </div>
+      ${renderCategoryCountStrip(rows)}
+      <div class="consol-detail-table-wrap">
+        <table class="data-table consol-detail-table tender-prep-table">
+          <thead>
+            <tr>
+              <th>PO ID</th>
+              <th>Tender</th>
+              <th>State / Division</th>
+              <th>Category</th>
+              <th>Vendor</th>
+              <th>Status</th>
+              <th>Vendor notified</th>
+              <th>Est. value</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${paged.items.length ? paged.items.map(r => `
+              <tr class="tender-prep-row" onclick="openPurchaseOrderDetail('${r.id}')" title="View purchase order details">
+                <td><strong>${r.id}</strong></td>
+                <td>${r.title}<br><span class="cell-sub">${r.tenderId}</span></td>
+                <td>${r.state}<br><span class="cell-sub">${r.division}</span></td>
+                <td>${r.category}</td>
+                <td>${r.vendor}</td>
+                <td><span class="badge badge-${needStatusBadge(r.status)}">${r.status}</span></td>
+                <td><span class="badge badge-${needStatusBadge(r.vendorNotified)}">${r.vendorNotified}</span></td>
+                <td>${r.value}</td>
+              </tr>
+            `).join('') : `<tr><td colspan="8" style="text-align:center;color:#64748b;padding:1.25rem">No purchase orders match the selected category and period.</td></tr>`}
+          </tbody>
+        </table>
+      </div>
+      ${renderPaginationControls(paged.page, paged.totalPages, paged.total, paged.from, paged.to, 'setPurchaseOrderPage')}
+    </section>
+  </div>`;
+}
+
+function openPurchaseOrderDetail(poId) {
+  const r = (typeof PURCHASE_ORDER_DATA !== 'undefined' ? PURCHASE_ORDER_DATA.orders : []).find(o => o.id === poId);
+  if (!r) return;
+  openModal(`${r.id} — Purchase order`, `
+    <div class="consol-detail-modal">
+      <p class="consol-detail-lead">${r.title} · ${r.category} · ${r.state} (${r.division})</p>
+      <div class="consol-detail-stats" style="grid-template-columns:repeat(4,minmax(0,1fr))">
+        <div class="consol-detail-stat"><span>Status</span><strong><span class="badge badge-${needStatusBadge(r.status)}">${r.status}</span></strong></div>
+        <div class="consol-detail-stat"><span>Vendor</span><strong>${r.vendor}</strong></div>
+        <div class="consol-detail-stat"><span>Vendor notified</span><strong><span class="badge badge-${needStatusBadge(r.vendorNotified)}">${r.vendorNotified}</span></strong></div>
+        <div class="consol-detail-stat"><span>Est. value</span><strong>${r.value}</strong></div>
+      </div>
+
+      <h4 class="budget-subhead">PO &amp; contract linkage</h4>
+      <div class="consol-detail-table-wrap" style="margin-bottom:1rem">
+        <table class="data-table consol-detail-table">
+          <tbody>
+            <tr><td>Tender ID</td><td><strong>${r.tenderId}</strong></td></tr>
+            <tr><td>Award ID</td><td><strong>${r.awardId}</strong></td></tr>
+            <tr><td>Contract ID</td><td><strong>${r.contractId}</strong></td></tr>
+            <tr><td>PO date</td><td><strong>${r.poDate}</strong></td></tr>
+            <tr><td>Acknowledgement</td><td><span class="badge badge-${needStatusBadge(r.ackStatus)}">${r.ackStatus}</span></td></tr>
+            <tr><td>Line items</td><td><strong>${r.lines}</strong></td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <h4 class="budget-subhead">Delivery schedule &amp; terms</h4>
+      <div class="consol-detail-table-wrap" style="margin-bottom:1rem">
+        <table class="data-table consol-detail-table">
+          <tbody>
+            <tr><td>Ship to</td><td><strong>${r.shipTo}</strong></td></tr>
+            <tr><td>Delivery window</td><td><strong>${r.deliveryStart} – ${r.deliveryEnd}</strong></td></tr>
+            <tr><td>Schedule</td><td>${r.schedule}</td></tr>
+            <tr><td>Payment terms</td><td><strong>${r.paymentTerms}</strong></td></tr>
+            <tr><td>Contract terms</td><td>${r.terms}</td></tr>
+            <tr><td>Remarks</td><td>${r.remarks}</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <div class="modal-inline-actions">
+        <button type="button" class="btn btn-outline" onclick="modalGoBack()"><i class="fa-solid fa-arrow-left"></i> Back</button>
+      </div>
+    </div>
+  `, { wide: true, large: true, extraWide: true });
+}
+
+/* ========== Stage 11 GRN & Inspection ========== */
+function getGrnInspectionRows() {
+  const rows = filterCategoryRows(typeof GRN_INSPECTION_DATA !== 'undefined' ? GRN_INSPECTION_DATA.receipts : []);
+  return applyStagePeriodFilter(rows, govGrnState, 'grnDate');
+}
+
+function setGrnInspectionPage(page) {
+  govGrnState.page = Math.max(1, Number(page) || 1);
+  refreshWorkflowUI();
+  document.getElementById('grnInspectionTable')?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+}
+
+function renderGrnInspectionStage(canEdit = true) {
+  const data = typeof GRN_INSPECTION_DATA !== 'undefined' ? GRN_INSPECTION_DATA : null;
+  if (!data) return `<div class="need-api-empty"><p>GRN &amp; inspection data could not be loaded.</p></div>`;
+  const rows = getGrnInspectionRows();
+  const paged = paginateItems(rows, govGrnState.page, 10);
+  govGrnState.page = paged.page;
+  const accepted = rows.filter(r => r.status === 'Accepted').length;
+  const inQa = rows.filter(r => r.status === 'Under inspection' || r.status === 'Partial receipt').length;
+  const awaiting = rows.filter(r => r.status === 'Awaiting delivery').length;
+  const periodLabel = getWfPeriodFilterLabel(govGrnState);
+
+  return `<div class="tender-prep-stage">
+    <div class="indent-mode-banner">
+      <div>
+        <strong>GRN &amp; inspection — receipt, QA &amp; acceptance</strong>
+        <p>${data.meta.note}</p>
+      </div>
+      <span class="badge badge-info"><i class="fa-solid fa-calendar-days"></i> ${periodLabel}</span>
+    </div>
+
+    ${renderWorkflowPeriodFilter('grn', govGrnState)}
+
+    <div class="budget-pr-summary">
+      <div class="budget-pr-chip"><span>Accepted</span><strong>${accepted}</strong></div>
+      <div class="budget-pr-chip"><span>Under inspection</span><strong>${inQa}</strong></div>
+      <div class="budget-pr-chip"><span>Awaiting delivery</span><strong>${awaiting}</strong></div>
+      <div class="budget-pr-chip"><span>Shown</span><strong>${rows.length}</strong></div>
+      <div class="budget-pr-chip"><span>Last updated</span><strong>${data.meta.lastUpdated}</strong></div>
+    </div>
+
+    <section class="budget-section">
+      <div class="budget-section-head">
+        <h4><i class="fa-solid fa-route"></i> How GRN &amp; inspection works</h4>
+        <p>From goods receipt against PO to quality testing, batch verification and acceptance certificate.</p>
+      </div>
+      ${renderProcessSteps(data.processSteps)}
+    </section>
+
+    <section class="budget-section" id="grnInspectionTable">
+      <div class="budget-section-head">
+        <h4><i class="fa-solid fa-table"></i> GRNs — status by category &amp; division</h4>
+        <p>State-wise / division-wise goods receipts across Drugs, Equipment and other categories. Click a row for QA, batch and acceptance details.</p>
+      </div>
+      ${renderCategoryCountStrip(rows)}
+      <div class="consol-detail-table-wrap">
+        <table class="data-table consol-detail-table tender-prep-table">
+          <thead>
+            <tr>
+              <th>GRN ID</th>
+              <th>Tender / PO</th>
+              <th>State / Division</th>
+              <th>Category</th>
+              <th>Vendor</th>
+              <th>Status</th>
+              <th>QA</th>
+              <th>Est. value</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${paged.items.length ? paged.items.map(r => `
+              <tr class="tender-prep-row" onclick="openGrnInspectionDetail('${r.id}')" title="View GRN details">
+                <td><strong>${r.id}</strong></td>
+                <td>${r.title}<br><span class="cell-sub">${r.poId}</span></td>
+                <td>${r.state}<br><span class="cell-sub">${r.division}</span></td>
+                <td>${r.category}</td>
+                <td>${r.vendor}</td>
+                <td><span class="badge badge-${needStatusBadge(r.status)}">${r.status}</span></td>
+                <td><span class="badge badge-${needStatusBadge(r.qaStatus)}">${r.qaStatus}</span></td>
+                <td>${r.value}</td>
+              </tr>
+            `).join('') : `<tr><td colspan="8" style="text-align:center;color:#64748b;padding:1.25rem">No GRNs match the selected category and period.</td></tr>`}
+          </tbody>
+        </table>
+      </div>
+      ${renderPaginationControls(paged.page, paged.totalPages, paged.total, paged.from, paged.to, 'setGrnInspectionPage')}
+    </section>
+  </div>`;
+}
+
+function openGrnInspectionDetail(grnId) {
+  const r = (typeof GRN_INSPECTION_DATA !== 'undefined' ? GRN_INSPECTION_DATA.receipts : []).find(g => g.id === grnId);
+  if (!r) return;
+  openModal(`${r.id} — GRN & inspection`, `
+    <div class="consol-detail-modal">
+      <p class="consol-detail-lead">${r.title} · ${r.category} · ${r.state} (${r.division})</p>
+      <div class="consol-detail-stats" style="grid-template-columns:repeat(4,minmax(0,1fr))">
+        <div class="consol-detail-stat"><span>Status</span><strong><span class="badge badge-${needStatusBadge(r.status)}">${r.status}</span></strong></div>
+        <div class="consol-detail-stat"><span>Vendor</span><strong>${r.vendor}</strong></div>
+        <div class="consol-detail-stat"><span>QA</span><strong><span class="badge badge-${needStatusBadge(r.qaStatus)}">${r.qaStatus}</span></strong></div>
+        <div class="consol-detail-stat"><span>Est. value</span><strong>${r.value}</strong></div>
+      </div>
+      <h4 class="budget-subhead">Receipt &amp; quantities</h4>
+      <div class="consol-detail-table-wrap" style="margin-bottom:1rem">
+        <table class="data-table consol-detail-table">
+          <tbody>
+            <tr><td>PO ID</td><td><strong>${r.poId}</strong></td></tr>
+            <tr><td>Tender ID</td><td><strong>${r.tenderId}</strong></td></tr>
+            <tr><td>GRN date</td><td><strong>${r.grnDate}</strong></td></tr>
+            <tr><td>Ordered</td><td><strong>${r.qtyOrdered}</strong></td></tr>
+            <tr><td>Received</td><td><strong>${r.qtyReceived}</strong></td></tr>
+            <tr><td>Accepted</td><td><strong>${r.qtyAccepted}</strong></td></tr>
+            <tr><td>Rejected</td><td><strong>${r.qtyRejected}</strong></td></tr>
+          </tbody>
+        </table>
+      </div>
+      <h4 class="budget-subhead">Batch verification &amp; acceptance</h4>
+      <div class="consol-detail-table-wrap" style="margin-bottom:1rem">
+        <table class="data-table consol-detail-table">
+          <tbody>
+            <tr><td>Batch / serial</td><td><strong>${r.batchNo}</strong></td></tr>
+            <tr><td>Expiry</td><td><strong>${r.expiry}</strong></td></tr>
+            <tr><td>Inspector</td><td><strong>${r.inspector}</strong></td></tr>
+            <tr><td>Acceptance certificate</td><td><strong>${r.acceptanceCert}</strong></td></tr>
+            <tr><td>Remarks</td><td>${r.remarks}</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <div class="modal-inline-actions">
+        <button type="button" class="btn btn-outline" onclick="modalGoBack()"><i class="fa-solid fa-arrow-left"></i> Back</button>
+      </div>
+    </div>
+  `, { wide: true, large: true, extraWide: true });
+}
+
+/* ========== Stage 12 Invoice Matching ========== */
+function getInvoiceMatchingRows() {
+  const rows = filterCategoryRows(typeof INVOICE_MATCHING_DATA !== 'undefined' ? INVOICE_MATCHING_DATA.invoices : []);
+  return applyStagePeriodFilter(rows, govInvoiceState, 'invoiceDate');
+}
+
+function setInvoiceMatchingPage(page) {
+  govInvoiceState.page = Math.max(1, Number(page) || 1);
+  refreshWorkflowUI();
+  document.getElementById('invoiceMatchingTable')?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+}
+
+function renderInvoiceMatchingStage(canEdit = true) {
+  const data = typeof INVOICE_MATCHING_DATA !== 'undefined' ? INVOICE_MATCHING_DATA : null;
+  if (!data) return `<div class="need-api-empty"><p>Invoice matching data could not be loaded.</p></div>`;
+  const rows = getInvoiceMatchingRows();
+  const paged = paginateItems(rows, govInvoiceState.page, 10);
+  govInvoiceState.page = paged.page;
+  const matched = rows.filter(r => r.status === 'Matched').length;
+  const issues = rows.filter(r => r.status === 'Mismatch' || r.status === 'Rejected' || r.status === 'Under match').length;
+  const awaiting = rows.filter(r => r.status === 'Awaiting GRN').length;
+  const periodLabel = getWfPeriodFilterLabel(govInvoiceState);
+
+  return `<div class="tender-prep-stage">
+    <div class="indent-mode-banner">
+      <div>
+        <strong>Invoice matching — PO, GRN &amp; invoice</strong>
+        <p>${data.meta.note}</p>
+      </div>
+      <span class="badge badge-info"><i class="fa-solid fa-calendar-days"></i> ${periodLabel}</span>
+    </div>
+
+    ${renderWorkflowPeriodFilter('invoice', govInvoiceState)}
+
+    <div class="budget-pr-summary">
+      <div class="budget-pr-chip"><span>Matched</span><strong>${matched}</strong></div>
+      <div class="budget-pr-chip"><span>Issues / in review</span><strong>${issues}</strong></div>
+      <div class="budget-pr-chip"><span>Awaiting GRN</span><strong>${awaiting}</strong></div>
+      <div class="budget-pr-chip"><span>Shown</span><strong>${rows.length}</strong></div>
+      <div class="budget-pr-chip"><span>Last updated</span><strong>${data.meta.lastUpdated}</strong></div>
+    </div>
+
+    <section class="budget-section">
+      <div class="budget-section-head">
+        <h4><i class="fa-solid fa-route"></i> How three-way matching works</h4>
+        <p>Compare PO, GRN and invoice lines before sending cleared invoices to payment.</p>
+      </div>
+      ${renderProcessSteps(data.processSteps)}
+    </section>
+
+    <section class="budget-section" id="invoiceMatchingTable">
+      <div class="budget-section-head">
+        <h4><i class="fa-solid fa-table"></i> Invoices generated — status by category &amp; division</h4>
+        <p>How many invoices are generated, with status state-wise across Drugs, Equipment and other categories. Click a row for three-way match details.</p>
+      </div>
+      ${renderCategoryCountStrip(rows)}
+      <div class="consol-detail-table-wrap">
+        <table class="data-table consol-detail-table tender-prep-table">
+          <thead>
+            <tr>
+              <th>Invoice</th>
+              <th>Tender / PO</th>
+              <th>State / Division</th>
+              <th>Category</th>
+              <th>Vendor</th>
+              <th>Status</th>
+              <th>Match</th>
+              <th>Est. value</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${paged.items.length ? paged.items.map(r => `
+              <tr class="tender-prep-row" onclick="openInvoiceMatchingDetail('${r.id}')" title="View invoice match details">
+                <td><strong>${r.id}</strong></td>
+                <td>${r.title}<br><span class="cell-sub">${r.poId}</span></td>
+                <td>${r.state}<br><span class="cell-sub">${r.division}</span></td>
+                <td>${r.category}</td>
+                <td>${r.vendor}</td>
+                <td><span class="badge badge-${needStatusBadge(r.status)}">${r.status}</span></td>
+                <td>${r.matchScore}</td>
+                <td>${r.value}</td>
+              </tr>
+            `).join('') : `<tr><td colspan="8" style="text-align:center;color:#64748b;padding:1.25rem">No invoices match the selected category and period.</td></tr>`}
+          </tbody>
+        </table>
+      </div>
+      ${renderPaginationControls(paged.page, paged.totalPages, paged.total, paged.from, paged.to, 'setInvoiceMatchingPage')}
+    </section>
+  </div>`;
+}
+
+function openInvoiceMatchingDetail(invId) {
+  const r = (typeof INVOICE_MATCHING_DATA !== 'undefined' ? INVOICE_MATCHING_DATA.invoices : []).find(i => i.id === invId);
+  if (!r) return;
+  openModal(`${r.id} — Invoice matching`, `
+    <div class="consol-detail-modal">
+      <p class="consol-detail-lead">${r.title} · ${r.category} · ${r.state} (${r.division})</p>
+      <div class="consol-detail-stats" style="grid-template-columns:repeat(4,minmax(0,1fr))">
+        <div class="consol-detail-stat"><span>Status</span><strong><span class="badge badge-${needStatusBadge(r.status)}">${r.status}</span></strong></div>
+        <div class="consol-detail-stat"><span>Match score</span><strong>${r.matchScore}</strong></div>
+        <div class="consol-detail-stat"><span>Finance</span><strong><span class="badge badge-${needStatusBadge(r.financeStatus)}">${r.financeStatus}</span></strong></div>
+        <div class="consol-detail-stat"><span>Invoice value</span><strong>${r.value}</strong></div>
+      </div>
+      <div class="consol-detail-table-wrap">
+        <table class="data-table consol-detail-table">
+          <tbody>
+            <tr><td>PO ID</td><td><strong>${r.poId}</strong></td></tr>
+            <tr><td>GRN ID</td><td><strong>${r.grnId}</strong></td></tr>
+            <tr><td>Tender ID</td><td><strong>${r.tenderId}</strong></td></tr>
+            <tr><td>Vendor</td><td><strong>${r.vendor}</strong></td></tr>
+            <tr><td>Invoice date</td><td><strong>${r.invoiceDate}</strong></td></tr>
+            <tr><td>Tax invoice No.</td><td><strong>${r.taxInvoice}</strong></td></tr>
+            <tr><td>PO value</td><td><strong>${r.poValue}</strong></td></tr>
+            <tr><td>GRN value</td><td><strong>${r.grnValue}</strong></td></tr>
+            <tr><td>Deductions / LD</td><td><strong>${r.deductions}</strong></td></tr>
+            <tr><td>Remarks</td><td>${r.remarks}</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <div class="modal-inline-actions">
+        <button type="button" class="btn btn-outline" onclick="modalGoBack()"><i class="fa-solid fa-arrow-left"></i> Back</button>
+      </div>
+    </div>
+  `, { wide: true, large: true });
+}
+
+/* ========== Stage 13 Payment ========== */
+function getPaymentStageRows() {
+  const rows = filterCategoryRows(typeof PAYMENT_STAGE_DATA !== 'undefined' ? PAYMENT_STAGE_DATA.payments : []);
+  return applyStagePeriodFilter(rows, govPaymentState, 'paymentDate');
+}
+
+function setPaymentStagePage(page) {
+  govPaymentState.page = Math.max(1, Number(page) || 1);
+  refreshWorkflowUI();
+  document.getElementById('paymentStageTable')?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+}
+
+function renderPaymentStage(canEdit = true) {
+  const data = typeof PAYMENT_STAGE_DATA !== 'undefined' ? PAYMENT_STAGE_DATA : null;
+  if (!data) return `<div class="need-api-empty"><p>Payment data could not be loaded.</p></div>`;
+  const rows = getPaymentStageRows();
+  const paged = paginateItems(rows, govPaymentState.page, 10);
+  govPaymentState.page = paged.page;
+  const paid = rows.filter(r => r.status === 'Paid').length;
+  const inProcess = rows.filter(r => r.status === 'In process' || r.status === 'Approved').length;
+  const held = rows.filter(r => r.status === 'On hold' || r.status === 'Rejected').length;
+  const periodLabel = getWfPeriodFilterLabel(govPaymentState);
+
+  return `<div class="tender-prep-stage">
+    <div class="indent-mode-banner">
+      <div>
+        <strong>Payment — release within contract terms</strong>
+        <p>${data.meta.note}</p>
+      </div>
+      <span class="badge badge-info"><i class="fa-solid fa-calendar-days"></i> ${periodLabel}</span>
+    </div>
+
+    ${renderWorkflowPeriodFilter('payment', govPaymentState)}
+
+    <div class="budget-pr-summary">
+      <div class="budget-pr-chip"><span>Paid</span><strong>${paid}</strong></div>
+      <div class="budget-pr-chip"><span>In process</span><strong>${inProcess}</strong></div>
+      <div class="budget-pr-chip"><span>On hold / rejected</span><strong>${held}</strong></div>
+      <div class="budget-pr-chip"><span>Shown</span><strong>${rows.length}</strong></div>
+      <div class="budget-pr-chip"><span>Last updated</span><strong>${data.meta.lastUpdated}</strong></div>
+    </div>
+
+    <section class="budget-section">
+      <div class="budget-section-head">
+        <h4><i class="fa-solid fa-route"></i> How payment is processed</h4>
+        <p>From finance-cleared invoices to treasury release and credit confirmation.</p>
+      </div>
+      ${renderProcessSteps(data.processSteps)}
+    </section>
+
+    <section class="budget-section" id="paymentStageTable">
+      <div class="budget-section-head">
+        <h4><i class="fa-solid fa-table"></i> Payments generated — status by category &amp; division</h4>
+        <p>How many payments are generated, with status state-wise across Drugs, Equipment and other categories. Click a row for LD, UTR and closure details.</p>
+      </div>
+      ${renderCategoryCountStrip(rows)}
+      <div class="consol-detail-table-wrap">
+        <table class="data-table consol-detail-table tender-prep-table">
+          <thead>
+            <tr>
+              <th>Payment</th>
+              <th>Tender / Invoice</th>
+              <th>State / Division</th>
+              <th>Category</th>
+              <th>Vendor</th>
+              <th>Status</th>
+              <th>Mode</th>
+              <th>Net payable</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${paged.items.length ? paged.items.map(r => `
+              <tr class="tender-prep-row" onclick="openPaymentStageDetail('${r.id}')" title="View payment details">
+                <td><strong>${r.id}</strong></td>
+                <td>${r.title}<br><span class="cell-sub">${r.invoiceId}</span></td>
+                <td>${r.state}<br><span class="cell-sub">${r.division}</span></td>
+                <td>${r.category}</td>
+                <td>${r.vendor}</td>
+                <td><span class="badge badge-${needStatusBadge(r.status)}">${r.status}</span></td>
+                <td>${r.mode}</td>
+                <td>${r.netPayable}</td>
+              </tr>
+            `).join('') : `<tr><td colspan="8" style="text-align:center;color:#64748b;padding:1.25rem">No payments match the selected category and period.</td></tr>`}
+          </tbody>
+        </table>
+      </div>
+      ${renderPaginationControls(paged.page, paged.totalPages, paged.total, paged.from, paged.to, 'setPaymentStagePage')}
+    </section>
+  </div>`;
+}
+
+function openPaymentStageDetail(payId) {
+  const r = (typeof PAYMENT_STAGE_DATA !== 'undefined' ? PAYMENT_STAGE_DATA.payments : []).find(p => p.id === payId);
+  if (!r) return;
+  openModal(`${r.id} — Payment`, `
+    <div class="consol-detail-modal">
+      <p class="consol-detail-lead">${r.title} · ${r.category} · ${r.state} (${r.division})</p>
+      <div class="consol-detail-stats" style="grid-template-columns:repeat(4,minmax(0,1fr))">
+        <div class="consol-detail-stat"><span>Status</span><strong><span class="badge badge-${needStatusBadge(r.status)}">${r.status}</span></strong></div>
+        <div class="consol-detail-stat"><span>Vendor</span><strong>${r.vendor}</strong></div>
+        <div class="consol-detail-stat"><span>Net payable</span><strong>${r.netPayable}</strong></div>
+        <div class="consol-detail-stat"><span>Payment date</span><strong>${r.paymentDate}</strong></div>
+      </div>
+      <div class="consol-detail-table-wrap">
+        <table class="data-table consol-detail-table">
+          <tbody>
+            <tr><td>Invoice ID</td><td><strong>${r.invoiceId}</strong></td></tr>
+            <tr><td>PO ID</td><td><strong>${r.poId}</strong></td></tr>
+            <tr><td>Tender ID</td><td><strong>${r.tenderId}</strong></td></tr>
+            <tr><td>Gross amount</td><td><strong>${r.gross}</strong></td></tr>
+            <tr><td>LD / deductions</td><td><strong>${r.ld}</strong></td></tr>
+            <tr><td>Mode</td><td><strong>${r.mode}</strong></td></tr>
+            <tr><td>UTR / reference</td><td><strong>${r.utr}</strong></td></tr>
+            <tr><td>Due date</td><td><strong>${r.dueDate}</strong></td></tr>
+            <tr><td>Remarks</td><td>${r.remarks}</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <div class="modal-inline-actions">
+        <button type="button" class="btn btn-outline" onclick="modalGoBack()"><i class="fa-solid fa-arrow-left"></i> Back</button>
+      </div>
+    </div>
+  `, { wide: true, large: true });
+}
+
+
 function renderNeedIdentificationStage(canEdit = true) {
   const data = getNeedIdentificationData();
   if (!data) {
@@ -3969,7 +4576,6 @@ function renderNeedIdentificationStage(canEdit = true) {
 
     <div class="wf-actions mt-2">
       <button class="btn btn-outline" onclick="refreshNeedIdentificationApi()"${disabled}><i class="fa-solid fa-arrows-rotate"></i> Re-sync from API</button>
-      <button class="btn btn-outline" onclick="openAuditTrailModal()">Audit Trail</button>
     </div>
   </div>`;
 }
@@ -4315,6 +4921,22 @@ function renderWorkflowDetail(step, canEdit = true) {
     return renderAwardStage(canEdit);
   }
 
+  if (currentRole === 'gov' && step.id === 10) {
+    return renderPurchaseOrderStage(canEdit);
+  }
+
+  if (currentRole === 'gov' && step.id === 11) {
+    return renderGrnInspectionStage(canEdit);
+  }
+
+  if (currentRole === 'gov' && step.id === 12) {
+    return renderInvoiceMatchingStage(canEdit);
+  }
+
+  if (currentRole === 'gov' && step.id === 13) {
+    return renderPaymentStage(canEdit);
+  }
+
   if (currentRole === 'vendor' && step.id === 1) {
     const regCategories = getRegistrationCategories();
     const defaultCategory = regCategories.includes('Drugs') ? 'Drugs' : regCategories[0];
@@ -4328,7 +4950,6 @@ function renderWorkflowDetail(step, canEdit = true) {
     </div>
     <div class="wf-actions mt-2">
       <button class="btn btn-primary"${disabled} onclick="saveWorkflowStage(1)">Save Registration Details</button>
-      <button class="btn btn-outline" onclick="openAuditTrailModal()">Audit Trail</button>
     </div>`;
   }
 
@@ -4599,12 +5220,8 @@ function renderWorkflowDetail(step, canEdit = true) {
   const stageActions = canEdit
     ? `<button class="btn btn-primary" onclick="saveWorkflowStage(${step.id})">Save Stage Details</button>`
     : '';
-  return `<div class="wf-actions">
-    ${stageActions}
-    <button class="btn btn-outline" onclick="openLifecycleGuideModal(${step.id})">Stage ${step.id} Guide</button>
-    <button class="btn btn-outline" onclick="openAuditTrailModal()">Audit Trail</button>
-    <button class="btn btn-outline" onclick="openLifecycleGuideModal()"><i class="fa-solid fa-book"></i> Full Lifecycle Guide</button>
-  </div>`;
+  // No Stage Guide / Audit Trail / Full Lifecycle Guide on any workflow stage
+  return stageActions ? `<div class="wf-actions">${stageActions}</div>` : '';
 }
 
 function completeVendorStage(id) {
@@ -6948,6 +7565,10 @@ function setCategory(cat) {
   govBidEvalState.page = 1;
   govContractState.page = 1;
   govAwardState.page = 1;
+  govPoState.page = 1;
+  govGrnState.page = 1;
+  govInvoiceState.page = 1;
+  govPaymentState.page = 1;
   govNeedState.period = 'all';
   govConsolidationState.period = 'all';
   govBudgetState.period = 'all';
@@ -6955,6 +7576,10 @@ function setCategory(cat) {
   govBidEvalState.period = 'all';
   govContractState.period = 'all';
   govAwardState.period = 'all';
+  govPoState.period = 'all';
+  govGrnState.period = 'all';
+  govInvoiceState.period = 'all';
+  govPaymentState.period = 'all';
   updatePageMeta();
   if (PAGES_WITH_CATEGORY.has(currentPage)) {
     updateCategoryBarInPlace();

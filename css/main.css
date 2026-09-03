@@ -3470,6 +3470,111 @@ body {
   margin-bottom: 0.85rem;
 }
 
+/* Compact category count strip (replaces bulky stat cards) */
+.cat-count-strip {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: stretch;
+  margin: 0 0 0.85rem;
+  border: 1px solid #dbe3ea;
+  border-radius: 8px;
+  background: #fff;
+  overflow: hidden;
+}
+
+.cat-count-item {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 0.4rem;
+  padding: 0.42rem 0.85rem;
+  border-right: 1px solid #e8eef3;
+  line-height: 1.2;
+}
+
+.cat-count-item:last-child {
+  border-right: none;
+}
+
+.cat-count-item em {
+  font-style: normal;
+  font-size: 0.68rem;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: #64748b;
+}
+
+.cat-count-item strong {
+  font-size: 0.92rem;
+  font-weight: 700;
+  color: #003D5D;
+  font-variant-numeric: tabular-nums;
+}
+
+.cat-count-item--total {
+  background: linear-gradient(180deg, #f8fafc 0%, #f1f5f9 100%);
+}
+
+.cat-count-item--total strong {
+  color: #0f172a;
+}
+
+.tender-prep-table.data-table td,
+.consol-detail-table.tender-prep-table td {
+  padding: 0.65rem 0.85rem;
+}
+
+.wf-lifecycle-complete {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.85rem;
+  margin: 1rem 0 0;
+  padding: 0.95rem 1.05rem;
+  border: 1px solid #bbf7d0;
+  border-radius: 12px;
+  background: linear-gradient(180deg, #f0fdf4 0%, #ecfdf5 100%);
+}
+
+.wf-lifecycle-complete-icon {
+  width: 2.1rem;
+  height: 2.1rem;
+  border-radius: 999px;
+  display: grid;
+  place-items: center;
+  background: #16a34a;
+  color: #fff;
+  flex-shrink: 0;
+}
+
+.wf-lifecycle-complete strong {
+  display: block;
+  color: #14532d;
+  font-size: 0.95rem;
+  margin-bottom: 0.15rem;
+}
+
+.wf-lifecycle-complete p {
+  margin: 0;
+  font-size: 0.84rem;
+  color: #166534;
+  line-height: 1.45;
+}
+
+.wf-lifecycle-complete .btn {
+  margin-left: auto;
+  flex-shrink: 0;
+  align-self: center;
+}
+
+@media (max-width: 720px) {
+  .wf-lifecycle-complete {
+    flex-direction: column;
+  }
+  .wf-lifecycle-complete .btn {
+    margin-left: 0;
+  }
+}
+
 .tender-prep-table {
   min-width: 860px;
 }
