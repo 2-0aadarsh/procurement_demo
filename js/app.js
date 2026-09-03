@@ -176,7 +176,13 @@ const govTenderPrepState = {
 
 /** Stage 7–13 gov states (period filters + pagination) */
 const govBidEvalState = { page: 1, year: 'all', viewBy: 'quarter', period: 'all' };
-const govContractState = { page: 1, year: 'all', viewBy: 'quarter', period: 'all' };
+const govContractState = {
+  page: 1,
+  year: 'all',
+  viewBy: 'quarter',
+  period: 'all',
+  approvals: {} // contractId -> saved form decision
+};
 const govAwardState = { page: 1, year: 'all', viewBy: 'quarter', period: 'all' };
 const govPoState = { page: 1, year: 'all', viewBy: 'quarter', period: 'all' };
 const govGrnState = { page: 1, year: 'all', viewBy: 'quarter', period: 'all' };
@@ -1756,6 +1762,8 @@ function needStatusBadge(status) {
     'Agreement signed': 'success',
     'NOA issued': 'info',
     'Awaiting L1 lock': 'warning',
+    'Clarification sought': 'warning',
+    'Not approved': 'danger',
     'Award active': 'success',
     'PBG pending': 'warning',
     'LOA issued': 'info',
@@ -3643,7 +3651,7 @@ function renderContractApprovalStage(canEdit = true) {
     <div class="indent-mode-banner">
       <div>
         <strong>Contract approval — L1, NOA &amp; agreement</strong>
-        <p>${data.meta.note}</p>
+        <p>${data.meta.note} Open each tender to complete Form CA-01 (Resource Manager / competent authority).</p>
       </div>
       <span class="badge badge-info"><i class="fa-solid fa-calendar-days"></i> ${periodLabel}</span>
     </div>
@@ -3667,7 +3675,7 @@ function renderContractApprovalStage(canEdit = true) {
     <section class="budget-section" id="contractApprovalTable">
       <div class="budget-section-head">
         <h4><i class="fa-solid fa-table"></i> Contract approvals — status by category &amp; division</h4>
-        <p>Click a row for L1, NOA, legal / finance clearance and agreement details.</p>
+        <p>Open each tender row to review L1 / NOA details and complete the <strong>Contract Approval Form (CA-01)</strong> as Resource Manager / competent authority.</p>
       </div>
       ${renderCategoryCountStrip(rows)}
       <div class="consol-detail-table-wrap">
@@ -3681,11 +3689,17 @@ function renderContractApprovalStage(canEdit = true) {
               <th>L1 bidder</th>
               <th>Status</th>
               <th>Est. value</th>
+              <th>Action</th>
             </tr>
           </thead>
           <tbody>
-            ${paged.items.length ? paged.items.map(r => `
-              <tr class="tender-prep-row" onclick="openContractApprovalDetail('${r.id}')" title="View contract details">
+            ${paged.items.length ? paged.items.map(r => {
+              const saved = govContractState.approvals[r.id];
+              const actionLabel = saved?.decision === 'Approved' || r.status === 'Agreement signed'
+                ? 'View form'
+                : 'Open approval form';
+              return `
+              <tr class="tender-prep-row" onclick="openContractApprovalDetail('${r.id}')" title="Open contract approval form">
                 <td><strong>${r.id}</strong></td>
                 <td>${r.title}<br><span class="cell-sub">${r.tenderId}</span></td>
                 <td>${r.state}<br><span class="cell-sub">${r.division}</span></td>
@@ -3693,8 +3707,9 @@ function renderContractApprovalStage(canEdit = true) {
                 <td>${r.l1Vendor}</td>
                 <td><span class="badge badge-${needStatusBadge(r.status)}">${r.status}</span></td>
                 <td>${r.value}</td>
-              </tr>
-            `).join('') : `<tr><td colspan="7" style="text-align:center;color:#64748b;padding:1.25rem">No contracts match the selected category and period.</td></tr>`}
+                <td><span class="cell-link">${actionLabel} <i class="fa-solid fa-arrow-right"></i></span></td>
+              </tr>`;
+            }).join('') : `<tr><td colspan="8" style="text-align:center;color:#64748b;padding:1.25rem">No contracts match the selected category and period.</td></tr>`}
           </tbody>
         </table>
       </div>
@@ -3703,11 +3718,52 @@ function renderContractApprovalStage(canEdit = true) {
   </div>`;
 }
 
+function getContractApprovalFormDefaults(r) {
+  const saved = govContractState.approvals[r.id] || {};
+  const alreadySigned = r.status === 'Agreement signed';
+  return {
+    decision: saved.decision || (alreadySigned ? 'Approved' : 'Pending review'),
+    authority: saved.authority || (authUser?.name || 'Dr. Rajesh Sharma') + ' — Resource Manager',
+    designation: saved.designation || 'Competent Authority / Contract Approving Officer',
+    office: saved.office || `DoPHFW · ${r.division} Division, Madhya Pradesh`,
+    sanctionRef: saved.sanctionRef || `SAN/MP/${r.category.slice(0, 3).toUpperCase()}/2026/${r.id.slice(-3)}`,
+    contractPeriod: saved.contractPeriod || '24 months from agreement date',
+    deliveryTerms: saved.deliveryTerms || 'As per NIT / rate-contract schedule',
+    pbgRequired: saved.pbgRequired || 'Yes — 5% to 10% of contract value (SFMS / e-BG)',
+    ldClause: saved.ldClause || 'Liquidated damages as per GFR / NIT for delayed supply',
+    priceFall: saved.priceFall || 'Yes — price fall clause applicable',
+    remarks: saved.remarks || r.remarks || '',
+    checks: saved.checks || {
+      evalDone: alreadySigned || r.status !== 'Awaiting L1 lock',
+      l1Confirmed: alreadySigned || (r.l1Vendor && !String(r.l1Vendor).includes('Pending')),
+      budgetOk: alreadySigned || r.financeStatus === 'Cleared',
+      legalOk: alreadySigned || r.legalStatus === 'Cleared',
+      noaOk: alreadySigned || !!(r.noaNo && r.noaNo !== '—'),
+      draftOk: alreadySigned || !!(r.agreementNo && r.agreementNo !== '—'),
+      gfrOk: alreadySigned,
+      conflictOk: alreadySigned
+    },
+    decidedOn: saved.decidedOn || (alreadySigned ? r.signedOn : ''),
+    readonly: alreadySigned || saved.decision === 'Approved' || saved.decision === 'Rejected'
+  };
+}
+
 function openContractApprovalDetail(contractId) {
   const r = (typeof CONTRACT_APPROVAL_DATA !== 'undefined' ? CONTRACT_APPROVAL_DATA.contracts : []).find(c => c.id === contractId);
   if (!r) return;
-  openModal(`${r.id} — Contract approval`, `
-    <div class="consol-detail-modal">
+  const f = getContractApprovalFormDefaults(r);
+  const locked = f.readonly;
+  const check = (id, label, detail, checked) => `
+    <label class="ca-check-item ${locked ? 'is-locked' : ''}">
+      <input type="checkbox" id="caChk_${id}" ${checked ? 'checked' : ''} ${locked ? 'disabled' : ''}>
+      <span>
+        <strong>${label}</strong>
+        <small>${detail}</small>
+      </span>
+    </label>`;
+
+  openModal(`${r.id} — Contract Approval Form (CA-01)`, `
+    <div class="consol-detail-modal ca-form-modal">
       <p class="consol-detail-lead">${r.title} · ${r.category} · ${r.state} (${r.division})</p>
       <div class="consol-detail-stats" style="grid-template-columns:repeat(4,minmax(0,1fr))">
         <div class="consol-detail-stat"><span>Status</span><strong><span class="badge badge-${needStatusBadge(r.status)}">${r.status}</span></strong></div>
@@ -3715,25 +3771,204 @@ function openContractApprovalDetail(contractId) {
         <div class="consol-detail-stat"><span>NOA</span><strong>${r.noaNo}</strong></div>
         <div class="consol-detail-stat"><span>Est. value</span><strong>${r.value}</strong></div>
       </div>
-      <div class="consol-detail-table-wrap">
+
+      <div class="ca-policy-note">
+        <i class="fa-solid fa-scale-balanced"></i>
+        <div>
+          <strong>Government guidelines (GFR 2017 · DoPHFW procurement)</strong>
+          <p>Contract approval must confirm L1 from completed bid evaluation, budget / administrative sanction, legal vetting, and agreement terms <em>before</em> Purchase Order generation. Competent authority records the decision on Form CA-01.</p>
+        </div>
+      </div>
+
+      <h4 class="budget-subhead">1. Tender &amp; award summary</h4>
+      <div class="consol-detail-table-wrap" style="margin-bottom:1rem">
         <table class="data-table consol-detail-table">
           <tbody>
             <tr><td>Tender ID</td><td><strong>${r.tenderId}</strong></td></tr>
-            <tr><td>NOA date</td><td><strong>${r.noaDate}</strong></td></tr>
+            <tr><td>Contract ID</td><td><strong>${r.id}</strong></td></tr>
+            <tr><td>NOA No. / date</td><td><strong>${r.noaNo}</strong> · ${r.noaDate}</td></tr>
             <tr><td>Agreement No.</td><td><strong>${r.agreementNo}</strong></td></tr>
             <tr><td>Legal clearance</td><td><span class="badge badge-${needStatusBadge(r.legalStatus)}">${r.legalStatus}</span></td></tr>
             <tr><td>Finance clearance</td><td><span class="badge badge-${needStatusBadge(r.financeStatus)}">${r.financeStatus}</span></td></tr>
             <tr><td>Signed on</td><td><strong>${r.signedOn}</strong></td></tr>
-            <tr><td>Remarks</td><td>${r.remarks}</td></tr>
-            <tr><td>Flow</td><td>Bid evaluation → L1 identified → NOA issued → Agreement approved</td></tr>
           </tbody>
         </table>
       </div>
-      <div class="modal-inline-actions">
-        <button type="button" class="btn btn-outline" onclick="modalGoBack()"><i class="fa-solid fa-arrow-left"></i> Back</button>
+
+      <h4 class="budget-subhead">2. Pre-approval checklist (mandatory)</h4>
+      <p class="ca-form-hint">Confirm each item before recording approval. Items follow standard store / contract cell practice under GFR.</p>
+      <div class="ca-checklist">
+        ${check('evalDone', 'Bid evaluation complete', 'Technical and financial evaluation sheet closed; L1 / H1 declared.', f.checks.evalDone)}
+        ${check('l1Confirmed', 'L1 / H1 bidder confirmed', 'Selected bidder matches evaluation outcome and NOA.', f.checks.l1Confirmed)}
+        ${check('budgetOk', 'Budget / financial sanction available', 'Administrative & financial sanction covers the contract value.', f.checks.budgetOk)}
+        ${check('legalOk', 'Legal vetting of draft agreement', 'Legal cell has cleared or noted conditions on the draft.', f.checks.legalOk)}
+        ${check('noaOk', 'NOA issued to selected bidder', 'Notification of Award communicated with value and timelines.', f.checks.noaOk)}
+        ${check('draftOk', 'Agreement draft ready', 'Contract / rate-contract draft prepared from NIT and NOA terms.', f.checks.draftOk)}
+        ${check('gfrOk', 'GFR / NIT conditions incorporated', 'PBG, LD, price-fall, delivery and payment terms aligned to NIT / GFR.', f.checks.gfrOk)}
+        ${check('conflictOk', 'No conflict / integrity declaration', 'No pending integrity or debarment flag against the bidder for this award.', f.checks.conflictOk)}
       </div>
+
+      <h4 class="budget-subhead">3. Contract Approval Form — CA-01</h4>
+      <div class="form-grid wf-form-grid ca-form-grid">
+        <div class="form-group"><label>${reqLabel('Approving authority')}</label>
+          <input id="caAuthority" type="text" value="${f.authority}" ${locked ? 'readonly' : ''}>
+        </div>
+        <div class="form-group"><label>${reqLabel('Designation')}</label>
+          <input id="caDesignation" type="text" value="${f.designation}" ${locked ? 'readonly' : ''}>
+        </div>
+        <div class="form-group"><label>${reqLabel('Office / Division')}</label>
+          <input id="caOffice" type="text" value="${f.office}" ${locked ? 'readonly' : ''}>
+        </div>
+        <div class="form-group"><label>${reqLabel('Sanction / budget reference')}</label>
+          <input id="caSanction" type="text" value="${f.sanctionRef}" ${locked ? 'readonly' : ''}>
+        </div>
+        <div class="form-group"><label>${reqLabel('Contract period')}</label>
+          <input id="caPeriod" type="text" value="${f.contractPeriod}" ${locked ? 'readonly' : ''}>
+        </div>
+        <div class="form-group"><label>${reqLabel('Delivery / service terms')}</label>
+          <input id="caDelivery" type="text" value="${f.deliveryTerms}" ${locked ? 'readonly' : ''}>
+        </div>
+        <div class="form-group"><label>${reqLabel('PBG requirement')}</label>
+          <input id="caPbg" type="text" value="${f.pbgRequired}" ${locked ? 'readonly' : ''}>
+        </div>
+        <div class="form-group"><label>${reqLabel('LD / penalty clause')}</label>
+          <input id="caLd" type="text" value="${f.ldClause}" ${locked ? 'readonly' : ''}>
+        </div>
+        <div class="form-group full"><label>${reqLabel('Price fall / rate-contract conditions')}</label>
+          <input id="caPriceFall" type="text" value="${f.priceFall}" ${locked ? 'readonly' : ''}>
+        </div>
+        ${locked
+          ? `<div class="form-group"><label>Decision</label><input type="text" value="${f.decision}" readonly></div>
+             <div class="form-group"><label>Decision date</label><input type="text" value="${f.decidedOn || '—'}" readonly></div>`
+          : customSelectHTML('Decision', 'caDecision', ['Pending review', 'Approved', 'Seek clarification', 'Rejected'], f.decision === 'Pending review' ? 'Pending review' : f.decision, true)}
+        <div class="form-group full"><label>${reqLabel('Remarks / conditions of approval')}</label>
+          <textarea id="caRemarks" rows="3" placeholder="Record conditions, timelines, or reasons for clarification / rejection…" ${locked ? 'readonly' : ''}>${f.remarks}</textarea>
+        </div>
+      </div>
+
+      ${locked ? `
+        <div class="ca-decision-banner ca-decision-banner--${(f.decision || '').toLowerCase().replace(/\s+/g, '-')}">
+          <i class="fa-solid fa-${f.decision === 'Approved' ? 'circle-check' : f.decision === 'Rejected' ? 'circle-xmark' : 'circle-info'}"></i>
+          <div>
+            <strong>Decision recorded: ${f.decision}</strong>
+            <p>Form CA-01 locked after decision. Review details above or return to the contract list.</p>
+          </div>
+        </div>
+        <div class="modal-inline-actions">
+          <button type="button" class="btn btn-outline" onclick="modalGoBack()"><i class="fa-solid fa-arrow-left"></i> Back to list</button>
+        </div>
+      ` : `
+        <div class="modal-inline-actions ca-form-actions">
+          <button type="button" class="btn btn-outline" onclick="modalGoBack()"><i class="fa-solid fa-arrow-left"></i> Back</button>
+          <button type="button" class="btn btn-outline" onclick="submitContractApprovalForm('${r.id}','clarify')"><i class="fa-solid fa-envelope-open-text"></i> Seek clarification</button>
+          <button type="button" class="btn btn-outline ca-btn-reject" onclick="submitContractApprovalForm('${r.id}','reject')"><i class="fa-solid fa-ban"></i> Reject</button>
+          <button type="button" class="btn btn-primary" onclick="submitContractApprovalForm('${r.id}','approve')"><i class="fa-solid fa-file-signature"></i> Approve contract</button>
+        </div>
+      `}
     </div>
-  `, { wide: true, large: true });
+  `, { wide: true, large: true, extraWide: true });
+  if (typeof initCustomSelects === 'function') initCustomSelects();
+}
+
+function captureContractApprovalForm(contractId) {
+  const checks = {
+    evalDone: !!document.getElementById('caChk_evalDone')?.checked,
+    l1Confirmed: !!document.getElementById('caChk_l1Confirmed')?.checked,
+    budgetOk: !!document.getElementById('caChk_budgetOk')?.checked,
+    legalOk: !!document.getElementById('caChk_legalOk')?.checked,
+    noaOk: !!document.getElementById('caChk_noaOk')?.checked,
+    draftOk: !!document.getElementById('caChk_draftOk')?.checked,
+    gfrOk: !!document.getElementById('caChk_gfrOk')?.checked,
+    conflictOk: !!document.getElementById('caChk_conflictOk')?.checked
+  };
+  return {
+    authority: document.getElementById('caAuthority')?.value?.trim() || '',
+    designation: document.getElementById('caDesignation')?.value?.trim() || '',
+    office: document.getElementById('caOffice')?.value?.trim() || '',
+    sanctionRef: document.getElementById('caSanction')?.value?.trim() || '',
+    contractPeriod: document.getElementById('caPeriod')?.value?.trim() || '',
+    deliveryTerms: document.getElementById('caDelivery')?.value?.trim() || '',
+    pbgRequired: document.getElementById('caPbg')?.value?.trim() || '',
+    ldClause: document.getElementById('caLd')?.value?.trim() || '',
+    priceFall: document.getElementById('caPriceFall')?.value?.trim() || '',
+    remarks: document.getElementById('caRemarks')?.value?.trim() || '',
+    checks
+  };
+}
+
+function submitContractApprovalForm(contractId, action) {
+  const r = (typeof CONTRACT_APPROVAL_DATA !== 'undefined' ? CONTRACT_APPROVAL_DATA.contracts : []).find(c => c.id === contractId);
+  if (!r) return;
+  if (r.status === 'Awaiting L1 lock') {
+    showWfAlert('L1 is not yet locked for this tender. Complete bid evaluation before contract approval.');
+    return;
+  }
+
+  const form = captureContractApprovalForm(contractId);
+  if (!form.authority || !form.designation || !form.sanctionRef || !form.remarks) {
+    showWfAlert('Please fill Approving authority, Designation, Sanction reference, and Remarks before recording a decision.');
+    return;
+  }
+
+  if (action === 'approve') {
+    const missing = Object.entries(form.checks).filter(([, v]) => !v).map(([k]) => k);
+    if (missing.length) {
+      showWfAlert('All mandatory checklist items must be ticked before approving the contract under GFR practice.');
+      return;
+    }
+    if (r.legalStatus === 'Not started' || r.financeStatus === 'Not started') {
+      showWfAlert('Legal and finance clearance should be at least under review before final contract approval.');
+      return;
+    }
+  }
+
+  const today = typeof formatDateDMY === 'function' ? formatDateDMY(APP_TODAY) : '03-09-2026';
+  let decision = 'Pending review';
+  if (action === 'approve') {
+    decision = 'Approved';
+    r.status = 'Agreement signed';
+    r.legalStatus = 'Cleared';
+    r.financeStatus = 'Cleared';
+    r.signedOn = today;
+    if (!r.agreementNo || r.agreementNo === '—' || String(r.agreementNo).startsWith('Draft')) {
+      r.agreementNo = `AGR/MP/2026/${contractId.slice(-3)}`;
+    }
+  } else if (action === 'clarify') {
+    decision = 'Seek clarification';
+    r.status = 'Clarification sought';
+  } else if (action === 'reject') {
+    decision = 'Rejected';
+    r.status = 'Not approved';
+  }
+
+  govContractState.approvals[contractId] = {
+    ...form,
+    decision,
+    decidedOn: today
+  };
+
+  refreshWorkflowUI();
+  closeModal();
+
+  const titles = {
+    approve: 'Contract approved',
+    clarify: 'Clarification sought',
+    reject: 'Contract not approved'
+  };
+  const messages = {
+    approve: `Form CA-01 recorded. Contract <strong>${contractId}</strong> for <strong>${r.title}</strong> is approved. Agreement No. <strong>${r.agreementNo}</strong>. Purchase Order may proceed after award activation.`,
+    clarify: `Clarification has been recorded on Form CA-01 for <strong>${contractId}</strong>. Update remarks were saved for the contract cell / bidder follow-up.`,
+    reject: `Rejection recorded on Form CA-01 for <strong>${contractId}</strong>. Status set to <strong>Not approved</strong>. Fresh evaluation / re-tender path may apply as per GFR.`
+  };
+
+  openModal(titles[action], `
+    <div class="sync-success-msg">
+      <div class="sync-success-icon"><i class="fa-solid fa-${action === 'approve' ? 'file-signature' : action === 'clarify' ? 'envelope-open-text' : 'ban'}"></i></div>
+      <h4>${titles[action]}</h4>
+      <p>${messages[action]}</p>
+      <p class="report-footnote" style="margin-top:0.75rem"><i class="fa-solid fa-user-tie"></i> Authority: <strong>${form.authority}</strong> · ${form.designation}</p>
+    </div>
+  `);
 }
 
 /* ========== Stage 9 Award ========== */

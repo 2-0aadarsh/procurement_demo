@@ -3566,6 +3566,147 @@ body {
   align-self: center;
 }
 
+/* Contract Approval Form CA-01 */
+.ca-policy-note {
+  display: flex;
+  gap: 0.75rem;
+  align-items: flex-start;
+  margin: 0 0 1rem;
+  padding: 0.85rem 1rem;
+  border: 1px solid #cfe0ea;
+  border-radius: 10px;
+  background: linear-gradient(180deg, #f7fbfe 0%, #eef6fb 100%);
+}
+
+.ca-policy-note > i {
+  color: #003D5D;
+  margin-top: 0.15rem;
+}
+
+.ca-policy-note strong {
+  display: block;
+  color: #003D5D;
+  font-size: 0.9rem;
+  margin-bottom: 0.2rem;
+}
+
+.ca-policy-note p {
+  margin: 0;
+  font-size: 0.82rem;
+  color: #334155;
+  line-height: 1.45;
+}
+
+.ca-form-hint {
+  margin: -0.15rem 0 0.65rem;
+  font-size: 0.82rem;
+  color: #64748b;
+}
+
+.ca-checklist {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0.55rem;
+  margin-bottom: 1.1rem;
+}
+
+.ca-check-item {
+  display: flex;
+  gap: 0.55rem;
+  align-items: flex-start;
+  padding: 0.7rem 0.8rem;
+  border: 1px solid #e2e8f0;
+  border-radius: 10px;
+  background: #fff;
+  cursor: pointer;
+}
+
+.ca-check-item input {
+  margin-top: 0.2rem;
+  accent-color: #003D5D;
+}
+
+.ca-check-item strong {
+  display: block;
+  font-size: 0.84rem;
+  color: #0f172a;
+}
+
+.ca-check-item small {
+  display: block;
+  margin-top: 0.15rem;
+  font-size: 0.75rem;
+  color: #64748b;
+  line-height: 1.35;
+}
+
+.ca-check-item.is-locked {
+  cursor: default;
+  background: #f8fafc;
+}
+
+.ca-form-actions {
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+.ca-btn-reject {
+  border-color: #fca5a5 !important;
+  color: #b91c1c !important;
+}
+
+.cell-link {
+  color: #003D5D;
+  font-weight: 600;
+  font-size: 0.82rem;
+  white-space: nowrap;
+}
+
+.ca-decision-banner {
+  display: flex;
+  gap: 0.7rem;
+  align-items: flex-start;
+  margin: 0.5rem 0 1rem;
+  padding: 0.85rem 1rem;
+  border-radius: 10px;
+  border: 1px solid #cbd5e1;
+  background: #f8fafc;
+}
+
+.ca-decision-banner--approved {
+  border-color: #86efac;
+  background: #f0fdf4;
+  color: #14532d;
+}
+
+.ca-decision-banner--rejected {
+  border-color: #fca5a5;
+  background: #fef2f2;
+  color: #7f1d1d;
+}
+
+.ca-decision-banner--seek-clarification {
+  border-color: #fcd34d;
+  background: #fffbeb;
+  color: #78350f;
+}
+
+.ca-decision-banner strong {
+  display: block;
+  margin-bottom: 0.15rem;
+}
+
+.ca-decision-banner p {
+  margin: 0;
+  font-size: 0.82rem;
+}
+
+@media (max-width: 860px) {
+  .ca-checklist {
+    grid-template-columns: 1fr;
+  }
+}
+
 @media (max-width: 720px) {
   .wf-lifecycle-complete {
     flex-direction: column;
