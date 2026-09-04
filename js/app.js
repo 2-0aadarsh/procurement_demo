@@ -143,6 +143,31 @@ const govIndentState = {
 /** Stage 1 — Need Identification (gov) period filter */
 const govNeedState = { year: 'all', viewBy: 'quarter', period: 'all' };
 
+/** Stage 2 — Stock Check (gov) period filter */
+const govStockCheckState = { year: 'all', viewBy: 'quarter', period: 'all' };
+
+/** Need Identification — Take Follow-up email (prototype) */
+const FOLLOW_UP_SENDER = {
+  name: 'Super Admin',
+  email: 'super.admin@mphp.gov.in'
+};
+
+const FOLLOW_UP_ROLE_RECIPIENTS = [
+  { role: 'Resource Manager', email: 'gov.admin@mphp.gov.in', name: 'Dr. Rajesh Sharma' },
+  { role: 'Procurement Officer', email: 'procurement@mphp.gov.in', name: 'Procurement Cell' },
+  { role: 'Finance / Budget Officer', email: 'finance@mphp.gov.in', name: 'Finance Wing' },
+  { role: 'Stores / Warehouse Manager', email: 'stores@mphp.gov.in', name: 'Central Stores' },
+  { role: 'Inspection / Quality Officer', email: 'quality@mphp.gov.in', name: 'QA Cell' },
+  { role: 'Tender Evaluation Committee', email: 'tec@mphp.gov.in', name: 'TEC Secretariat' },
+  { role: 'District CMO / Administrative Officer', email: 'cmo.bhopal@mphp.gov.in', name: 'CMO Bhopal' },
+  { role: 'NHM Programme Officer', email: 'nhm@mphp.gov.in', name: 'NHM Cell' },
+  { role: 'Audit / Compliance Officer', email: 'audit@mphp.gov.in', name: 'Audit Cell' },
+  { role: 'Indenting Department HOD', email: 'indent.hod@mphp.gov.in', name: 'Indenting HOD' },
+  { role: 'System Administrator', email: 'sysadmin@mphp.gov.in', name: 'IT Administrator' }
+];
+
+let needFollowUpContext = null;
+
 /** Stage 4 — Demand Consolidation (gov) state */
 const govConsolidationState = {
   approved: false,
@@ -188,6 +213,18 @@ const govPoState = { page: 1, year: 'all', viewBy: 'quarter', period: 'all' };
 const govGrnState = { page: 1, year: 'all', viewBy: 'quarter', period: 'all' };
 const govInvoiceState = { page: 1, year: 'all', viewBy: 'quarter', period: 'all' };
 const govPaymentState = { page: 1, year: 'all', viewBy: 'quarter', period: 'all' };
+const govRenewalState = {
+  page: 1,
+  year: 'all',
+  viewBy: 'quarter',
+  period: 'all',
+  selectedId: null,
+  finalizeVendorId: '',
+  uploadName: '',
+  finalized: {} // renewalId -> { at, by, fileName }
+};
+/** Once Resource Manager leaves Stage 1 into Stages 2–13, Stage 14 jump is locked until sequential reach. */
+let govSequentialCommitted = false;
 let govLifecycleComplete = false;
 let vendorLifecycleComplete = false;
 
@@ -476,7 +513,9 @@ function renderTopbar() {
     'sla-desk': currentRole === 'gov'
       ? ['SLA Communication', 'Respond to vendor escalations and resolve issues per internal response hierarchy']
       : ['SLA Communication', 'Escalate and resolve issues with government officers as per SLA hierarchy'],
-    workflow: ['Procurement Lifecycle', ''],
+    workflow: currentRole === 'vendor'
+      ? ['Bid-to-Pay Lifecycle', '']
+      : ['Procurement Lifecycle', ''],
     'vendor-reg': ['Vendor Registration', 'Review and approve vendor onboarding requests'],
     sourcing: ['Sourcing & Award', 'Technical and commercial evaluation'],
     'master-data': ['Master Data & Workflow', 'Categories, items, and workflow configuration'],
@@ -637,6 +676,11 @@ function navigateTo(page, arg = {}) {
   if (page === 'tenders') {
     if (opts.tenderFilter) tenderStatusFilter = opts.tenderFilter;
     else if (!opts.keepTenderFilter) tenderStatusFilter = 'all';
+  }
+  if (page === 'workflow' && currentRole === 'gov') {
+    // Opening Need Identification to Pay always starts at Stage 1; Stage 14 jump resets.
+    currentWorkflowStep = 1;
+    govSequentialCommitted = false;
   }
   currentPage = page;
   renderSidebar();
@@ -1521,8 +1565,15 @@ function getRegistrationCategories() {
 }
 
 function ensureWorkflowViewStep() {
+  const total = getWorkflowSteps().length;
+  if (currentRole === 'gov') {
+    if (!currentWorkflowStep || currentWorkflowStep < 1 || currentWorkflowStep > total) {
+      currentWorkflowStep = 1;
+    }
+    return;
+  }
   const progress = getWorkflowProgressStep();
-  if (!currentWorkflowStep || currentWorkflowStep < 1 || currentWorkflowStep > getWorkflowSteps().length) {
+  if (!currentWorkflowStep || currentWorkflowStep < 1 || currentWorkflowStep > total) {
     currentWorkflowStep = progress;
   }
 }
@@ -1537,7 +1588,7 @@ function renderWorkflow() {
 
   return `
     <div class="wf-page-header">
-      <p class="wf-page-hint">${isGov ? '13 stages · click a step to navigate' : '9 stages · click any step to review or update'}</p>
+      <p class="wf-page-hint">${isGov ? '14 stages · from Stage 1 you may jump to Renewal (14); after Stage 2, complete the flow sequentially' : '9 stages · click any step to review or update'}</p>
     </div>
     <div class="workflow-timeline" role="tablist" aria-label="Procurement lifecycle stages">
       ${steps.map(s => `<div class="${getWorkflowStepClasses(s, viewId)}" data-step="${s.id}" role="tab" aria-selected="${s.id === viewId}" tabindex="0" onclick="selectWorkflowStep(${s.id})" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();selectWorkflowStep(${s.id})}">
@@ -1553,6 +1604,21 @@ function renderWorkflow() {
 }
 
 function renderWorkflowViewBanner(step, progress) {
+  if (currentRole === 'gov' && step.id === 14) {
+    if (!govSequentialCommitted) {
+      return `<div class="wf-view-banner wf-view-banner--past">
+        <i class="fa-solid fa-bolt"></i>
+        <span>Opened <strong>Renewal (Stage 14)</strong> directly from Stage 1. Finalize renewals here, or return to Stage 1 to continue the sequential lifecycle.</span>
+        <button type="button" class="btn btn-outline btn-sm" onclick="selectWorkflowStep(1)">Back to Stage 1</button>
+      </div>`;
+    }
+    if (progress < 14 && currentWorkflowStep === 14) {
+      return `<div class="wf-view-banner wf-view-banner--past">
+        <i class="fa-solid fa-rotate"></i>
+        <span>You are on <strong>Stage 14: Renewal</strong> after completing the sequential flow.</span>
+      </div>`;
+    }
+  }
   if (step.id === progress) return '';
   if (step.id < progress) {
     return `<div class="wf-view-banner wf-view-banner--past">
@@ -1830,7 +1896,12 @@ function renderStockCheckStage(canEdit = true) {
     return `<div class="need-api-empty"><i class="fa-solid fa-plug-circle-xmark"></i><p>Stock information could not be loaded right now. Please try Re-sync from API, or contact support if this continues.</p></div>`;
   }
   const { meta, warehouse, otherLocations, openPos, redistributable } = data;
+  const warehouseRows = applyStagePeriodFilter(warehouse.rows || [], govStockCheckState, 'date');
+  const otherRows = applyStagePeriodFilter(otherLocations.rows || [], govStockCheckState, 'date');
+  const openPoRows = applyStagePeriodFilter(openPos.rows || [], govStockCheckState, 'date');
   const disabled = canEdit ? '' : ' disabled';
+  const periodLabel = getWfPeriodFilterLabel(govStockCheckState);
+  const periodDisplay = govStockCheckState.year === 'all' ? meta.assessmentPeriod : periodLabel;
   const blocks = [
     { key: 'warehouse', icon: 'fa-warehouse', color: 'blue', data: warehouse,
       metrics: [
@@ -1863,12 +1934,14 @@ function renderStockCheckStage(canEdit = true) {
   ];
 
   return `<div class="need-api stock-check-api">
+    ${renderWorkflowPeriodFilter('stock', govStockCheckState)}
+
     <div class="need-api-banner">
       <div class="need-api-banner-icon"><i class="fa-solid fa-cloud-arrow-down"></i></div>
       <div class="need-api-banner-text">
         <strong>Auto-populated via API integration</strong>
         <p>Data synced from <strong>${meta.source}</strong> · Endpoint <code>${meta.endpoint}</code> · ${meta.algorithm} · Last synced <strong>${meta.lastSynced}</strong></p>
-        <p class="need-api-meta-line">${meta.district} · ${meta.facilities} facilities · Period ${meta.assessmentPeriod} · ${meta.displayNote}</p>
+        <p class="need-api-meta-line">${meta.district} · ${meta.facilities} facilities · Period <strong>${periodDisplay}</strong> · ${meta.displayNote}</p>
       </div>
       <div class="need-api-banner-actions">
         ${renderApiSyncBadge(meta.status)}
@@ -1900,14 +1973,15 @@ function renderStockCheckStage(canEdit = true) {
       </div>
       <div class="data-table-wrap need-table">
         <table class="data-table">
-          <thead><tr><th>Facility</th><th>Item</th><th>On hand</th><th>Usable</th><th>ML score</th><th>Recommendation</th><th>Status</th></tr></thead>
+          <thead><tr><th>Facility</th><th>Item</th><th>On hand</th><th>Usable</th><th>ML score</th><th>Recommendation</th><th>Status</th><th>Date</th></tr></thead>
           <tbody>
-            ${warehouse.rows.map((r, i) => `<tr class="need-row-clickable" role="button" tabindex="0" onclick="openStockCheckRowDetail('warehouse',${i})" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();openStockCheckRowDetail('warehouse',${i})}">
+            ${warehouseRows.length ? warehouseRows.map((r, i) => `<tr class="need-row-clickable" role="button" tabindex="0" onclick="openStockCheckRowDetail('warehouse',${i})" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();openStockCheckRowDetail('warehouse',${i})}">
               <td><strong>${r.facility}</strong></td><td>${r.item}</td>
               <td>${r.onHand}</td><td>${r.usable}</td>
               <td><strong>${r.mlScore}</strong></td><td>${r.recommendation}</td>
               <td><span class="badge badge-${needStatusBadge(r.status)}">${r.status}</span></td>
-            </tr>`).join('')}
+              <td>${r.date || '—'}</td>
+            </tr>`).join('') : `<tr><td colspan="8" style="text-align:center;color:#64748b">No warehouse rows for ${periodLabel}.</td></tr>`}
           </tbody>
         </table>
       </div>
@@ -1920,13 +1994,14 @@ function renderStockCheckStage(canEdit = true) {
       </div>
       <div class="data-table-wrap need-table">
         <table class="data-table">
-          <thead><tr><th>From</th><th>To</th><th>Item</th><th>Qty</th><th>Cover gain</th><th>ML score</th><th>Status</th></tr></thead>
+          <thead><tr><th>From</th><th>To</th><th>Item</th><th>Qty</th><th>Cover gain</th><th>ML score</th><th>Status</th><th>Date</th></tr></thead>
           <tbody>
-            ${otherLocations.rows.map((r, i) => `<tr class="need-row-clickable" role="button" tabindex="0" onclick="openStockCheckRowDetail('other',${i})" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();openStockCheckRowDetail('other',${i})}">
+            ${otherRows.length ? otherRows.map((r, i) => `<tr class="need-row-clickable" role="button" tabindex="0" onclick="openStockCheckRowDetail('other',${i})" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();openStockCheckRowDetail('other',${i})}">
               <td><strong>${r.from}</strong></td><td>${r.to}</td><td>${r.item}</td>
               <td>${r.qty}</td><td>${r.coverGain}</td><td><strong>${r.mlScore}</strong></td>
               <td><span class="badge badge-${needStatusBadge(r.status)}">${r.status}</span></td>
-            </tr>`).join('')}
+              <td>${r.date || '—'}</td>
+            </tr>`).join('') : `<tr><td colspan="8" style="text-align:center;color:#64748b">No transfer rows for ${periodLabel}.</td></tr>`}
           </tbody>
         </table>
       </div>
@@ -1939,13 +2014,14 @@ function renderStockCheckStage(canEdit = true) {
       </div>
       <div class="data-table-wrap need-table">
         <table class="data-table">
-          <thead><tr><th>PO</th><th>Vendor</th><th>Item</th><th>Facility</th><th>ETA</th><th>ML score</th><th>Status</th></tr></thead>
+          <thead><tr><th>PO</th><th>Vendor</th><th>Item</th><th>Facility</th><th>ETA</th><th>ML score</th><th>Status</th><th>Date</th></tr></thead>
           <tbody>
-            ${openPos.rows.map((r, i) => `<tr class="need-row-clickable" role="button" tabindex="0" onclick="openStockCheckRowDetail('openpo',${i})" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();openStockCheckRowDetail('openpo',${i})}">
+            ${openPoRows.length ? openPoRows.map((r, i) => `<tr class="need-row-clickable" role="button" tabindex="0" onclick="openStockCheckRowDetail('openpo',${i})" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();openStockCheckRowDetail('openpo',${i})}">
               <td><strong>${r.po}</strong></td><td>${r.vendor}</td><td>${r.item}</td>
               <td>${r.facility}</td><td>${r.eta}</td><td><strong>${r.mlScore}</strong></td>
               <td><span class="badge badge-${needStatusBadge(r.status)}">${r.status}</span></td>
-            </tr>`).join('')}
+              <td>${r.date || '—'}</td>
+            </tr>`).join('') : `<tr><td colspan="8" style="text-align:center;color:#64748b">No open PO rows for ${periodLabel}.</td></tr>`}
           </tbody>
         </table>
       </div>
@@ -1989,7 +2065,7 @@ function openStockCheckRowDetail(section, index) {
   let body = '';
 
   if (section === 'warehouse') {
-    const r = data.warehouse.rows[i];
+    const r = applyStagePeriodFilter(data.warehouse.rows || [], govStockCheckState, 'date')[i];
     if (!r) return;
     title = `${r.item} — ${r.facility}`;
     body = `<div class="kpi-detail need-row-detail">
@@ -1997,11 +2073,25 @@ function openStockCheckRowDetail(section, index) {
       <div class="tender-detail-stats tender-detail-stats--4">
         <div class="tender-stat"><span>On hand</span><strong>${r.onHand}</strong></div>
         <div class="tender-stat"><span>Usable</span><strong>${r.usable}</strong></div>
-        <div class="tender-stat"><span>Reorder</span><strong>${r.reorder}</strong></div>
-        <div class="tender-stat"><span>ML score</span><strong>${r.mlScore}</strong></div>
+        <div class="tender-stat"><span>Status</span><strong><span class="badge badge-${needStatusBadge(r.status)}">${r.status}</span></strong></div>
+        <div class="tender-stat"><span>Status since</span><strong>${r.date || '—'}</strong></div>
       </div>
       <div class="tender-detail-section">
-        <h4>AI/ML recommendation</h4>
+        <div class="tender-detail-section-head">
+          <h4>AI/ML recommendation</h4>
+          ${followUpActionButton('stock', 'warehouse', i)}
+        </div>
+        <div class="data-table-wrap" style="margin-bottom:0.75rem">
+          <table class="data-table data-table--modal">
+            <tbody>
+              <tr><td>Facility</td><td><strong>${r.facility}</strong></td></tr>
+              <tr><td>Item</td><td>${r.item}</td></tr>
+              <tr><td>Reorder</td><td>${r.reorder}</td></tr>
+              <tr><td>ML score</td><td><strong>${r.mlScore}</strong></td></tr>
+              <tr><td>Status since</td><td><strong>${r.date || '—'}</strong></td></tr>
+            </tbody>
+          </table>
+        </div>
         <p><span class="badge badge-${needStatusBadge(r.status)}">${r.status}</span> · ${r.recommendation}</p>
         <p class="report-footnote mt-2"><i class="fa-solid fa-circle-info"></i> Prefer warehouse release / redistribution before raising a fresh indent for this SKU.</p>
       </div>
@@ -2010,20 +2100,33 @@ function openStockCheckRowDetail(section, index) {
       </div>
     </div>`;
   } else if (section === 'other') {
-    const r = data.otherLocations.rows[i];
+    const r = applyStagePeriodFilter(data.otherLocations.rows || [], govStockCheckState, 'date')[i];
     if (!r) return;
     title = `Transfer — ${r.item}`;
     body = `<div class="kpi-detail need-row-detail">
       <p class="need-row-detail-lead">Inter-facility redistribution candidate ranked by cover-day gain and surplus margin.</p>
       <div class="tender-detail-stats tender-detail-stats--4">
-        <div class="tender-stat"><span>From</span><strong>${r.from}</strong></div>
-        <div class="tender-stat"><span>To</span><strong>${r.to}</strong></div>
         <div class="tender-stat"><span>Qty</span><strong>${r.qty}</strong></div>
         <div class="tender-stat"><span>Cover gain</span><strong>${r.coverGain}</strong></div>
+        <div class="tender-stat"><span>Status</span><strong><span class="badge badge-${needStatusBadge(r.status)}">${r.status}</span></strong></div>
+        <div class="tender-stat"><span>Status since</span><strong>${r.date || '—'}</strong></div>
       </div>
       <div class="tender-detail-section">
-        <h4>Recommendation</h4>
-        <p>ML score <strong>${r.mlScore}</strong> · <span class="badge badge-${needStatusBadge(r.status)}">${r.status}</span></p>
+        <div class="tender-detail-section-head">
+          <h4>Recommendation</h4>
+          ${followUpActionButton('stock', 'other', i)}
+        </div>
+        <div class="data-table-wrap" style="margin-bottom:0.75rem">
+          <table class="data-table data-table--modal">
+            <tbody>
+              <tr><td>From</td><td><strong>${r.from}</strong></td></tr>
+              <tr><td>To</td><td><strong>${r.to}</strong></td></tr>
+              <tr><td>Item</td><td>${r.item}</td></tr>
+              <tr><td>ML score</td><td><strong>${r.mlScore}</strong></td></tr>
+              <tr><td>Status since</td><td><strong>${r.date || '—'}</strong></td></tr>
+            </tbody>
+          </table>
+        </div>
         <p>${r.recommendation}</p>
       </div>
       <div class="modal-inline-actions">
@@ -2031,20 +2134,33 @@ function openStockCheckRowDetail(section, index) {
       </div>
     </div>`;
   } else if (section === 'openpo') {
-    const r = data.openPos.rows[i];
+    const r = applyStagePeriodFilter(data.openPos.rows || [], govStockCheckState, 'date')[i];
     if (!r) return;
     title = `${r.po} — ${r.item}`;
     body = `<div class="kpi-detail need-row-detail">
       <p class="need-row-detail-lead">Approved open PO that can offset fresh procurement demand.</p>
       <div class="tender-detail-stats tender-detail-stats--4">
-        <div class="tender-stat"><span>Vendor</span><strong>${r.vendor}</strong></div>
-        <div class="tender-stat"><span>Facility</span><strong>${r.facility}</strong></div>
         <div class="tender-stat"><span>Qty</span><strong>${r.qty}</strong></div>
         <div class="tender-stat"><span>ETA</span><strong>${r.eta}</strong></div>
+        <div class="tender-stat"><span>Status</span><strong><span class="badge badge-${needStatusBadge(r.status)}">${r.status}</span></strong></div>
+        <div class="tender-stat"><span>Status since</span><strong>${r.date || '—'}</strong></div>
       </div>
       <div class="tender-detail-section">
-        <h4>AI/ML recommendation</h4>
-        <p>ML score <strong>${r.mlScore}</strong> · <span class="badge badge-${needStatusBadge(r.status)}">${r.status}</span></p>
+        <div class="tender-detail-section-head">
+          <h4>AI/ML recommendation</h4>
+          ${followUpActionButton('stock', 'openpo', i)}
+        </div>
+        <div class="data-table-wrap" style="margin-bottom:0.75rem">
+          <table class="data-table data-table--modal">
+            <tbody>
+              <tr><td>PO</td><td><strong>${r.po}</strong></td></tr>
+              <tr><td>Vendor</td><td>${r.vendor}</td></tr>
+              <tr><td>Facility</td><td>${r.facility}</td></tr>
+              <tr><td>ML score</td><td><strong>${r.mlScore}</strong></td></tr>
+              <tr><td>Status since</td><td><strong>${r.date || '—'}</strong></td></tr>
+            </tbody>
+          </table>
+        </div>
         <p>${r.recommendation}</p>
       </div>
       <div class="modal-inline-actions">
@@ -3442,6 +3558,7 @@ function renderWorkflowPeriodFilter(stageKey, filterState) {
 
 function getWfStageFilterState(stageKey) {
   if (stageKey === 'need') return govNeedState;
+  if (stageKey === 'stock') return govStockCheckState;
   if (stageKey === 'consol') return govConsolidationState;
   if (stageKey === 'budget') return govBudgetState;
   if (stageKey === 'tender') return govTenderPrepState;
@@ -3452,6 +3569,7 @@ function getWfStageFilterState(stageKey) {
   if (stageKey === 'grn') return govGrnState;
   if (stageKey === 'invoice') return govInvoiceState;
   if (stageKey === 'payment') return govPaymentState;
+  if (stageKey === 'renewal') return govRenewalState;
   return govAwardState;
 }
 
@@ -4659,6 +4777,351 @@ function openPaymentStageDetail(payId) {
   `, { wide: true, large: true });
 }
 
+/* ========== Stage 14 Renewal ========== */
+function getRenewalRows() {
+  const rows = filterCategoryRows(typeof RENEWAL_STAGE_DATA !== 'undefined' ? RENEWAL_STAGE_DATA.renewals : []);
+  return applyStagePeriodFilter(rows, govRenewalState, 'renewalDate');
+}
+
+function setRenewalStagePage(page) {
+  govRenewalState.page = Math.max(1, Number(page) || 1);
+  refreshWorkflowUI();
+  document.getElementById('renewalStageTable')?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+}
+
+function renewalStatusBadge(status) {
+  if (status === 'Finalized') return 'success';
+  if (status === 'Under review') return 'warning';
+  if (status === 'Pending finalization') return 'info';
+  return needStatusBadge(status);
+}
+
+function renewalTypeBadge(type) {
+  if (type === 'Fresh renewal') return 'info';
+  if (type === 'Extra quality order') return 'warning';
+  return 'muted';
+}
+
+function renderRenewalStage(canEdit = true) {
+  const data = typeof RENEWAL_STAGE_DATA !== 'undefined' ? RENEWAL_STAGE_DATA : null;
+  if (!data) return `<div class="need-api-empty"><p>Renewal data could not be loaded.</p></div>`;
+
+  const rows = getRenewalRows().map(r => {
+    const fin = govRenewalState.finalized[r.id];
+    return fin ? { ...r, status: 'Finalized', _finalized: fin } : r;
+  });
+  const paged = paginateItems(rows, govRenewalState.page, 10);
+  govRenewalState.page = paged.page;
+  const pending = rows.filter(r => r.status !== 'Finalized').length;
+  const finalized = rows.filter(r => r.status === 'Finalized').length;
+  const fresh = rows.filter(r => r.renewalType === 'Fresh renewal').length;
+  const eqo = rows.filter(r => r.renewalType === 'Extra quality order').length;
+
+  return `<div class="tender-prep-stage renewal-stage">
+    <div class="indent-mode-banner">
+      <div>
+        <strong>Renewal — vendor contracts &amp; quality orders</strong>
+      </div>
+      <button type="button" class="btn btn-primary btn-sm" onclick="openFinalizeRenewalModal(${canEdit ? 'true' : 'false'})">
+        <i class="fa-solid fa-stamp"></i> Renewal
+      </button>
+    </div>
+
+    ${renderWorkflowPeriodFilter('renewal', govRenewalState)}
+
+    <div class="budget-pr-summary">
+      <div class="budget-pr-chip"><span>Pending</span><strong>${pending}</strong></div>
+      <div class="budget-pr-chip"><span>Finalized</span><strong>${finalized}</strong></div>
+      <div class="budget-pr-chip"><span>Fresh renewal</span><strong>${fresh}</strong></div>
+      <div class="budget-pr-chip"><span>Extra quality order</span><strong>${eqo}</strong></div>
+      <div class="budget-pr-chip"><span>Last updated</span><strong>${data.meta.lastUpdated}</strong></div>
+    </div>
+
+    <section class="budget-section" id="renewalStageTable">
+      <div class="budget-section-head">
+        <h4><i class="fa-solid fa-rotate"></i> Renewal list — all vendors</h4>
+        <p>Click a row to view vendor details and downloadable documents.</p>
+      </div>
+      ${renderCategoryCountStrip(rows)}
+      <div class="consol-detail-table-wrap">
+        <table class="data-table consol-detail-table tender-prep-table">
+          <thead>
+            <tr>
+              <th>Renewal ID</th>
+              <th>Vendor</th>
+              <th>Category</th>
+              <th>Period</th>
+              <th>Type</th>
+              <th>Status</th>
+              <th>Value</th>
+              <th>Docs</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${paged.items.length ? paged.items.map(r => `
+              <tr class="tender-prep-row" onclick="openRenewalStageDetail('${r.id}')" title="View renewal details">
+                <td><strong>${r.id}</strong></td>
+                <td>${r.vendorName}<br><span class="cell-sub">${r.vendorId}</span></td>
+                <td>${r.category}</td>
+                <td>${r.renewalFrom} → ${r.renewalTo}</td>
+                <td><span class="badge badge-${renewalTypeBadge(r.renewalType)}">${r.renewalType}</span></td>
+                <td><span class="badge badge-${renewalStatusBadge(r.status)}">${r.status}</span></td>
+                <td>${r.value}</td>
+                <td>${(r.documents || []).length}</td>
+              </tr>
+            `).join('') : `<tr><td colspan="8" style="text-align:center;color:#64748b;padding:1.25rem">No renewals match the selected category and period.</td></tr>`}
+          </tbody>
+        </table>
+      </div>
+      ${renderPaginationControls(paged.page, paged.totalPages, paged.total, paged.from, paged.to, 'setRenewalStagePage')}
+    </section>
+  </div>`;
+}
+
+function getRenewalRowById(renId) {
+  const base = (typeof RENEWAL_STAGE_DATA !== 'undefined' ? RENEWAL_STAGE_DATA.renewals : []).find(x => x.id === renId);
+  if (!base) return null;
+  const fin = govRenewalState.finalized[renId];
+  return fin ? { ...base, status: 'Finalized', _finalized: fin } : { ...base };
+}
+
+function renderRenewalDetailModalBody(r) {
+  const fin = r._finalized || govRenewalState.finalized[r.id];
+  const docs = r.documents || [];
+  return `<div class="consol-detail-modal renewal-detail-modal">
+    <p class="consol-detail-lead" style="margin-top:0">${r.remarks}</p>
+    <div class="consol-detail-stats" style="grid-template-columns:repeat(4,minmax(0,1fr));margin-bottom:1rem">
+      <div class="consol-detail-stat"><span>Vendor ID</span><strong>${r.vendorId}</strong></div>
+      <div class="consol-detail-stat"><span>GSTIN</span><strong>${r.gstin}</strong></div>
+      <div class="consol-detail-stat"><span>Contract</span><strong>${r.contractId}</strong></div>
+      <div class="consol-detail-stat"><span>Value</span><strong>${r.value}</strong></div>
+    </div>
+    <div class="consol-detail-table-wrap">
+      <table class="data-table consol-detail-table">
+        <tbody>
+          <tr><td>Contact</td><td><strong>${r.contact}</strong></td></tr>
+          <tr><td>Renewal from</td><td><strong>${r.renewalFrom}</strong></td></tr>
+          <tr><td>Renewal to</td><td><strong>${r.renewalTo}</strong></td></tr>
+          <tr><td>Renewal status type</td><td><span class="badge badge-${renewalTypeBadge(r.renewalType)}">${r.renewalType}</span></td></tr>
+          <tr><td>Workflow status</td><td><span class="badge badge-${renewalStatusBadge(r.status)}">${r.status}</span></td></tr>
+          <tr><td>Recorded on</td><td><strong>${r.renewalDate}</strong></td></tr>
+          ${fin ? `<tr><td>Finalized</td><td><strong>${fin.at}</strong> by ${fin.by}${fin.fileName ? ` · file: ${fin.fileName}` : ''}</td></tr>` : ''}
+        </tbody>
+      </table>
+    </div>
+    <div class="budget-section-head" style="margin-top:1.25rem">
+      <h4 style="margin:0"><i class="fa-solid fa-paperclip"></i> Attached documents</h4>
+      <p style="margin:0.35rem 0 0">Download fresh tender, addendum, corrigendum or related PDFs for this renewal.</p>
+    </div>
+    <div class="consol-detail-table-wrap" style="margin-top:0.75rem">
+      <table class="data-table consol-detail-table">
+        <thead><tr><th>Document</th><th>Type</th><th>Action</th></tr></thead>
+        <tbody>
+          ${docs.length ? docs.map(d => `
+            <tr>
+              <td><strong>${d.name}</strong><br><span class="cell-sub">${d.file}</span></td>
+              <td><span class="badge badge-muted">${d.type}</span></td>
+              <td>
+                <button type="button" class="btn btn-outline btn-sm" onclick="downloadRenewalDocument('${r.id}','${d.id}')">
+                  <i class="fa-solid fa-file-pdf"></i> Download PDF
+                </button>
+              </td>
+            </tr>
+          `).join('') : `<tr><td colspan="3" style="text-align:center;color:#64748b">No documents attached.</td></tr>`}
+        </tbody>
+      </table>
+    </div>
+  </div>`;
+}
+
+function openRenewalStageDetail(renId) {
+  const r = getRenewalRowById(renId);
+  if (!r) {
+    showWfAlert('Renewal record not found.');
+    return;
+  }
+  govRenewalState.selectedId = renId;
+  openModal(`${r.id} — ${r.vendorName}`, renderRenewalDetailModalBody(r), { wide: true, large: true });
+}
+
+function renderFinalizeRenewalModalBody(canEdit = true) {
+  const rows = getRenewalRows().map(r => {
+    const fin = govRenewalState.finalized[r.id];
+    return fin ? { ...r, status: 'Finalized' } : r;
+  });
+  const pendingVendors = rows.filter(r => r.status !== 'Finalized');
+  const vendorOptions = pendingVendors.length
+    ? pendingVendors.map(r => `${r.vendorId} — ${r.vendorName}`)
+    : ['No pending vendors'];
+  const selectedOpt = (() => {
+    if (govRenewalState.finalizeVendorId && vendorOptions.includes(govRenewalState.finalizeVendorId)) {
+      return govRenewalState.finalizeVendorId;
+    }
+    return pendingVendors[0] ? `${pendingVendors[0].vendorId} — ${pendingVendors[0].vendorName}` : vendorOptions[0];
+  })();
+  govRenewalState.finalizeVendorId = selectedOpt;
+
+  return `<div class="consol-detail-modal renewal-finalize-modal">
+    <p class="consol-detail-lead">Select a vendor from the pending list, optionally upload a supporting document, and finalize the renewal decision.</p>
+    <div class="form-grid wf-form-grid">
+      ${customSelectHTML('Vendor for finalization', 'renewalFinalizeVendor', vendorOptions, selectedOpt, true)}
+      <div class="form-group">
+        <label>Supporting document (optional)</label>
+        ${renderInlineUpload({
+          id: 'renewalFinalizeUpload',
+          title: 'Upload PDF / image',
+          hint: 'Fresh tender, addendum, corrigendum or approval note · PDF, JPG, PNG',
+          disabled: !canEdit || !pendingVendors.length,
+          fileName: govRenewalState.uploadName || null,
+          onChange: 'onRenewalFinalizeUpload'
+        })}
+      </div>
+    </div>
+    <div class="wf-actions mt-2">
+      <button type="button" class="btn btn-primary"${(!canEdit || !pendingVendors.length) ? ' disabled' : ''} onclick="finalizeGovRenewal()">
+        <i class="fa-solid fa-check-double"></i> Finalize renewal
+      </button>
+    </div>
+  </div>`;
+}
+
+function openFinalizeRenewalModal(canEdit = true) {
+  const editable = canEdit === true || canEdit === 'true';
+  openModal('Finalize renewal', renderFinalizeRenewalModalBody(editable), { wide: true, large: true, replace: true });
+  initCustomSelects();
+}
+
+function onRenewalFinalizeUpload(input) {
+  const file = input?.files?.[0];
+  if (!file) return;
+  govRenewalState.uploadName = file.name;
+  openFinalizeRenewalModal(true);
+}
+
+function finalizeGovRenewal() {
+  const wrap = document.querySelector('[data-select-id="renewalFinalizeVendor"]');
+  const label = wrap?.querySelector('.custom-select-value')?.textContent?.trim()
+    || govRenewalState.finalizeVendorId;
+  if (!label || label === 'No pending vendors') {
+    showWfAlert('No pending vendors available to finalize.');
+    return;
+  }
+  const vendorId = label.split(' — ')[0];
+  const rows = getRenewalRows();
+  const row = rows.find(r => r.vendorId === vendorId && r.status !== 'Finalized' && !govRenewalState.finalized[r.id]);
+  if (!row) {
+    showWfAlert('Selected vendor renewal is already finalized or not found.');
+    return;
+  }
+  govRenewalState.finalized[row.id] = {
+    at: formatDateDMY(APP_TODAY) + ' ' + new Date().toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' }),
+    by: authUser?.name || 'Resource Manager',
+    fileName: govRenewalState.uploadName || null
+  };
+  govRenewalState.uploadName = '';
+  govRenewalState.selectedId = row.id;
+  closeModal();
+  refreshWorkflowUI();
+  showWfAlert(`Renewal ${row.id} for ${row.vendorName} has been finalized.`, 'success');
+}
+
+function downloadRenewalDocument(renId, docId) {
+  const r = (typeof RENEWAL_STAGE_DATA !== 'undefined' ? RENEWAL_STAGE_DATA.renewals : []).find(x => x.id === renId);
+  const doc = r?.documents?.find(d => d.id === docId);
+  if (!r || !doc) {
+    showWfAlert('Document not found.');
+    return;
+  }
+  const fin = r._finalized || govRenewalState.finalized[r.id];
+  const lines = [
+    'MP Health Procurement — Stage 14 Renewal',
+    'Department of Public Health & Medical Education, Madhya Pradesh',
+    '',
+    doc.name,
+    `Document type: ${doc.type}`,
+    `File name: ${doc.file}`,
+    '',
+    '— Renewal record —',
+    `Renewal ID: ${r.id}`,
+    `Vendor: ${r.vendorName} (${r.vendorId})`,
+    `GSTIN: ${r.gstin}`,
+    `Category: ${r.category}`,
+    `Contract: ${r.contractId}`,
+    `Contract value: ${r.value}`,
+    `Contact: ${r.contact}`,
+    '',
+    '— Period & status —',
+    `Renewal from: ${r.renewalFrom}`,
+    `Renewal to: ${r.renewalTo}`,
+    `Recorded on: ${r.renewalDate}`,
+    `Renewal type: ${r.renewalType}`,
+    `Workflow status: ${r.status}`,
+    fin ? `Finalized on: ${fin.at} by ${fin.by}` : 'Finalized on: —',
+    '',
+    '— Remarks —',
+    r.remarks || '—',
+    '',
+    `Generated: ${formatDateDMY(APP_TODAY)} · Demo document for procurement portal`
+  ];
+  const filename = (doc.file && /\.pdf$/i.test(doc.file)) ? doc.file : `${doc.file || doc.id}.pdf`;
+  downloadBlobFile(buildSimplePdfBlob(lines), filename);
+  showWfAlert(`Downloaded ${filename}`, 'success');
+}
+
+function escapePdfText(str) {
+  return String(str ?? '')
+    .replace(/₹/g, 'Rs ')
+    .replace(/[·•]/g, '-')
+    .replace(/[—–]/g, '-')
+    .replace(/\\/g, '\\\\')
+    .replace(/\(/g, '\\(')
+    .replace(/\)/g, '\\)')
+    .replace(/[^\x20-\x7E]/g, '?');
+}
+
+function buildSimplePdfBlob(lines) {
+  const safe = (lines || []).map(l => escapePdfText(l));
+  const contentParts = ['BT', '/F1 11 Tf', '50 800 Td', '14 TL'];
+  safe.forEach((line, i) => {
+    if (i === 0) contentParts.push(`(${line}) Tj`);
+    else contentParts.push(`T* (${line}) Tj`);
+  });
+  contentParts.push('ET');
+  const stream = contentParts.join('\n');
+  const objs = [];
+  objs.push('1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n');
+  objs.push('2 0 obj\n<< /Type /Pages /Kids [3 0 R] /Count 1 >>\nendobj\n');
+  objs.push('3 0 obj\n<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] /Contents 4 0 R /Resources << /Font << /F1 5 0 R >> >> >>\nendobj\n');
+  objs.push(`4 0 obj\n<< /Length ${stream.length} >>\nstream\n${stream}\nendstream\nendobj\n`);
+  objs.push('5 0 obj\n<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>\nendobj\n');
+  let pdf = '%PDF-1.4\n';
+  const offsets = [0];
+  objs.forEach(o => {
+    offsets.push(pdf.length);
+    pdf += o;
+  });
+  const xrefStart = pdf.length;
+  pdf += `xref\n0 ${objs.length + 1}\n`;
+  pdf += '0000000000 65535 f \n';
+  for (let i = 1; i < offsets.length; i++) {
+    pdf += `${String(offsets[i]).padStart(10, '0')} 00000 n \n`;
+  }
+  pdf += `trailer\n<< /Size ${objs.length + 1} /Root 1 0 R >>\nstartxref\n${xrefStart}\n%%EOF`;
+  return new Blob([pdf], { type: 'application/pdf' });
+}
+
+function downloadBlobFile(blob, filename) {
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  a.rel = 'noopener';
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 2500);
+}
+
 
 function renderNeedIdentificationStage(canEdit = true) {
   const data = getNeedIdentificationData();
@@ -4741,13 +5204,14 @@ function renderNeedIdentificationStage(canEdit = true) {
       </div>
       <div class="data-table-wrap need-table">
         <table class="data-table">
-          <thead><tr><th>Facility</th><th>SKU / Item</th><th>On hand</th><th>Reorder point</th><th>Cover (days)</th><th>Status</th></tr></thead>
+          <thead><tr><th>Facility</th><th>SKU / Item</th><th>On hand</th><th>Reorder point</th><th>Cover (days)</th><th>Status</th><th>Date</th></tr></thead>
           <tbody>
             ${stockLevels.rows.map((r, i) => `<tr class="need-row-clickable" role="button" tabindex="0" onclick="openNeedRowDetail('stock',${i})" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();openNeedRowDetail('stock',${i})}">
               <td><strong>${r.facility}</strong></td><td>${r.sku}</td>
               <td>${r.onHand.toLocaleString('en-IN')}</td><td>${r.reorder.toLocaleString('en-IN')}</td>
               <td>${r.coverDays}</td>
               <td><span class="badge badge-${needStatusBadge(r.status)}">${r.status}</span></td>
+              <td>${r.date || '—'}</td>
             </tr>`).join('')}
           </tbody>
         </table>
@@ -4761,11 +5225,12 @@ function renderNeedIdentificationStage(canEdit = true) {
       </div>
       <div class="data-table-wrap need-table">
         <table class="data-table">
-          <thead><tr><th>Facility</th><th>Type</th><th>OPD (month)</th><th>IPD bed occ.</th><th>Trend</th></tr></thead>
+          <thead><tr><th>Facility</th><th>Type</th><th>OPD (month)</th><th>IPD bed occ.</th><th>Trend</th><th>Date</th></tr></thead>
           <tbody>
             ${patientLoad.rows.map((r, i) => `<tr class="need-row-clickable" role="button" tabindex="0" onclick="openNeedRowDetail('patient',${i})" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();openNeedRowDetail('patient',${i})}">
               <td><strong>${r.facility}</strong></td><td>${r.category}</td>
               <td>${r.opd.toLocaleString('en-IN')}</td><td>${r.ipdBedOcc}</td><td>${r.trend}</td>
+              <td>${r.date || '—'}</td>
             </tr>`).join('')}
           </tbody>
         </table>
@@ -4779,12 +5244,13 @@ function renderNeedIdentificationStage(canEdit = true) {
       </div>
       <div class="data-table-wrap need-table">
         <table class="data-table">
-          <thead><tr><th>Condition / Programme</th><th>Cases</th><th>Trend</th><th>SKU focus</th><th>Priority</th></tr></thead>
+          <thead><tr><th>Condition / Programme</th><th>Cases</th><th>Trend</th><th>SKU focus</th><th>Priority</th><th>Date</th></tr></thead>
           <tbody>
             ${diseaseBurden.rows.map((r, i) => `<tr class="need-row-clickable" role="button" tabindex="0" onclick="openNeedRowDetail('disease',${i})" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();openNeedRowDetail('disease',${i})}">
               <td><strong>${r.condition}</strong></td><td>${r.cases}</td><td>${r.trend}</td>
               <td>${r.skuFocus}</td>
               <td><span class="badge badge-${needStatusBadge(r.priority)}">${r.priority}</span></td>
+              <td>${r.date || '—'}</td>
             </tr>`).join('')}
           </tbody>
         </table>
@@ -4798,11 +5264,12 @@ function renderNeedIdentificationStage(canEdit = true) {
       </div>
       <div class="data-table-wrap need-table">
         <table class="data-table">
-          <thead><tr><th>Item</th><th>Required</th><th>Available</th><th>Open PO</th><th>Gap</th><th>Recommended action</th></tr></thead>
+          <thead><tr><th>Item</th><th>Required</th><th>Available</th><th>Open PO</th><th>Gap</th><th>Recommended action</th><th>Date</th></tr></thead>
           <tbody>
             ${gapAnalysis.rows.map((r, i) => `<tr class="need-row-clickable" role="button" tabindex="0" onclick="openNeedRowDetail('gap',${i})" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();openNeedRowDetail('gap',${i})}">
               <td><strong>${r.item}</strong></td><td>${r.required}</td><td>${r.available}</td>
               <td>${r.openPo}</td><td><strong>${r.gap}</strong></td><td>${r.action}</td>
+              <td>${r.date || '—'}</td>
             </tr>`).join('')}
           </tbody>
         </table>
@@ -4817,6 +5284,567 @@ function renderNeedIdentificationStage(canEdit = true) {
 
 function scrollToNeedSection(key) {
   document.getElementById(`need-sec-${key}`)?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+}
+
+function getFollowUpRecipients() {
+  const fromAuth = (typeof AUTH_ROLE_OPTIONS !== 'undefined' ? AUTH_ROLE_OPTIONS : [])
+    .filter(role => role !== 'Vendor / Bidder');
+  const mapped = FOLLOW_UP_ROLE_RECIPIENTS.filter(r => fromAuth.includes(r.role));
+  const missing = fromAuth.filter(role => !mapped.some(r => r.role === role));
+  return [
+    ...mapped,
+    ...missing.map(role => ({
+      role,
+      email: `${role.toLowerCase().replace(/[^a-z0-9]+/g, '.')}@mphp.gov.in`,
+      name: role
+    }))
+  ];
+}
+
+function escapeFollowUpHtml(str) {
+  return String(str ?? '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
+}
+
+function followUpActionButton(stage, section, index) {
+  return `<button type="button" class="btn btn-primary btn-sm" onclick="openStageFollowUpModal('${stage}','${section}',${index})">
+            <i class="fa-solid fa-envelope-open-text"></i> Take Follow-up
+          </button>`;
+}
+
+function resolveFollowUpRowContext(stage, section, index) {
+  const i = Number(index);
+  if (stage === 'need') {
+    const data = getNeedIdentificationData();
+    if (!data) return null;
+    if (section === 'stock') {
+      const r = data.stockLevels.rows[i];
+      if (!r) return null;
+      return {
+        stage, section, index: i,
+        regardingTitle: r.sku,
+        regardingMeta: `${r.facility} · ${r.status}`,
+        status: r.status,
+        date: r.date || '—',
+        subject: `Follow-up: ${r.sku} @ ${r.facility}`,
+        contextLines: [
+          ['Source', 'Need Identification · Stock Levels'],
+          ['Facility', r.facility],
+          ['SKU / Item', r.sku],
+          ['Status', r.status],
+          ['Status since', r.date || '—']
+        ]
+      };
+    }
+    if (section === 'patient') {
+      const r = data.patientLoad.rows[i];
+      if (!r) return null;
+      return {
+        stage, section, index: i,
+        regardingTitle: r.facility,
+        regardingMeta: `${r.category} · Patient Load`,
+        status: r.trend,
+        date: r.date || '—',
+        subject: `Follow-up: Patient Load — ${r.facility}`,
+        contextLines: [
+          ['Source', 'Need Identification · Patient Load'],
+          ['Facility', r.facility],
+          ['Type', r.category],
+          ['OPD (month)', String(r.opd.toLocaleString ? r.opd.toLocaleString('en-IN') : r.opd)],
+          ['IPD bed occ.', r.ipdBedOcc],
+          ['Trend', r.trend],
+          ['Status since', r.date || '—']
+        ]
+      };
+    }
+    if (section === 'disease') {
+      const r = data.diseaseBurden.rows[i];
+      if (!r) return null;
+      return {
+        stage, section, index: i,
+        regardingTitle: r.condition,
+        regardingMeta: `${r.priority} · Disease Burden`,
+        status: r.priority,
+        date: r.date || '—',
+        subject: `Follow-up: Disease Burden — ${r.condition}`,
+        contextLines: [
+          ['Source', 'Need Identification · Disease Burden'],
+          ['Condition', r.condition],
+          ['Cases', r.cases],
+          ['Trend', r.trend],
+          ['SKU focus', r.skuFocus],
+          ['Priority', r.priority],
+          ['Status since', r.date || '—']
+        ]
+      };
+    }
+    if (section === 'gap') {
+      const r = data.gapAnalysis.rows[i];
+      if (!r) return null;
+      return {
+        stage, section, index: i,
+        regardingTitle: r.item,
+        regardingMeta: `${r.action} · Gap Analysis`,
+        status: r.action,
+        date: r.date || '—',
+        subject: `Follow-up: Gap Analysis — ${r.item}`,
+        contextLines: [
+          ['Source', 'Need Identification · Gap Analysis'],
+          ['Item', r.item],
+          ['Required', r.required],
+          ['Available', r.available],
+          ['Open PO', r.openPo],
+          ['Gap', r.gap],
+          ['Action', r.action],
+          ['Status since', r.date || '—']
+        ]
+      };
+    }
+  }
+  if (stage === 'stock') {
+    const data = getStockCheckData();
+    if (!data) return null;
+    if (section === 'warehouse') {
+      const r = applyStagePeriodFilter(data.warehouse.rows || [], govStockCheckState, 'date')[i];
+      if (!r) return null;
+      return {
+        stage, section, index: i,
+        regardingTitle: r.item,
+        regardingMeta: `${r.facility} · ${r.status}`,
+        status: r.status,
+        date: r.date || '—',
+        subject: `Follow-up: Warehouse — ${r.item} @ ${r.facility}`,
+        contextLines: [
+          ['Source', 'Stock Check · Warehouse Stock'],
+          ['Facility', r.facility],
+          ['Item', r.item],
+          ['On hand', r.onHand],
+          ['Usable', r.usable],
+          ['Status', r.status],
+          ['Status since', r.date || '—']
+        ]
+      };
+    }
+    if (section === 'other') {
+      const r = applyStagePeriodFilter(data.otherLocations.rows || [], govStockCheckState, 'date')[i];
+      if (!r) return null;
+      return {
+        stage, section, index: i,
+        regardingTitle: r.item,
+        regardingMeta: `${r.from} → ${r.to} · ${r.status}`,
+        status: r.status,
+        date: r.date || '—',
+        subject: `Follow-up: Transfer — ${r.item}`,
+        contextLines: [
+          ['Source', 'Stock Check · Other Locations'],
+          ['From', r.from],
+          ['To', r.to],
+          ['Item', r.item],
+          ['Qty', r.qty],
+          ['Status', r.status],
+          ['Status since', r.date || '—']
+        ]
+      };
+    }
+    if (section === 'openpo') {
+      const r = applyStagePeriodFilter(data.openPos.rows || [], govStockCheckState, 'date')[i];
+      if (!r) return null;
+      return {
+        stage, section, index: i,
+        regardingTitle: r.po,
+        regardingMeta: `${r.item} · ${r.status}`,
+        status: r.status,
+        date: r.date || '—',
+        subject: `Follow-up: Open PO — ${r.po}`,
+        contextLines: [
+          ['Source', 'Stock Check · Approved Open POs'],
+          ['PO', r.po],
+          ['Vendor', r.vendor],
+          ['Item', r.item],
+          ['Facility', r.facility],
+          ['ETA', r.eta],
+          ['Status', r.status],
+          ['Status since', r.date || '—']
+        ]
+      };
+    }
+  }
+  return null;
+}
+
+function openNeedFollowUpModal(section, index) {
+  openStageFollowUpModal('need', section, index);
+}
+
+function openStageFollowUpModal(stage, section, index) {
+  const ctx = resolveFollowUpRowContext(stage, section, index);
+  if (!ctx) return;
+
+  needFollowUpContext = {
+    ...ctx,
+    selected: [],
+    pendingMessage: ''
+  };
+
+  const body = `<div class="kpi-detail need-row-detail follow-up-form">
+    <div class="follow-up-summary" aria-label="Follow-up context">
+      <div class="follow-up-summary-item">
+        <span>From</span>
+        <strong>${escapeFollowUpHtml(FOLLOW_UP_SENDER.name)}</strong>
+        <em>${escapeFollowUpHtml(FOLLOW_UP_SENDER.email)}</em>
+      </div>
+      <div class="follow-up-summary-item">
+        <span>Regarding</span>
+        <strong title="${escapeFollowUpHtml(ctx.regardingTitle)}">${escapeFollowUpHtml(ctx.regardingTitle)}</strong>
+        <em>${escapeFollowUpHtml(ctx.regardingMeta)}</em>
+      </div>
+    </div>
+
+    <div class="follow-up-field">
+      <label for="followUpSearch">
+        <span>To</span>
+        <span class="follow-up-field-hint" id="followUpSelectedCount">Search roles to add</span>
+      </label>
+      <div class="follow-up-picker" id="followUpPicker">
+        <div class="follow-up-chips" id="followUpChips" aria-live="polite"></div>
+        <div class="follow-up-search-wrap">
+          <i class="fa-solid fa-magnifying-glass" aria-hidden="true"></i>
+          <input type="search" id="followUpSearch" class="follow-up-search" placeholder="Type a role name (e.g. Finance, Stores, CMO)…" autocomplete="off" aria-autocomplete="list" aria-controls="followUpSuggestions" aria-expanded="false">
+        </div>
+        <div class="follow-up-suggestions" id="followUpSuggestions" role="listbox" aria-label="Matching roles"></div>
+      </div>
+      <div class="follow-up-quick" id="followUpQuick" aria-label="Suggested roles"></div>
+    </div>
+
+    <div class="follow-up-field">
+      <label for="followUpMessage">
+        <span>Message</span>
+        <span class="follow-up-field-hint">Required</span>
+      </label>
+      <textarea id="followUpMessage" class="follow-up-message" rows="5" placeholder="Write a clear follow-up note for the selected roles…"></textarea>
+    </div>
+
+    <div class="follow-up-actions">
+      <button type="button" class="btn btn-outline" onclick="modalGoBack()"><i class="fa-solid fa-arrow-left"></i> Back</button>
+      <div class="follow-up-actions-right">
+        <button type="button" class="btn btn-primary" id="followUpSendBtn" onclick="submitNeedFollowUp()" disabled>
+          <i class="fa-solid fa-paper-plane"></i> Send follow-up
+        </button>
+      </div>
+    </div>
+  </div>`;
+
+  openModal('Take Follow-up', body, { wide: true });
+  initFollowUpRecipientPicker();
+  updateFollowUpSendState();
+}
+
+function updateFollowUpSendState() {
+  const btn = document.getElementById('followUpSendBtn');
+  const msg = document.getElementById('followUpMessage');
+  if (!btn || !msg) return;
+  btn.disabled = !msg.value.trim();
+}
+
+function initFollowUpRecipientPicker() {
+  const picker = document.getElementById('followUpPicker');
+  const search = document.getElementById('followUpSearch');
+  if (!picker || !search) return;
+
+  const openPicker = () => {
+    picker.classList.add('is-open');
+    search.setAttribute('aria-expanded', 'true');
+    renderFollowUpSuggestions(search.value);
+  };
+  const closePicker = () => {
+    picker.classList.remove('is-open');
+    search.setAttribute('aria-expanded', 'false');
+  };
+
+  search.addEventListener('focus', openPicker);
+  search.addEventListener('click', openPicker);
+  search.addEventListener('input', () => {
+    openPicker();
+    renderFollowUpSuggestions(search.value);
+  });
+  search.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') {
+      closePicker();
+      search.blur();
+      return;
+    }
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      const first = getFollowUpSuggestionMatches(search.value)[0];
+      if (first) addFollowUpRecipient(first.role);
+    }
+  });
+
+  const message = document.getElementById('followUpMessage');
+  message?.addEventListener('input', updateFollowUpSendState);
+  message?.addEventListener('change', updateFollowUpSendState);
+
+  document.addEventListener('click', function followUpOutside(e) {
+    if (!document.getElementById('followUpPicker')) {
+      document.removeEventListener('click', followUpOutside);
+      return;
+    }
+    if (!picker.contains(e.target) && !e.target.closest?.('.follow-up-quick')) closePicker();
+  });
+
+  renderFollowUpChips();
+  renderFollowUpQuickPicks();
+  renderFollowUpSuggestions('');
+}
+
+function getFollowUpSuggestionMatches(query) {
+  if (!needFollowUpContext) return [];
+  const selectedRoles = new Set((needFollowUpContext.selected || []).map(r => r.role));
+  const q = String(query || '').trim().toLowerCase();
+  return getFollowUpRecipients().filter(r => {
+    if (selectedRoles.has(r.role)) return false;
+    if (!q) return true;
+    return r.role.toLowerCase().includes(q) ||
+      r.email.toLowerCase().includes(q) ||
+      String(r.name || '').toLowerCase().includes(q);
+  });
+}
+
+function renderFollowUpChips() {
+  const chips = document.getElementById('followUpChips');
+  const count = document.getElementById('followUpSelectedCount');
+  if (!chips || !needFollowUpContext) return;
+  const selected = needFollowUpContext.selected || [];
+  chips.innerHTML = selected.map(r => `
+    <span class="follow-up-chip" title="${escapeFollowUpHtml(r.email)}">
+      <span>${escapeFollowUpHtml(r.role)}</span>
+      <button type="button" onclick="removeFollowUpRecipient('${escapeFollowUpHtml(r.role).replace(/'/g, "\\'")}')" aria-label="Remove ${escapeFollowUpHtml(r.role)}">
+        <i class="fa-solid fa-xmark"></i>
+      </button>
+    </span>
+  `).join('');
+  if (count) {
+    count.textContent = selected.length
+      ? `${selected.length} selected`
+      : 'Search roles to add';
+  }
+  renderFollowUpQuickPicks();
+}
+
+function renderFollowUpQuickPicks() {
+  const wrap = document.getElementById('followUpQuick');
+  if (!wrap || !needFollowUpContext) return;
+  const preferred = [
+    'Resource Manager',
+    'Procurement Officer',
+    'Stores / Warehouse Manager',
+    'Finance / Budget Officer'
+  ];
+  const selectedRoles = new Set((needFollowUpContext.selected || []).map(r => r.role));
+  const picks = getFollowUpRecipients()
+    .filter(r => preferred.includes(r.role) && !selectedRoles.has(r.role))
+    .slice(0, 4);
+  if (!picks.length) {
+    wrap.innerHTML = '';
+    wrap.hidden = true;
+    return;
+  }
+  wrap.hidden = false;
+  wrap.innerHTML = `
+    <span class="follow-up-quick-label">Quick add</span>
+    <div class="follow-up-quick-list">
+      ${picks.map(r => `
+        <button type="button" class="follow-up-quick-btn" onclick="addFollowUpRecipient('${escapeFollowUpHtml(r.role).replace(/'/g, "\\'")}')">
+          ${escapeFollowUpHtml(r.role)}
+        </button>
+      `).join('')}
+    </div>
+  `;
+}
+
+function renderFollowUpSuggestions(query) {
+  const list = document.getElementById('followUpSuggestions');
+  if (!list || !needFollowUpContext) return;
+  const q = String(query || '').trim();
+  const matches = getFollowUpSuggestionMatches(query);
+
+  if (!q) {
+    list.innerHTML = `<div class="follow-up-empty">
+      <strong>Type to find a role</strong>
+      <span>Search scales cleanly as more account roles are added. Use Quick add for common recipients.</span>
+    </div>`;
+    return;
+  }
+
+  if (!matches.length) {
+    list.innerHTML = `<div class="follow-up-empty">No roles match “${escapeFollowUpHtml(q)}”.</div>`;
+    return;
+  }
+
+  list.innerHTML = matches.map(r => `
+    <button type="button" class="follow-up-suggestion" role="option" onclick="addFollowUpRecipient('${escapeFollowUpHtml(r.role).replace(/'/g, "\\'")}')">
+      <span>
+        <strong>${escapeFollowUpHtml(r.role)}</strong>
+        <em>${escapeFollowUpHtml(r.email)}</em>
+      </span>
+      <span class="follow-up-suggestion-add">Add</span>
+    </button>
+  `).join('');
+}
+
+function addFollowUpRecipient(role) {
+  if (!needFollowUpContext) return;
+  const rec = getFollowUpRecipients().find(r => r.role === role);
+  if (!rec) return;
+  if ((needFollowUpContext.selected || []).some(r => r.role === role)) return;
+  needFollowUpContext.selected.push({ ...rec });
+  const search = document.getElementById('followUpSearch');
+  if (search) search.value = '';
+  renderFollowUpChips();
+  renderFollowUpSuggestions('');
+  document.getElementById('followUpPicker')?.classList.add('is-open');
+  search?.focus();
+}
+
+function removeFollowUpRecipient(role) {
+  if (!needFollowUpContext) return;
+  needFollowUpContext.selected = (needFollowUpContext.selected || []).filter(r => r.role !== role);
+  renderFollowUpChips();
+  renderFollowUpSuggestions(document.getElementById('followUpSearch')?.value || '');
+}
+
+function submitNeedFollowUp() {
+  const recipients = needFollowUpContext?.selected || [];
+  const message = document.getElementById('followUpMessage')?.value.trim() || '';
+  if (!recipients.length) {
+    showWfAlert('Please add at least one recipient role.');
+    document.getElementById('followUpSearch')?.focus();
+    return;
+  }
+  if (!message) {
+    showWfAlert('Please enter a follow-up message.');
+    document.getElementById('followUpMessage')?.focus();
+    updateFollowUpSendState();
+    return;
+  }
+
+  needFollowUpContext.pendingMessage = message;
+  openFollowUpConfirmModal();
+}
+
+function openFollowUpConfirmModal() {
+  const recipients = needFollowUpContext?.selected || [];
+  if (!recipients.length || !needFollowUpContext?.pendingMessage) return;
+
+  const body = `<div class="follow-up-confirm">
+    <p class="follow-up-confirm-lead">
+      Send this follow-up from <strong>${escapeFollowUpHtml(FOLLOW_UP_SENDER.name)}</strong>
+      (<strong>${escapeFollowUpHtml(FOLLOW_UP_SENDER.email)}</strong>) to
+      <strong>${recipients.length}</strong> recipient${recipients.length === 1 ? '' : 's'}?
+    </p>
+    <ul class="follow-up-confirm-list">
+      ${recipients.map(r => `
+        <li>
+          <strong>${escapeFollowUpHtml(r.role)}</strong>
+          <span>${escapeFollowUpHtml(r.name || r.role)} · ${escapeFollowUpHtml(r.email)}</span>
+        </li>
+      `).join('')}
+    </ul>
+    <div class="follow-up-actions">
+      <button type="button" class="btn btn-outline" onclick="modalGoBack()"><i class="fa-solid fa-xmark"></i> Cancel</button>
+      <div class="follow-up-actions-right">
+        <button type="button" class="btn btn-primary" onclick="confirmNeedFollowUpSend()">
+          <i class="fa-solid fa-paper-plane"></i> Confirm &amp; send
+        </button>
+      </div>
+    </div>
+  </div>`;
+
+  openModal('Confirm follow-up', body, { wide: true });
+}
+
+function confirmNeedFollowUpSend() {
+  const recipients = needFollowUpContext?.selected || [];
+  const message = needFollowUpContext?.pendingMessage || '';
+  const ctx = needFollowUpContext || {};
+  if (!recipients.length || !message) {
+    showWfAlert('Follow-up details are incomplete.');
+    return;
+  }
+
+  const subject = ctx.subject || 'MP Health Procurement — Follow-up';
+  const detailLines = (ctx.contextLines || [
+    ['Status', ctx.status || '—'],
+    ['Status since', ctx.date || '—']
+  ]).map(([label, value]) => `${label}: ${value}`);
+  const bodyLines = [
+    `Dear Colleague,`,
+    ``,
+    message,
+    ``,
+    `---`,
+    `Context`,
+    ...detailLines,
+    ``,
+    `Sent by: ${FOLLOW_UP_SENDER.name} <${FOLLOW_UP_SENDER.email}>`,
+    `MP Health Procurement Portal`
+  ];
+  const mailto = `mailto:${recipients.map(r => encodeURIComponent(r.email)).join(',')}` +
+    `?subject=${encodeURIComponent(subject)}` +
+    `&body=${encodeURIComponent(bodyLines.join('\n'))}`;
+
+  try {
+    const mailLink = document.createElement('a');
+    mailLink.href = mailto;
+    mailLink.target = '_blank';
+    mailLink.rel = 'noopener';
+    document.body.appendChild(mailLink);
+    mailLink.click();
+    mailLink.remove();
+  } catch (_) {
+    /* Prototype: continue with success even if mail client is unavailable */
+  }
+
+  openFollowUpSuccessModal(recipients);
+}
+
+function openFollowUpSuccessModal(recipients) {
+  const list = (recipients || []).map(r => `
+    <li>
+      <strong>${escapeFollowUpHtml(r.role)}</strong>
+      <span>${escapeFollowUpHtml(r.name || r.role)} · ${escapeFollowUpHtml(r.email)}</span>
+    </li>
+  `).join('');
+
+  const body = `<div class="follow-up-success">
+    <div class="follow-up-success-icon"><i class="fa-solid fa-circle-check"></i></div>
+    <p class="follow-up-success-text">Email sent successfully</p>
+    <p class="follow-up-success-hint">
+      From <strong>${escapeFollowUpHtml(FOLLOW_UP_SENDER.name)}</strong>
+      (${escapeFollowUpHtml(FOLLOW_UP_SENDER.email)})
+    </p>
+    <ul class="follow-up-confirm-list" style="text-align:left">
+      ${list}
+    </ul>
+    <div class="logout-confirm-actions">
+      <button type="button" class="btn btn-primary" onclick="finishFollowUpSuccess()">
+        <i class="fa-solid fa-check"></i> Done
+      </button>
+    </div>
+  </div>`;
+
+  openModal('Email sent', body, { wide: true, replace: true });
+  showWfAlert(`Follow-up email sent to ${recipients.length} recipient(s).`, 'success');
+}
+
+function finishFollowUpSuccess() {
+  needFollowUpContext = null;
+  // Leave success -> leave follow-up form -> return to Assessment detail
+  modalGoBack();
+  modalGoBack();
 }
 
 function openNeedRowDetail(section, index) {
@@ -4837,16 +5865,20 @@ function openNeedRowDetail(section, index) {
       <div class="tender-detail-stats tender-detail-stats--4">
         <div class="tender-stat"><span>On hand</span><strong>${r.onHand.toLocaleString('en-IN')}</strong></div>
         <div class="tender-stat"><span>Reorder point</span><strong>${r.reorder.toLocaleString('en-IN')}</strong></div>
-        <div class="tender-stat"><span>Days of cover</span><strong>${r.coverDays}</strong></div>
         <div class="tender-stat"><span>Status</span><strong><span class="badge badge-${needStatusBadge(r.status)}">${r.status}</span></strong></div>
+        <div class="tender-stat"><span>Status since</span><strong>${r.date || '—'}</strong></div>
       </div>
       <div class="tender-detail-section">
-        <h4>Assessment</h4>
+        <div class="tender-detail-section-head">
+          <h4>Assessment</h4>
+          ${followUpActionButton('need', 'stock', i)}
+        </div>
         <div class="data-table-wrap">
           <table class="data-table data-table--modal">
             <tbody>
               <tr><td>Facility</td><td><strong>${r.facility}</strong></td></tr>
               <tr><td>SKU / Item</td><td>${r.sku}</td></tr>
+              <tr><td>Days of cover</td><td>${r.coverDays}</td></tr>
               <tr><td>Fill vs reorder</td><td>${fillPct}%</td></tr>
               <tr><td>Shortfall to reorder</td><td>${shortfall.toLocaleString('en-IN')} units</td></tr>
               <tr><td>Recommended next step</td><td>${r.status === 'Critical' || r.status === 'Low' ? 'Prioritize indent / redistribution before fresh tender' : 'Monitor consumption; no immediate action'}</td></tr>
@@ -4868,10 +5900,22 @@ function openNeedRowDetail(section, index) {
         <div class="tender-stat"><span>Facility type</span><strong>${r.category}</strong></div>
         <div class="tender-stat"><span>OPD (month)</span><strong>${r.opd.toLocaleString('en-IN')}</strong></div>
         <div class="tender-stat"><span>IPD bed occ.</span><strong>${r.ipdBedOcc}</strong></div>
-        <div class="tender-stat"><span>Trend</span><strong>${r.trend}</strong></div>
+        <div class="tender-stat"><span>Status since</span><strong>${r.date || '—'}</strong></div>
       </div>
       <div class="tender-detail-section">
-        <h4>Demand implication</h4>
+        <div class="tender-detail-section-head">
+          <h4>Demand implication</h4>
+          ${followUpActionButton('need', 'patient', i)}
+        </div>
+        <div class="data-table-wrap" style="margin-bottom:0.75rem">
+          <table class="data-table data-table--modal">
+            <tbody>
+              <tr><td>Facility</td><td><strong>${r.facility}</strong></td></tr>
+              <tr><td>Trend</td><td>${r.trend}</td></tr>
+              <tr><td>Status since</td><td><strong>${r.date || '—'}</strong></td></tr>
+            </tbody>
+          </table>
+        </div>
         <p>Higher OPD and bed occupancy increase formulary burn-rate for antipyretics, IV fluids, and antibiotics. Use this load signal when consolidating district demand (Stage 4).</p>
       </div>
       <div class="modal-inline-actions">
@@ -4887,11 +5931,14 @@ function openNeedRowDetail(section, index) {
       <div class="tender-detail-stats tender-detail-stats--4">
         <div class="tender-stat"><span>Cases</span><strong>${r.cases}</strong></div>
         <div class="tender-stat"><span>Trend</span><strong>${r.trend}</strong></div>
-        <div class="tender-stat"><span>SKU focus</span><strong>${r.skuFocus}</strong></div>
         <div class="tender-stat"><span>Priority</span><strong><span class="badge badge-${needStatusBadge(r.priority)}">${r.priority}</span></strong></div>
+        <div class="tender-stat"><span>Status since</span><strong>${r.date || '—'}</strong></div>
       </div>
       <div class="tender-detail-section">
-        <h4>Procurement focus</h4>
+        <div class="tender-detail-section-head">
+          <h4>Procurement focus</h4>
+          ${followUpActionButton('need', 'disease', i)}
+        </div>
         <p>Ensure buffer stock and open-PO coverage for <strong>${r.skuFocus}</strong>. Priority <strong>${r.priority}</strong> items should be flagged in Gap Analysis before indent raise.</p>
       </div>
       <div class="modal-inline-actions">
@@ -4907,12 +5954,24 @@ function openNeedRowDetail(section, index) {
       <div class="tender-detail-stats tender-detail-stats--4">
         <div class="tender-stat"><span>Required</span><strong>${r.required}</strong></div>
         <div class="tender-stat"><span>Available</span><strong>${r.available}</strong></div>
-        <div class="tender-stat"><span>Open PO</span><strong>${r.openPo}</strong></div>
         <div class="tender-stat"><span>Gap</span><strong>${r.gap}</strong></div>
+        <div class="tender-stat"><span>Status since</span><strong>${r.date || '—'}</strong></div>
       </div>
       <div class="tender-detail-section">
-        <h4>Recommended action</h4>
+        <div class="tender-detail-section-head">
+          <h4>Recommended action</h4>
+          ${followUpActionButton('need', 'gap', i)}
+        </div>
         <p><span class="badge badge-info">${r.action}</span></p>
+        <div class="data-table-wrap" style="margin-top:0.75rem">
+          <table class="data-table data-table--modal">
+            <tbody>
+              <tr><td>Item</td><td><strong>${r.item}</strong></td></tr>
+              <tr><td>Open PO</td><td>${r.openPo}</td></tr>
+              <tr><td>Status since</td><td><strong>${r.date || '—'}</strong></td></tr>
+            </tbody>
+          </table>
+        </div>
         <p class="report-footnote mt-2"><i class="fa-solid fa-circle-info"></i> Prefer redistribution / open-PO utilization before raising a fresh tender for the residual gap.</p>
       </div>
       <div class="modal-inline-actions">
@@ -5098,7 +6157,10 @@ function refreshNeedIdentificationApi() {
 function renderWorkflowDetailPanel(step, progress, total) {
   const canEdit = currentRole === 'vendor'
     ? vendorCanEditStage(step.id, progress)
-    : step.id <= progress;
+    : (step.id <= progress || step.id === 14);
+  const showStatusBadge = step.id !== 14;
+  const badgeKind = step.id < progress ? 'success' : step.id === progress ? 'info' : 'muted';
+  const badgeLabel = step.id < progress ? 'Completed' : step.id === progress ? 'In Progress' : 'Upcoming';
   return `
     ${renderWorkflowViewBanner(step, progress)}
     <div class="wf-detail-header">
@@ -5107,7 +6169,7 @@ function renderWorkflowDetailPanel(step, progress, total) {
         <h3>${step.name}</h3>
         <p>${step.desc}</p>
       </div>
-      <span class="badge badge-${step.id < progress ? 'success' : step.id === progress ? 'info' : 'muted'}">${step.id < progress ? 'Completed' : step.id === progress ? 'In Progress' : 'Upcoming'}</span>
+      ${showStatusBadge ? `<span class="badge badge-${badgeKind}">${badgeLabel}</span>` : ''}
     </div>
     ${renderWorkflowChecklist(step)}
     ${renderWorkflowDetail(step, canEdit)}
@@ -5170,6 +6232,10 @@ function renderWorkflowDetail(step, canEdit = true) {
 
   if (currentRole === 'gov' && step.id === 13) {
     return renderPaymentStage(canEdit);
+  }
+
+  if (currentRole === 'gov' && step.id === 14) {
+    return renderRenewalStage(canEdit);
   }
 
   if (currentRole === 'vendor' && step.id === 1) {
@@ -5989,7 +7055,7 @@ function renderLifecycleGuideContent(highlightStage) {
     <div class="guide-modal-intro">
       <div class="guide-modal-intro-icon"><i class="fa-solid fa-book-open"></i></div>
       <div>
-        <p class="guide-modal-lead">${isGov ? 'Government procurement lifecycle — 13 stages from need identification to payment.' : 'Vendor / Bidder lifecycle — 9 stages from registration to payment tracking.'}</p>
+        <p class="guide-modal-lead">${isGov ? 'Government procurement lifecycle — 14 stages from need identification to renewal.' : 'Vendor / Bidder lifecycle — 9 stages from registration to payment tracking.'}</p>
         <p class="guide-modal-meta">GFR 2017 compliant · Click any stage below for checklist and guidance · Your current progress: <strong>Stage ${progress}</strong></p>
       </div>
     </div>
@@ -6180,6 +7246,24 @@ function selectWorkflowStep(id) {
   const steps = getWorkflowSteps();
   const step = steps.find(s => s.id === id);
   if (!step) return;
+
+  if (currentRole === 'gov') {
+    const from = currentWorkflowStep;
+    // From Stage 1, Resource Manager may jump directly to Stage 14 (Renewal).
+    // After entering Stages 2–13, Stage 14 is only reachable sequentially (from 13 or already on 14).
+    if (id === 14 && from !== 14) {
+      const allowedJump = from === 1 && !govSequentialCommitted;
+      const allowedSequential = from === 13 || govLifecycleComplete;
+      if (!allowedJump && !allowedSequential) {
+        showWfAlert('Once you proceed past Stage 1 into the sequential lifecycle (Stage 2 onwards), you cannot jump directly to Renewal (Stage 14). Complete Stages 2–13 in order, or reopen Need Identification to Pay to start again at Stage 1.');
+        return;
+      }
+    }
+    if (id >= 2 && id <= 13) {
+      govSequentialCommitted = true;
+    }
+  }
+
   if (currentRole === 'gov' && id > 3 && currentWorkflowStep === 3 && !govIndentState.saved) {
     showWfAlert('Please save the indent (Manual or Automated) before proceeding to the next stage.');
     return;
@@ -7804,7 +8888,9 @@ function setCategory(cat) {
   govGrnState.page = 1;
   govInvoiceState.page = 1;
   govPaymentState.page = 1;
+  govRenewalState.page = 1;
   govNeedState.period = 'all';
+  govStockCheckState.period = 'all';
   govConsolidationState.period = 'all';
   govBudgetState.period = 'all';
   govTenderPrepState.period = 'all';
@@ -7815,6 +8901,7 @@ function setCategory(cat) {
   govGrnState.period = 'all';
   govInvoiceState.period = 'all';
   govPaymentState.period = 'all';
+  govRenewalState.period = 'all';
   updatePageMeta();
   if (PAGES_WITH_CATEGORY.has(currentPage)) {
     updateCategoryBarInPlace();
@@ -8324,7 +9411,7 @@ function openCategorySpendDetail(focusCategory) {
         <h4>${cat === 'Drugs' ? 'Types of drugs / items' : 'Item types &amp; tender coverage'}</h4>
         <div class="data-table-wrap kpi-detail-table">
             <table class="data-table data-table--modal">
-              <thead><tr><th>S.No</th><th>Item</th><th>Type</th><th>Category</th><th>Linked tenders</th><th>Est. spend</th><th>Facilities</th></tr></thead>
+              <thead><tr><th>S.No</th><th>Item</th><th>Type</th><th>Category</th><th>Linked tenders</th><th>Spend (Approx)</th><th>Facilities</th></tr></thead>
               <tbody>
               ${items.map((i, idx) => `<tr>
                 <td>${idx + 1}</td>
@@ -8414,7 +9501,7 @@ function openChartTrendDetail(chartKey, seriesLabel, periodLabel, value) {
           <h4>Key drug / item lines driving spend</h4>
           <div class="data-table-wrap kpi-detail-table">
             <table class="data-table data-table--modal">
-              <thead><tr><th>S.No</th><th>Item</th><th>Type</th><th>Est. spend</th><th>Tenders</th></tr></thead>
+              <thead><tr><th>S.No</th><th>Item</th><th>Type</th><th>Spend (Approx)</th><th>Tenders</th></tr></thead>
               <tbody>
                 ${items.map((i, idx) => `<tr>
                   <td>${idx + 1}</td>
@@ -8747,7 +9834,7 @@ function openTenderDetail(tenderId) {
       <h4>${t.category === 'Drugs' ? 'Drug / item lines covered' : 'Item lines covered'}</h4>
       <div class="data-table-wrap kpi-detail-table">
         <table class="data-table data-table--modal">
-          <thead><tr><th>S.No</th><th>Item</th><th>Type</th><th>Est. spend</th><th>Facilities</th></tr></thead>
+          <thead><tr><th>S.No</th><th>Item</th><th>Type</th><th>Spend (Approx)</th><th>Facilities</th></tr></thead>
           <tbody>
             ${linkedItems.map((i, idx) => `<tr>
               <td>${idx + 1}</td>

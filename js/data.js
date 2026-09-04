@@ -15,7 +15,8 @@ const GOV_WORKFLOW = [
   { id: 10, name: 'Purchase Order', desc: 'Generate PO after contract execution with delivery schedule and terms.', status: 'pending' },
   { id: 11, name: 'GRN & Inspection', desc: 'Goods receipt, quality testing, batch verification and acceptance certificate.', status: 'pending' },
   { id: 12, name: 'Invoice Matching', desc: 'Three-way match: PO, GRN, and invoice verification.', status: 'pending' },
-  { id: 13, name: 'Payment', desc: 'Process payment within contract terms, apply LD if applicable.', status: 'pending' }
+  { id: 13, name: 'Payment', desc: 'Process payment within contract terms, apply LD if applicable.', status: 'pending' },
+  { id: 14, name: 'Renewal', desc: 'Review vendor renewals, attached tender documents, and finalize renewals as Resource Manager.', status: 'pending' }
 ];
 
 const WORKFLOW_GUIDE_PATH = 'assets/MP-Health-Procurement-Lifecycle-Guide.html';
@@ -45,7 +46,8 @@ const GOV_STAGE_CHECKLIST = {
   10: ['PO generation post-contract', 'Delivery schedule & terms', 'Vendor notification'],
   11: ['GRN & quality inspection', 'Batch verification', 'Acceptance certificate'],
   12: ['Three-way match: PO, GRN, Invoice', 'Deductions / LD if applicable', 'Finance verification'],
-  13: ['Payment processing', 'Audit trail entry', 'Contract closure records']
+  13: ['Payment processing', 'Audit trail entry', 'Contract closure records'],
+  14: ['Review renewal vendor list', 'Verify renewal period & status', 'Download attached tender / addendum / corrigendum PDFs', 'Finalize renewal with optional supporting document']
 };
 
 const VENDOR_STAGE_TIPS = {
@@ -90,10 +92,10 @@ const NEED_IDENTIFICATION_API = {
     daysOfCover: 11,
     status: 'Attention',
     rows: [
-      { facility: 'Gandhi Medical College', sku: 'Paracetamol 500mg', onHand: 42000, reorder: 80000, coverDays: 8, status: 'Critical' },
-      { facility: 'M.Y. Hospital Indore', sku: 'IV Fluids (NS)', onHand: 18500, reorder: 25000, coverDays: 12, status: 'Low' },
-      { facility: 'NSCB Jabalpur', sku: 'Insulin 40 IU', onHand: 9200, reorder: 15000, coverDays: 9, status: 'Critical' },
-      { facility: 'GR Medical Gwalior', sku: 'Amoxicillin 250mg', onHand: 61000, reorder: 45000, coverDays: 22, status: 'Adequate' }
+      { facility: 'Gandhi Medical College', sku: 'Paracetamol 500mg', onHand: 42000, reorder: 80000, coverDays: 8, status: 'Critical', date: '28-08-2026' },
+      { facility: 'M.Y. Hospital Indore', sku: 'IV Fluids (NS)', onHand: 18500, reorder: 25000, coverDays: 12, status: 'Low', date: '01-09-2026' },
+      { facility: 'NSCB Jabalpur', sku: 'Insulin 40 IU', onHand: 9200, reorder: 15000, coverDays: 9, status: 'Critical', date: '25-08-2026' },
+      { facility: 'GR Medical Gwalior', sku: 'Amoxicillin 250mg', onHand: 61000, reorder: 45000, coverDays: 22, status: 'Adequate', date: '03-09-2026' }
     ]
   },
   patientLoad: {
@@ -105,10 +107,10 @@ const NEED_IDENTIFICATION_API = {
     highLoadFacilities: 5,
     status: 'Elevated',
     rows: [
-      { facility: 'Gandhi Medical College', opd: 48500, ipdBedOcc: '92%', trend: '↑ 8%', category: 'Tertiary' },
-      { facility: 'M.Y. Hospital Indore', opd: 52100, ipdBedOcc: '89%', trend: '↑ 5%', category: 'Tertiary' },
-      { facility: 'District Hospital Rewa', opd: 18200, ipdBedOcc: '78%', trend: '↑ 3%', category: 'Secondary' },
-      { facility: 'CHC Sehore', opd: 9400, ipdBedOcc: '71%', trend: '→ 0%', category: 'CHC' }
+      { facility: 'Gandhi Medical College', opd: 48500, ipdBedOcc: '92%', trend: '↑ 8%', category: 'Tertiary', date: '02-09-2026' },
+      { facility: 'M.Y. Hospital Indore', opd: 52100, ipdBedOcc: '89%', trend: '↑ 5%', category: 'Tertiary', date: '01-09-2026' },
+      { facility: 'District Hospital Rewa', opd: 18200, ipdBedOcc: '78%', trend: '↑ 3%', category: 'Secondary', date: '31-08-2026' },
+      { facility: 'CHC Sehore', opd: 9400, ipdBedOcc: '71%', trend: '→ 0%', category: 'CHC', date: '03-09-2026' }
     ]
   },
   diseaseBurden: {
@@ -120,10 +122,10 @@ const NEED_IDENTIFICATION_API = {
     riskScore: 'High',
     status: 'High',
     rows: [
-      { condition: 'Seasonal Influenza / ARI', cases: '28,400', trend: '↑', skuFocus: 'Antipyretics, Antibiotics', priority: 'High' },
-      { condition: 'Vector-borne (Dengue / Malaria)', cases: '6,120', trend: '↑', skuFocus: 'IV Fluids, Antimalarials', priority: 'Critical' },
-      { condition: 'NCD — Diabetes', cases: '41,800', trend: '↑', skuFocus: 'Insulin, Oral hypoglycemics', priority: 'High' },
-      { condition: 'Maternal & Child Health', cases: '12,600', trend: '→', skuFocus: 'Iron, Vaccines, ORS', priority: 'Medium' }
+      { condition: 'Seasonal Influenza / ARI', cases: '28,400', trend: '↑', skuFocus: 'Antipyretics, Antibiotics', priority: 'High', date: '30-08-2026' },
+      { condition: 'Vector-borne (Dengue / Malaria)', cases: '6,120', trend: '↑', skuFocus: 'IV Fluids, Antimalarials', priority: 'Critical', date: '02-09-2026' },
+      { condition: 'NCD — Diabetes', cases: '41,800', trend: '↑', skuFocus: 'Insulin, Oral hypoglycemics', priority: 'High', date: '20-08-2026' },
+      { condition: 'Maternal & Child Health', cases: '12,600', trend: '→', skuFocus: 'Iron, Vaccines, ORS', priority: 'Medium', date: '01-09-2026' }
     ]
   },
   gapAnalysis: {
@@ -136,10 +138,10 @@ const NEED_IDENTIFICATION_API = {
     estimatedSavings: '₹2.1 Cr',
     status: 'Action Required',
     rows: [
-      { item: 'Paracetamol 500mg Tab', required: '12.0 L packs', available: '4.2 L', openPo: '1.5 L', gap: '6.3 L', action: 'Fresh tender' },
-      { item: 'IV Normal Saline 500ml', required: '2.8 L units', available: '1.1 L', openPo: '0.4 L', gap: '1.3 L', action: 'Fresh tender' },
-      { item: 'Insulin 40 IU Vial', required: '45,000', available: '18,200', openPo: '8,000', gap: '18,800', action: 'Rate contract top-up' },
-      { item: 'Surgical Gloves (pair)', required: '9.5 L', available: '6.2 L', openPo: '2.0 L', gap: '1.3 L', action: 'Redistribute + PO' }
+      { item: 'Paracetamol 500mg Tab', required: '12.0 L packs', available: '4.2 L', openPo: '1.5 L', gap: '6.3 L', action: 'Fresh tender', date: '03-09-2026' },
+      { item: 'IV Normal Saline 500ml', required: '2.8 L units', available: '1.1 L', openPo: '0.4 L', gap: '1.3 L', action: 'Fresh tender', date: '03-09-2026' },
+      { item: 'Insulin 40 IU Vial', required: '45,000', available: '18,200', openPo: '8,000', gap: '18,800', action: 'Rate contract top-up', date: '29-08-2026' },
+      { item: 'Surgical Gloves (pair)', required: '9.5 L', available: '6.2 L', openPo: '2.0 L', gap: '1.3 L', action: 'Redistribute + PO', date: '01-09-2026' }
     ]
   }
 };
@@ -169,10 +171,10 @@ const STOCK_CHECK_API = {
     deficitSkus: 22,
     status: 'Verified',
     rows: [
-      { facility: 'Central Warehouse — Bhopal', item: 'Paracetamol 500mg Tab', onHand: '2.8 L packs', reorder: '2.0 L', usable: '2.6 L', mlScore: 92, recommendation: 'Release to GMC Bhopal', status: 'Surplus' },
-      { facility: 'Central Warehouse — Bhopal', item: 'IV Normal Saline 500ml', onHand: '0.9 L units', reorder: '1.2 L', usable: '0.85 L', mlScore: 78, recommendation: 'Hold buffer; await open PO', status: 'Low' },
-      { facility: 'Regional Store — Indore', item: 'Surgical Gloves (pair)', onHand: '4.1 L', reorder: '3.0 L', usable: '3.9 L', mlScore: 88, recommendation: 'Redistribute 0.8 L to Rewa', status: 'Surplus' },
-      { facility: 'Regional Store — Jabalpur', item: 'Amoxicillin 250mg', onHand: '1.1 L packs', reorder: '1.5 L', usable: '1.0 L', mlScore: 71, recommendation: 'Top-up via open PO INV-0910', status: 'Low' }
+      { facility: 'Central Warehouse — Bhopal', item: 'Paracetamol 500mg Tab', onHand: '2.8 L packs', reorder: '2.0 L', usable: '2.6 L', mlScore: 92, recommendation: 'Release to GMC Bhopal', status: 'Surplus', date: '01-09-2026' },
+      { facility: 'Central Warehouse — Bhopal', item: 'IV Normal Saline 500ml', onHand: '0.9 L units', reorder: '1.2 L', usable: '0.85 L', mlScore: 78, recommendation: 'Hold buffer; await open PO', status: 'Low', date: '28-08-2026' },
+      { facility: 'Regional Store — Indore', item: 'Surgical Gloves (pair)', onHand: '4.1 L', reorder: '3.0 L', usable: '3.9 L', mlScore: 88, recommendation: 'Redistribute 0.8 L to Rewa', status: 'Surplus', date: '02-09-2026' },
+      { facility: 'Regional Store — Jabalpur', item: 'Amoxicillin 250mg', onHand: '1.1 L packs', reorder: '1.5 L', usable: '1.0 L', mlScore: 71, recommendation: 'Top-up via open PO INV-0910', status: 'Low', date: '30-08-2026' }
     ]
   },
   otherLocations: {
@@ -184,10 +186,10 @@ const STOCK_CHECK_API = {
     leadDays: '2–5',
     status: 'Available',
     rows: [
-      { from: 'M.Y. Hospital Indore', to: 'District Hospital Rewa', item: 'Insulin 40 IU Vial', qty: '6,200', coverGain: '+9 days', mlScore: 94, recommendation: 'Approve transfer', status: 'Recommended' },
-      { from: 'NSCB Jabalpur', to: 'CHC Sehore', item: 'ORS Sachets', qty: '18,000', coverGain: '+14 days', mlScore: 86, recommendation: 'Approve transfer', status: 'Recommended' },
-      { from: 'GR Medical Gwalior', to: 'Gandhi Medical College', item: 'PPE Kit', qty: '2,400', coverGain: '+6 days', mlScore: 81, recommendation: 'Partial transfer (60%)', status: 'Review' },
-      { from: 'District Hospital Rewa', to: 'M.Y. Hospital Indore', item: 'Paracetamol 500mg Tab', qty: '0.4 L', coverGain: '+3 days', mlScore: 64, recommendation: 'Defer — low surplus margin', status: 'Hold' }
+      { from: 'M.Y. Hospital Indore', to: 'District Hospital Rewa', item: 'Insulin 40 IU Vial', qty: '6,200', coverGain: '+9 days', mlScore: 94, recommendation: 'Approve transfer', status: 'Recommended', date: '03-09-2026' },
+      { from: 'NSCB Jabalpur', to: 'CHC Sehore', item: 'ORS Sachets', qty: '18,000', coverGain: '+14 days', mlScore: 86, recommendation: 'Approve transfer', status: 'Recommended', date: '01-09-2026' },
+      { from: 'GR Medical Gwalior', to: 'Gandhi Medical College', item: 'PPE Kit', qty: '2,400', coverGain: '+6 days', mlScore: 81, recommendation: 'Partial transfer (60%)', status: 'Review', date: '29-08-2026' },
+      { from: 'District Hospital Rewa', to: 'M.Y. Hospital Indore', item: 'Paracetamol 500mg Tab', qty: '0.4 L', coverGain: '+3 days', mlScore: 64, recommendation: 'Defer — low surplus margin', status: 'Hold', date: '27-08-2026' }
     ]
   },
   openPos: {
@@ -199,10 +201,10 @@ const STOCK_CHECK_API = {
     delayed: 1,
     status: 'Tracked',
     rows: [
-      { po: 'PO-2026-0089', vendor: 'MediSupply India', item: 'Hospital Linen — Batch 3', qty: '12,000 sets', eta: '06-09-2026', facility: 'GMC Bhopal', mlScore: 90, recommendation: 'Expedite GRN slot', status: 'On Track' },
-      { po: 'PO-2025-0234', vendor: 'PharmaCare Distributors', item: 'Essential Medicines Q3', qty: 'Mixed SKU', eta: '10-09-2026', facility: 'Central Warehouse', mlScore: 75, recommendation: 'Net against gap analysis', status: 'On Track' },
-      { po: 'PO-2026-0095', vendor: 'MedEquip Solutions', item: 'Patient Monitor accessories', qty: '48 kits', eta: '18-09-2026', facility: 'M.Y. Indore', mlScore: 58, recommendation: 'Flag delay risk', status: 'At Risk' },
-      { po: 'PO-2026-0102', vendor: 'CleanCare Supplies', item: 'Disposable Gloves', qty: '1.5 L pairs', eta: '08-09-2026', facility: 'Regional Store Indore', mlScore: 84, recommendation: 'Use before fresh tender', status: 'On Track' }
+      { po: 'PO-2026-0089', vendor: 'MediSupply India', item: 'Hospital Linen — Batch 3', qty: '12,000 sets', eta: '06-09-2026', facility: 'GMC Bhopal', mlScore: 90, recommendation: 'Expedite GRN slot', status: 'On Track', date: '02-09-2026' },
+      { po: 'PO-2025-0234', vendor: 'PharmaCare Distributors', item: 'Essential Medicines Q3', qty: 'Mixed SKU', eta: '10-09-2026', facility: 'Central Warehouse', mlScore: 75, recommendation: 'Net against gap analysis', status: 'On Track', date: '25-08-2026' },
+      { po: 'PO-2026-0095', vendor: 'MedEquip Solutions', item: 'Patient Monitor accessories', qty: '48 kits', eta: '18-09-2026', facility: 'M.Y. Indore', mlScore: 58, recommendation: 'Flag delay risk', status: 'At Risk', date: '30-08-2026' },
+      { po: 'PO-2026-0102', vendor: 'CleanCare Supplies', item: 'Disposable Gloves', qty: '1.5 L pairs', eta: '08-09-2026', facility: 'Regional Store Indore', mlScore: 84, recommendation: 'Use before fresh tender', status: 'On Track', date: '01-09-2026' }
     ]
   },
   redistributable: {
@@ -738,6 +740,80 @@ const PAYMENT_STAGE_DATA = {
   ]
 };
 
+const RENEWAL_STAGE_DATA = {
+  meta: {
+    lastUpdated: '04-09-2026 14:00 IST',
+    note: 'Resource Managers review vendor renewals, download attached tender documents, and finalize renewals with optional supporting uploads.'
+  },
+  renewals: [
+    {
+      id: 'REN-2026-0012', vendorId: 'VND-MP-000123', vendorName: 'MediSupply India Pvt Ltd', category: 'Drugs',
+      renewalFrom: '01-04-2026', renewalTo: '31-03-2027', renewalDate: '15-08-2026',
+      renewalType: 'Fresh renewal', status: 'Pending finalization', contractId: 'CNT-2025-0088', value: '₹4.2 Cr',
+      contact: 'ops@medisupply.in · +91 755 400 2100', gstin: '23AABCM1234A1Z5',
+      remarks: 'Rate contract due for annual renewal under Drugs formulary.',
+      documents: [
+        { id: 'DOC-REN-0012-A', name: 'Fresh Tender NIT — Essential Medicines RC', type: 'Fresh tender', file: 'REN-0012-Fresh-Tender-NIT.pdf' },
+        { id: 'DOC-REN-0012-B', name: 'Addendum — Shelf-life clause', type: 'Addendum', file: 'REN-0012-Addendum-ShelfLife.pdf' }
+      ]
+    },
+    {
+      id: 'REN-2026-0018', vendorId: 'VND-MP-000456', vendorName: 'HealthTech Solutions', category: 'Equipment',
+      renewalFrom: '01-07-2026', renewalTo: '30-06-2027', renewalDate: '22-08-2026',
+      renewalType: 'Extra quality order', status: 'Under review', contractId: 'CNT-2025-0142', value: '₹1.8 Cr',
+      contact: 'support@healthtech.in · +91 731 255 8800', gstin: '23AABCH4567B1Z2',
+      remarks: 'Additional quality order against existing AMC for digital X-Ray fleet.',
+      documents: [
+        { id: 'DOC-REN-0018-A', name: 'Corrigendum — Delivery schedule', type: 'Corrigendum', file: 'REN-0018-Corrigendum-Delivery.pdf' },
+        { id: 'DOC-REN-0018-B', name: 'Extra Quality Order — Spec sheet', type: 'Extra quality order', file: 'REN-0018-EQO-Specs.pdf' }
+      ]
+    },
+    {
+      id: 'REN-2026-0021', vendorId: 'VND-MP-000789', vendorName: 'PharmaCare Distributors', category: 'Drugs',
+      renewalFrom: '01-10-2026', renewalTo: '30-09-2027', renewalDate: '01-09-2026',
+      renewalType: 'Fresh renewal', status: 'Pending finalization', contractId: 'CNT-2025-0201', value: '₹2.6 Cr',
+      contact: 'tenders@pharmacare.in · +91 761 400 1122', gstin: '23AABCP7890C1Z8',
+      remarks: 'Oncology pack rate contract renewal — license expiry check required.',
+      documents: [
+        { id: 'DOC-REN-0021-A', name: 'Fresh Tender — Oncology Drug Pack', type: 'Fresh tender', file: 'REN-0021-Fresh-Tender.pdf' }
+      ]
+    },
+    {
+      id: 'REN-2026-0025', vendorId: 'VND-MP-001012', vendorName: 'BioMed Instruments', category: 'Equipment',
+      renewalFrom: '15-05-2026', renewalTo: '14-05-2027', renewalDate: '10-07-2026',
+      renewalType: 'Fresh renewal', status: 'Finalized', contractId: 'CNT-2025-0110', value: '₹95 L',
+      contact: 'contracts@biomed.in · +91 755 266 4400', gstin: '23AABB1012D1Z4',
+      remarks: 'Surgical instruments kit renewal finalized by Resource Manager.',
+      documents: [
+        { id: 'DOC-REN-0025-A', name: 'Addendum — Warranty extension', type: 'Addendum', file: 'REN-0025-Addendum-Warranty.pdf' },
+        { id: 'DOC-REN-0025-B', name: 'Signed renewal LOA', type: 'Fresh tender', file: 'REN-0025-Signed-LOA.pdf' }
+      ]
+    },
+    {
+      id: 'REN-2026-0030', vendorId: 'VND-MP-001345', vendorName: 'CarePlus Consumables', category: 'Consumables',
+      renewalFrom: '01-09-2026', renewalTo: '31-08-2027', renewalDate: '28-08-2026',
+      renewalType: 'Extra quality order', status: 'Pending finalization', contractId: 'CNT-2025-0334', value: '₹42 L',
+      contact: 'sales@careplus.in · +91 755 300 7788', gstin: '23AABCC1345E1Z9',
+      remarks: 'Extra quality order for gloves & PPE — pending compliance clearance.',
+      documents: [
+        { id: 'DOC-REN-0030-A', name: 'Corrigendum — Quantity uplift', type: 'Corrigendum', file: 'REN-0030-Corrigendum-Qty.pdf' }
+      ]
+    },
+    {
+      id: 'REN-2026-0034', vendorId: 'VND-MP-001678', vendorName: 'Digital Health IT', category: 'Services',
+      renewalFrom: '01-04-2026', renewalTo: '31-03-2028', renewalDate: '05-06-2026',
+      renewalType: 'Fresh renewal', status: 'Under review', contractId: 'CNT-2025-0402', value: '₹1.1 Cr',
+      contact: 'renewals@digitalhealth.in · +91 755 488 2200', gstin: '23AABCD1678F1Z1',
+      remarks: 'Telemedicine SLA renewal — 2-year term proposed.',
+      documents: [
+        { id: 'DOC-REN-0034-A', name: 'Fresh Tender — Telemedicine Platform', type: 'Fresh tender', file: 'REN-0034-Fresh-Tender.pdf' },
+        { id: 'DOC-REN-0034-B', name: 'Addendum — SLA KPIs', type: 'Addendum', file: 'REN-0034-Addendum-SLA.pdf' },
+        { id: 'DOC-REN-0034-C', name: 'Corrigendum — Uptime clause', type: 'Corrigendum', file: 'REN-0034-Corrigendum-Uptime.pdf' }
+      ]
+    }
+  ]
+};
+
 const AUDIT_TRAIL_VENDOR = [
   { id: 'AUD-V-2026-0142', time: '2026-09-04 14:32:10', user: 'VND-MP-000123', userName: 'MediSupply India', action: 'Bid Draft Saved', stage: 'Bid Submission', stageId: 4, module: 'Vendor Lifecycle', detail: 'Technical bid documents updated for TND-2026-MP-0055', ref: 'TND-2026-MP-0055', ip: '103.24.18.92', status: 'Success' },
   { id: 'AUD-V-2026-0141', time: '2026-09-04 11:05:44', user: 'VND-MP-000123', userName: 'MediSupply India', action: 'EMD Payment Initiated', stage: 'Bid Submission', stageId: 4, module: 'Payments', detail: 'EMD of ₹3,20,000 initiated via e-BG portal — pending bank confirmation', ref: 'EMD-TND-0055', ip: '103.24.18.92', status: 'Pending' },
@@ -1027,7 +1103,7 @@ const NAV_VENDOR = [
   { section: 'Overview' },
   { id: 'dashboard', icon: 'fa-chart-line', label: 'My Dashboard', badge: 0 },
   { section: 'Vendor Lifecycle' },
-  { id: 'workflow', icon: 'fa-arrows-rotate', label: 'Registration', badge: 0 },
+  { id: 'workflow', icon: 'fa-arrows-rotate', label: 'Bid-to-Pay Lifecycle', badge: 0 },
   { id: 'registration', icon: 'fa-id-card', label: 'Profile & KYC', badge: 0 },
   { id: 'tenders', icon: 'fa-magnifying-glass', label: 'Tender Discovery', badge: 0 },
   { id: 'bids', icon: 'fa-paper-plane', label: 'Bid Submission', badge: 0 },
@@ -1380,7 +1456,7 @@ const ANALYTICS_MONTH_OPTIONS = [
 const ANALYTICS_FY_OPTIONS = [
   'all',
   'FY16-17', 'FY17-18', 'FY18-19', 'FY19-20', 'FY20-21',
-  'FY21-22', 'FY22-23', 'FY23-24', 'FY24-25', 'FY25-26'
+  'FY21-22', 'FY22-23', 'FY23-24', 'FY24-25', 'FY25-26', 'FY26-27'
 ];
 
 const SCORE_WEIGHTS = [

@@ -3,7 +3,23 @@
 const DEMO_EMAIL_OTP = '123456';
 const DEMO_PHONE_OTP = '789012';
 
-const AUTH_ROLE_OPTIONS = ['Resource Manager', 'Vendor / Bidder'];
+/** All roles shown in signup (prototype catalogue). Only demo roles can complete registration. */
+const AUTH_ROLE_OPTIONS = [
+  'Resource Manager',
+  'Vendor / Bidder',
+  'Procurement Officer',
+  'Finance / Budget Officer',
+  'Stores / Warehouse Manager',
+  'Inspection / Quality Officer',
+  'Tender Evaluation Committee',
+  'District CMO / Administrative Officer',
+  'NHM Programme Officer',
+  'Audit / Compliance Officer',
+  'Indenting Department HOD',
+  'System Administrator'
+];
+
+const AUTH_DEMO_ROLES = ['Resource Manager', 'Vendor / Bidder'];
 
 const AUTH_USERS = [
   {
@@ -37,6 +53,10 @@ let otpResendSeconds = 0;
 
 function roleLabelToKey(label) {
   return label === 'Resource Manager' ? 'gov' : 'vendor';
+}
+
+function isDemoSignupRole(label) {
+  return AUTH_DEMO_ROLES.includes(label);
 }
 
 function getRegisteredUsers() {
@@ -227,7 +247,7 @@ function renderSignupView() {
   return `
     <div class="auth-intro">
       <h2>Create your account</h2>
-      <p>Register as a Resource Manager or Vendor / Bidder to access the portal.</p>
+      <p>Choose your account role to register. Demo portal access is enabled for Resource Manager and Vendor / Bidder.</p>
     </div>
     <form id="authSignupForm" class="auth-form" novalidate>
       ${customSelectHTML('Account Role', 'signupRole', AUTH_ROLE_OPTIONS, 'Vendor / Bidder')}
@@ -286,7 +306,7 @@ function renderSignupView() {
 
 function renderOtpView() {
   const pending = authPending || {};
-  const roleLabel = pending.role === 'gov' ? 'Resource Manager' : 'Vendor / Bidder';
+  const roleLabel = pending.title || (pending.role === 'gov' ? 'Resource Manager' : 'Vendor / Bidder');
 
   return `
     <div class="auth-intro">
@@ -486,6 +506,10 @@ function handleSignupSubmit() {
     showAuthAlert('Please select an account role.');
     return;
   }
+  if (!isDemoSignupRole(roleLabel)) {
+    showAuthAlert(`${roleLabel} is listed for this prototype. Demo signup is currently available for Resource Manager and Vendor / Bidder only.`);
+    return;
+  }
   if (phone.length !== 10) {
     showAuthAlert('Please enter a valid 10-digit mobile number.');
     return;
@@ -518,7 +542,7 @@ function handleSignupSubmit() {
     phone,
     password,
     avatar: initials,
-    title: role === 'gov' ? 'Resource Manager' : 'Vendor / Bidder',
+    title: roleLabel,
     vendorId: role === 'vendor' ? `VND-MP-${String(Math.floor(Math.random() * 900000) + 100000)}` : undefined
   };
 
