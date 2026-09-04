@@ -119,6 +119,10 @@ const govIndentState = {
   mode: null, // null | 'manual' | 'automated'
   saved: false,
   indentId: '',
+  year: 'all',
+  viewBy: 'quarter',
+  period: 'all',
+  listItems: [], // user-created / automated rows prepended to seed
   manual: {
     facility: 'Gandhi Medical College',
     district: 'Bhopal',
@@ -139,6 +143,9 @@ const govIndentState = {
     generatedAt: null
   }
 };
+
+/** Custom date picker view state */
+let datePickerState = { id: null, viewYear: 2026, viewMonth: 8 };
 
 /** Stage 1 — Need Identification (gov) period filter */
 const govNeedState = { year: 'all', viewBy: 'quarter', period: 'all' };
@@ -1861,7 +1868,11 @@ function needStatusBadge(status) {
     Acknowledged: 'success',
     Cleared: 'success',
     'Not started': 'muted',
-    'Not due yet': 'muted'
+    'Not due yet': 'muted',
+    Submitted: 'info',
+    'Pending Review': 'warning',
+    'Clarification Sought': 'warning',
+    Routine: 'muted'
   };
   return map[status] || 'info';
 }
@@ -2238,9 +2249,12 @@ function refreshStockCheckApi() {
 
 function setIndentMode(mode) {
   if (mode !== 'manual' && mode !== 'automated') return;
-  if (govIndentState.mode === mode) return;
   govIndentState.mode = mode;
-  govIndentState.saved = false;
+  if (mode === 'manual') {
+    refreshWorkflowUI();
+    openManualIndentModal(true);
+    return;
+  }
   if (mode === 'automated' && govIndentState.automated.status === 'idle') {
     govIndentState.automated.status = 'idle';
   }
@@ -2251,6 +2265,7 @@ function buildAutomatedIndentLines() {
   const need = typeof NEED_IDENTIFICATION_API !== 'undefined' ? NEED_IDENTIFICATION_API : null;
   const stock = typeof STOCK_CHECK_API !== 'undefined' ? STOCK_CHECK_API : null;
   const lines = [];
+  const today = typeof formatDateDMY === 'function' ? formatDateDMY(APP_TODAY) : '03-09-2026';
 
   (need?.gapAnalysis?.rows || []).forEach((r, i) => {
     if (!/fresh|tender|rate contract|top-up/i.test(r.action || '')) return;
@@ -2258,11 +2273,20 @@ function buildAutomatedIndentLines() {
       id: `IND-AUTO-${String(i + 1).padStart(2, '0')}`,
       item: r.item,
       quantity: r.gap,
+      unit: 'Packs',
       source: 'Need Identification · Gap Analysis',
       reason: r.action,
       facility: 'Bhopal Division (consolidated)',
+      district: 'Bhopal',
+      category: currentCategory === 'All' ? 'Drugs' : currentCategory,
       priority: /fresh tender/i.test(r.action) ? 'High' : 'Medium',
-      mlConfidence: 90 - i * 3
+      status: 'Submitted',
+      date: r.date || today,
+      requiredBy: today,
+      raisedBy: 'System — AI/ML indent',
+      approvingAuthority: 'CMO / Competent Authority',
+      justification: `Gap residual: ${r.action}`,
+      remarks: ''
     });
   });
 
@@ -2272,19 +2296,27 @@ function buildAutomatedIndentLines() {
       id: `IND-STK-${String(i + 1).padStart(2, '0')}`,
       item: r.item,
       quantity: r.reorder,
+      unit: 'Packs',
       source: 'Stock Check · Warehouse',
       reason: r.recommendation,
       facility: r.facility,
+      district: 'Bhopal',
+      category: currentCategory === 'All' ? 'Drugs' : currentCategory,
       priority: r.status === 'Critical' ? 'Critical' : 'High',
-      mlConfidence: r.mlScore
+      status: 'Under review',
+      date: r.date || today,
+      requiredBy: today,
+      raisedBy: 'System — AI/ML indent',
+      approvingAuthority: 'CMO / Competent Authority',
+      justification: r.recommendation,
+      remarks: ''
     });
   });
 
   if (!lines.length) {
     lines.push(
-      { id: 'IND-AUTO-01', item: 'Paracetamol 500mg Tab', quantity: '6.3 L packs', source: 'Need Identification · Gap Analysis', reason: 'Fresh tender', facility: 'Bhopal Division (consolidated)', priority: 'High', mlConfidence: 92 },
-      { id: 'IND-AUTO-02', item: 'IV Normal Saline 500ml', quantity: '1.3 L units', source: 'Need Identification · Gap Analysis', reason: 'Fresh tender', facility: 'Bhopal Division (consolidated)', priority: 'High', mlConfidence: 88 },
-      { id: 'IND-STK-01', item: 'Amoxicillin 250mg', quantity: '1.5 L packs', source: 'Stock Check · Warehouse', reason: 'Top-up via open PO / indent', facility: 'Regional Store — Jabalpur', priority: 'High', mlConfidence: 71 }
+      { id: 'IND-AUTO-01', item: 'Paracetamol 500mg Tab', quantity: '6.3 L packs', unit: 'Packs', source: 'Automated', reason: 'Fresh tender', facility: 'Bhopal Division (consolidated)', district: 'Bhopal', category: 'Drugs', priority: 'High', status: 'Submitted', date: today, requiredBy: '20-09-2026', raisedBy: 'System — AI/ML indent', approvingAuthority: 'CMO / Competent Authority', justification: 'Gap residual after stock netting.', remarks: '' },
+      { id: 'IND-AUTO-02', item: 'IV Normal Saline 500ml', quantity: '1.3 L units', unit: 'Units', source: 'Automated', reason: 'Fresh tender', facility: 'Bhopal Division (consolidated)', district: 'Bhopal', category: 'Drugs', priority: 'High', status: 'Submitted', date: today, requiredBy: '18-09-2026', raisedBy: 'System — AI/ML indent', approvingAuthority: 'CMO / Competent Authority', justification: 'Gap residual after stock netting.', remarks: '' }
     );
   }
   return lines;
@@ -2297,21 +2329,203 @@ function runAutomatedIndentProcess() {
   refreshWorkflowUI();
 
   setTimeout(() => {
-    govIndentState.automated.lines = buildAutomatedIndentLines();
+    const lines = buildAutomatedIndentLines();
+    govIndentState.automated.lines = lines;
     govIndentState.automated.status = 'ready';
     govIndentState.automated.generatedAt = formatDateDMY(APP_TODAY) + ' ' +
       new Date().toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' }) + ' IST';
     govIndentState.saved = true;
     govIndentState.indentId = govIndentState.indentId || `IND-AUTO-${APP_TODAY.replace(/-/g, '').slice(2)}`;
+    lines.forEach(l => {
+      if (!govIndentState.listItems.some(x => x.id === l.id)) {
+        govIndentState.listItems.unshift({ ...l, source: l.source || 'Automated' });
+      }
+    });
     refreshWorkflowUI();
     openModal('Automated indent ready', `
       <div class="sync-success-msg">
         <div class="sync-success-icon"><i class="fa-solid fa-wand-magic-sparkles"></i></div>
         <h4>Indent lines prepared from prior stages</h4>
-        <p>The model used Need Identification (gap analysis) and Stock Check (warehouse deficits) to propose <strong>${govIndentState.automated.lines.length}</strong> indent line(s). Indent <strong>${govIndentState.indentId}</strong> is ready — you may proceed to Demand Consolidation.</p>
+        <p>The model proposed <strong>${lines.length}</strong> indent line(s). They are now in the Indent List — open any row for details / follow-up.</p>
       </div>
     `);
   }, 900);
+}
+
+function getIndentListRows() {
+  const seed = typeof INDENT_LIST_SEED !== 'undefined' ? INDENT_LIST_SEED : [];
+  const extra = govIndentState.listItems || [];
+  const seen = new Set();
+  const rows = [];
+  [...extra, ...seed].forEach(r => {
+    if (!r?.id || seen.has(r.id)) return;
+    seen.add(r.id);
+    rows.push(r);
+  });
+  return applyStagePeriodFilter(rows, govIndentState, 'date');
+}
+
+function getIndentRowById(id) {
+  return getIndentListRows().find(r => r.id === id)
+    || (govIndentState.listItems || []).find(r => r.id === id)
+    || (typeof INDENT_LIST_SEED !== 'undefined' ? INDENT_LIST_SEED.find(r => r.id === id) : null);
+}
+
+function datePickerHTML(id, value, labelHtml, disabled = false) {
+  const shown = value || 'Select date';
+  return `<div class="form-group">
+    <label>${labelHtml}</label>
+    <div class="date-picker" data-datepicker-id="${id}">
+      <button type="button" class="date-picker-trigger" id="${id}Trigger" ${disabled ? 'disabled' : ''} onclick="toggleDatePicker('${id}')">
+        <i class="fa-solid fa-calendar-days"></i>
+        <span class="date-picker-value${value ? '' : ' is-placeholder'}" id="${id}Value">${shown}</span>
+        <i class="fa-solid fa-chevron-down"></i>
+      </button>
+      <input type="hidden" id="${id}" value="${value || ''}">
+      <div class="date-picker-panel" id="${id}Panel" hidden></div>
+    </div>
+  </div>`;
+}
+
+function positionDatePickerPanel(id) {
+  const trigger = document.getElementById(`${id}Trigger`);
+  const panel = document.getElementById(`${id}Panel`);
+  if (!trigger || !panel) return;
+  const rect = trigger.getBoundingClientRect();
+  const width = Math.max(rect.width, 280);
+  let left = rect.left;
+  if (left + width > window.innerWidth - 12) left = Math.max(12, window.innerWidth - width - 12);
+  let top = rect.bottom + 6;
+  panel.style.position = 'fixed';
+  panel.style.left = `${left}px`;
+  panel.style.top = `${top}px`;
+  panel.style.width = `${width}px`;
+  panel.style.zIndex = '10060';
+  requestAnimationFrame(() => {
+    const h = panel.offsetHeight || 280;
+    if (top + h > window.innerHeight - 12) {
+      panel.style.top = `${Math.max(12, rect.top - h - 6)}px`;
+    }
+  });
+}
+
+function toggleDatePicker(id) {
+  const panel = document.getElementById(`${id}Panel`);
+  if (!panel) return;
+  const opening = panel.hasAttribute('hidden');
+  document.querySelectorAll('.date-picker-panel').forEach(p => p.setAttribute('hidden', ''));
+  if (!opening) return;
+  const current = document.getElementById(id)?.value || '';
+  let y = 2026, m = 8;
+  if (/^\d{2}-\d{2}-\d{4}$/.test(current)) {
+    const parts = current.split('-').map(Number);
+    y = parts[2];
+    m = parts[1] - 1;
+  } else if (APP_TODAY) {
+    const dt = parseISODate(APP_TODAY);
+    if (dt) { y = dt.getFullYear(); m = dt.getMonth(); }
+  }
+  datePickerState = { id, viewYear: y, viewMonth: m };
+  renderDatePickerPanel(id);
+  panel.removeAttribute('hidden');
+  positionDatePickerPanel(id);
+}
+
+function shiftDatePickerMonth(delta) {
+  if (!datePickerState.id) return;
+  let { viewYear: y, viewMonth: m } = datePickerState;
+  m += delta;
+  if (m < 0) { m = 11; y -= 1; }
+  if (m > 11) { m = 0; y += 1; }
+  datePickerState.viewYear = y;
+  datePickerState.viewMonth = m;
+  renderDatePickerPanel(datePickerState.id);
+  positionDatePickerPanel(datePickerState.id);
+}
+
+function renderDatePickerPanel(id) {
+  const panel = document.getElementById(`${id}Panel`);
+  if (!panel) return;
+  const y = datePickerState.viewYear;
+  const m = datePickerState.viewMonth;
+  const monthNames = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
+  const firstDow = new Date(y, m, 1).getDay();
+  const daysInMonth = new Date(y, m + 1, 0).getDate();
+  const selected = document.getElementById(id)?.value || '';
+  const dow = ['Su', 'Mo', 'Tu', 'We', 'Th', 'Fr', 'Sa'];
+  let cells = '';
+  for (let i = 0; i < firstDow; i++) cells += `<span class="date-picker-day is-empty"></span>`;
+  for (let d = 1; d <= daysInMonth; d++) {
+    const val = `${String(d).padStart(2, '0')}-${String(m + 1).padStart(2, '0')}-${y}`;
+    const isSel = val === selected;
+    cells += `<button type="button" class="date-picker-day${isSel ? ' is-selected' : ''}" onclick="selectDatePickerDay('${id}','${val}')">${d}</button>`;
+  }
+  panel.innerHTML = `
+    <div class="date-picker-head">
+      <button type="button" class="date-picker-nav" onclick="shiftDatePickerMonth(-1)" aria-label="Previous month"><i class="fa-solid fa-chevron-left"></i></button>
+      <strong>${monthNames[m]} ${y}</strong>
+      <button type="button" class="date-picker-nav" onclick="shiftDatePickerMonth(1)" aria-label="Next month"><i class="fa-solid fa-chevron-right"></i></button>
+    </div>
+    <div class="date-picker-dow">${dow.map(x => `<span>${x}</span>`).join('')}</div>
+    <div class="date-picker-grid">${cells}</div>
+  `;
+}
+
+function selectDatePickerDay(id, value) {
+  const input = document.getElementById(id);
+  const label = document.getElementById(`${id}Value`);
+  if (input) input.value = value;
+  if (label) {
+    label.textContent = value;
+    label.classList.remove('is-placeholder');
+  }
+  document.getElementById(`${id}Panel`)?.setAttribute('hidden', '');
+}
+
+document.addEventListener('click', (e) => {
+  if (e.target.closest?.('.date-picker')) return;
+  document.querySelectorAll('.date-picker-panel').forEach(p => p.setAttribute('hidden', ''));
+});
+
+function renderManualIndentFormFields(canEdit = true) {
+  const disabled = canEdit ? '' : ' disabled';
+  const m = govIndentState.manual;
+  const catOptions = (typeof CATEGORIES !== 'undefined' ? CATEGORIES.filter(c => c !== 'All') : ['Drugs', 'Equipment', 'Services', 'Consumables', 'Others']);
+  return `<div class="form-grid wf-form-grid indent-form-grid">
+    <div class="form-group"><label>${reqLabel('Facility / Store')}</label><input id="indentFacility" type="text" value="${m.facility}" placeholder="e.g. Gandhi Medical College"${disabled ? ' readonly' : ''}></div>
+    ${customSelectHTML('District', 'indentDistrict', ['Bhopal', 'Indore', 'Jabalpur', 'Gwalior', 'Rewa'], m.district, true)}
+    ${customSelectHTML('Category', 'indentCategory', catOptions, m.category || 'Drugs', true)}
+    <div class="form-group"><label>${reqLabel('Item / SKU name')}</label><input id="indentItem" type="text" value="${m.itemName}" placeholder="e.g. Paracetamol 500mg Tab"${disabled ? ' readonly' : ''}></div>
+    <div class="form-group"><label>${reqLabel('Quantity')}</label><input id="indentQty" type="text" value="${m.quantity}" placeholder="e.g. 6.3 L"${disabled ? ' readonly' : ''}></div>
+    ${customSelectHTML('Unit', 'indentUnit', ['Packs', 'Units', 'Vials', 'Pairs', 'Kits', 'Bottles'], m.unit, true)}
+    ${customSelectHTML('Priority', 'indentPriority', ['Critical', 'High', 'Medium', 'Routine'], m.priority, true)}
+    ${datePickerHTML('indentRequiredBy', m.requiredBy, reqLabel('Required by (DD-MM-YYYY)'), !canEdit)}
+    <div class="form-group"><label>${reqLabel('Raised by')}</label><input id="indentRaisedBy" type="text" value="${m.raisedBy}"${disabled ? ' readonly' : ''}></div>
+    <div class="form-group"><label>${reqLabel('Approving authority')}</label><input id="indentAuthority" type="text" value="${m.approvingAuthority}"${disabled ? ' readonly' : ''}></div>
+    <div class="form-group full"><label>${reqLabel('Justification (why stock / open PO cannot meet need)')}</label>
+      <textarea id="indentJustification" rows="3" placeholder="State stock search outcome, open PO status, and clinical / programme urgency…"${disabled ? ' readonly' : ''}>${m.justification}</textarea>
+    </div>
+    <div class="form-group full"><label>Remarks (optional)</label>
+      <textarea id="indentRemarks" rows="2" placeholder="Additional notes for CMO / consolidation cell…"${disabled ? ' readonly' : ''}>${m.remarks}</textarea>
+    </div>
+  </div>`;
+}
+
+function openManualIndentModal(canEdit = true) {
+  const disabled = canEdit ? '' : ' disabled';
+  openModal('Manual Indent — Form IND-01', `
+    <div class="indent-modal-form">
+      <p class="consol-detail-lead" style="margin-top:0">Raise indent only when stock / open PO cannot meet requirement. Fields marked * are mandatory.</p>
+      ${renderManualIndentFormFields(canEdit)}
+      <div class="follow-up-actions" style="margin-top:1rem">
+        <button type="button" class="btn btn-outline" onclick="closeModal()"><i class="fa-solid fa-xmark"></i> Cancel</button>
+        <div class="follow-up-actions-right">
+          <button type="button" class="btn btn-primary" onclick="saveManualIndent()"${disabled}><i class="fa-solid fa-floppy-disk"></i> Save indent</button>
+        </div>
+      </div>
+    </div>
+  `, { wide: true, large: true });
+  initCustomSelects();
 }
 
 function captureManualIndentForm() {
@@ -2337,32 +2551,102 @@ function saveManualIndent() {
     showWfAlert('Please fill all mandatory fields marked with * before saving the indent.');
     return;
   }
+  const id = `IND-MP-${APP_TODAY.replace(/-/g, '').slice(2)}-${String(Math.floor(Math.random() * 90) + 10)}`;
   govIndentState.mode = 'manual';
   govIndentState.saved = true;
-  govIndentState.indentId = govIndentState.indentId || `IND-MP-${APP_TODAY.replace(/-/g, '').slice(2)}-001`;
+  govIndentState.indentId = id;
+  govIndentState.listItems.unshift({
+    id,
+    item: m.itemName,
+    quantity: m.quantity,
+    unit: m.unit,
+    facility: m.facility,
+    district: m.district,
+    category: m.category,
+    priority: m.priority,
+    status: 'Submitted',
+    source: 'Manual',
+    date: formatDateDMY(APP_TODAY),
+    requiredBy: m.requiredBy,
+    raisedBy: m.raisedBy,
+    approvingAuthority: m.approvingAuthority,
+    justification: m.justification,
+    remarks: m.remarks || ''
+  });
+  closeModal();
   refreshWorkflowUI();
-  openModal('Indent saved', `
-    <div class="sync-success-msg">
-      <div class="sync-success-icon"><i class="fa-solid fa-circle-check"></i></div>
-      <h4>Manual indent saved successfully</h4>
-      <p>Indent <strong>${govIndentState.indentId}</strong> for <strong>${m.itemName}</strong> has been recorded. You may now proceed to Demand Consolidation.</p>
+  setTimeout(() => {
+    openModal('Indent saved', `
+      <div class="sync-success-msg">
+        <div class="sync-success-icon"><i class="fa-solid fa-circle-check"></i></div>
+        <h4>Manual indent saved successfully</h4>
+        <p>Indent <strong>${id}</strong> for <strong>${m.itemName}</strong> is now in the Indent List.</p>
+      </div>
+    `);
+  }, 80);
+}
+
+function openIndentRowDetail(indentId) {
+  const r = getIndentRowById(indentId);
+  if (!r) {
+    showWfAlert('Indent record not found.');
+    return;
+  }
+  openModal(`${r.id} — ${r.item}`, `
+    <div class="kpi-detail need-row-detail">
+      <p class="need-row-detail-lead">Store indent details for review and follow-up.</p>
+      <div class="tender-detail-stats tender-detail-stats--4">
+        <div class="tender-stat"><span>Quantity</span><strong>${r.quantity}</strong></div>
+        <div class="tender-stat"><span>Priority</span><strong><span class="badge badge-${needStatusBadge(r.priority)}">${r.priority}</span></strong></div>
+        <div class="tender-stat"><span>Status</span><strong><span class="badge badge-${needStatusBadge(r.status)}">${r.status}</span></strong></div>
+        <div class="tender-stat"><span>Status since</span><strong>${r.date || '—'}</strong></div>
+      </div>
+      <div class="tender-detail-section">
+        <div class="tender-detail-section-head">
+          <h4>Indent details</h4>
+          <button type="button" class="btn btn-primary btn-sm" onclick="openStageFollowUpModal('indent','row','${r.id}')">
+            <i class="fa-solid fa-envelope-open-text"></i> Take Follow-up
+          </button>
+        </div>
+        <div class="data-table-wrap">
+          <table class="data-table data-table--modal">
+            <tbody>
+              <tr><td>Indent ID</td><td><strong>${r.id}</strong></td></tr>
+              <tr><td>Item</td><td>${r.item}</td></tr>
+              <tr><td>Facility</td><td>${r.facility}</td></tr>
+              <tr><td>District</td><td>${r.district || '—'}</td></tr>
+              <tr><td>Category</td><td>${r.category || '—'}</td></tr>
+              <tr><td>Source</td><td>${r.source || '—'}</td></tr>
+              <tr><td>Required by</td><td>${r.requiredBy || '—'}</td></tr>
+              <tr><td>Raised by</td><td>${r.raisedBy || '—'}</td></tr>
+              <tr><td>Approving authority</td><td>${r.approvingAuthority || '—'}</td></tr>
+              <tr><td>Justification</td><td>${r.justification || r.reason || '—'}</td></tr>
+              <tr><td>Remarks</td><td>${r.remarks || '—'}</td></tr>
+              <tr><td>Status since</td><td><strong>${r.date || '—'}</strong></td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+      <div class="modal-inline-actions">
+        <button type="button" class="btn btn-outline" onclick="modalGoBack()"><i class="fa-solid fa-arrow-left"></i> Back</button>
+      </div>
     </div>
-  `);
+  `, { wide: true });
 }
 
 function renderIndentRaisedStage(canEdit = true) {
   const disabled = canEdit ? '' : ' disabled';
   const mode = govIndentState.mode;
   const saved = govIndentState.saved;
-  const m = govIndentState.manual;
   const auto = govIndentState.automated;
-  const catOptions = (typeof CATEGORIES !== 'undefined' ? CATEGORIES.filter(c => c !== 'All') : ['Drugs', 'Equipment', 'Services', 'Consumables', 'Others']);
+  const rows = getIndentListRows();
+  const periodLabel = getWfPeriodFilterLabel(govIndentState);
 
   return `<div class="indent-stage">
     <div class="indent-mode-banner">
       <div>
         <strong>Select how you want to raise the indent</strong>
-        <p>Manual entry follows GFR-aligned store indent practice. Automated uses AI/ML outcomes from Need Identification and Stock Check.</p>
+        <p>Manual opens Form IND-01 in a modal. Automated uses AI/ML outcomes from Need Identification and Stock Check. The Indent List below is filtered by period.</p>
       </div>
       ${saved ? `<span class="badge badge-success"><i class="fa-solid fa-check"></i> Indent saved · ${govIndentState.indentId || '—'}</span>`
         : `<span class="badge badge-warning"><i class="fa-solid fa-lock"></i> Save required to proceed</span>`}
@@ -2373,7 +2657,7 @@ function renderIndentRaisedStage(canEdit = true) {
         <span class="indent-mode-icon"><i class="fa-solid fa-pen-to-square"></i></span>
         <span class="indent-mode-body">
           <strong>Manual way</strong>
-          <span>Fill a government indent form — facility, item, quantity, justification, and approving authority.</span>
+          <span>Open the government indent form in a modal — facility, item, quantity, justification, and approving authority.</span>
         </span>
       </button>
       <button type="button" class="indent-mode-card${mode === 'automated' ? ' active' : ''}" ${disabled} onclick="setIndentMode('automated')" role="radio" aria-checked="${mode === 'automated'}">
@@ -2385,90 +2669,57 @@ function renderIndentRaisedStage(canEdit = true) {
       </button>
     </div>
 
-    ${!mode ? `<div class="indent-empty-hint">
-      <i class="fa-solid fa-hand-pointer"></i>
-      <p>Choose <strong>Manual</strong> or <strong>Automated</strong> above to continue.</p>
-    </div>` : ''}
-
-    ${mode === 'manual' ? `<div class="indent-panel indent-panel--manual">
-      <div class="indent-panel-head">
-        <div>
-          <span class="report-eyebrow">Manual indent form</span>
-          <h4>Store Indent — Form IND-01</h4>
-          <p>As per store procedure: raise indent only when stock / open PO cannot meet requirement. Fields marked * are mandatory.</p>
-        </div>
-        <span class="meta-chip">DoPHFW · GoMP</span>
-      </div>
-      <div class="form-grid wf-form-grid indent-form-grid">
-        <div class="form-group"><label>${reqLabel('Facility / Store')}</label><input id="indentFacility" type="text" value="${m.facility}" placeholder="e.g. Gandhi Medical College"${disabled ? ' readonly' : ''}></div>
-        ${customSelectHTML('District', 'indentDistrict', ['Bhopal', 'Indore', 'Jabalpur', 'Gwalior', 'Rewa'], m.district, true)}
-        ${customSelectHTML('Category', 'indentCategory', catOptions, m.category || 'Drugs', true)}
-        <div class="form-group"><label>${reqLabel('Item / SKU name')}</label><input id="indentItem" type="text" value="${m.itemName}" placeholder="e.g. Paracetamol 500mg Tab"${disabled ? ' readonly' : ''}></div>
-        <div class="form-group"><label>${reqLabel('Quantity')}</label><input id="indentQty" type="text" value="${m.quantity}" placeholder="e.g. 6.3 L"${disabled ? ' readonly' : ''}></div>
-        ${customSelectHTML('Unit', 'indentUnit', ['Packs', 'Units', 'Vials', 'Pairs', 'Kits', 'Bottles'], m.unit, true)}
-        ${customSelectHTML('Priority', 'indentPriority', ['Critical', 'High', 'Medium', 'Routine'], m.priority, true)}
-        <div class="form-group"><label>${reqLabel('Required by (DD-MM-YYYY)')}</label><input id="indentRequiredBy" type="text" value="${m.requiredBy}" placeholder="e.g. 20-09-2026"${disabled ? ' readonly' : ''}></div>
-        <div class="form-group"><label>${reqLabel('Raised by')}</label><input id="indentRaisedBy" type="text" value="${m.raisedBy}"${disabled ? ' readonly' : ''}></div>
-        <div class="form-group"><label>${reqLabel('Approving authority')}</label><input id="indentAuthority" type="text" value="${m.approvingAuthority}"${disabled ? ' readonly' : ''}></div>
-        <div class="form-group full"><label>${reqLabel('Justification (why stock / open PO cannot meet need)')}</label>
-          <textarea id="indentJustification" rows="3" placeholder="State stock search outcome, open PO status, and clinical / programme urgency…"${disabled ? ' readonly' : ''}>${m.justification}</textarea>
-        </div>
-        <div class="form-group full"><label>Remarks (optional)</label>
-          <textarea id="indentRemarks" rows="2" placeholder="Additional notes for CMO / consolidation cell…"${disabled ? ' readonly' : ''}>${m.remarks}</textarea>
-        </div>
-      </div>
-      <div class="wf-actions mt-2">
-        <button type="button" class="btn btn-primary" onclick="saveManualIndent()"${disabled}><i class="fa-solid fa-floppy-disk"></i> Save indent</button>
-      </div>
-    </div>` : ''}
-
     ${mode === 'automated' ? `<div class="indent-panel indent-panel--auto">
       <div class="indent-panel-head">
         <div>
           <span class="report-eyebrow">Automated process</span>
           <h4>AI/ML indent generation</h4>
-          <p>Pulls residual demand from Need Identification (gap analysis) and Stock Check (warehouse deficits / redistribution residuals).</p>
+          <p>Pulls residual demand from Need Identification and Stock Check. Generated lines are added to the Indent List.</p>
         </div>
         <span class="badge badge-${auto.status === 'ready' ? 'success' : auto.status === 'running' ? 'info' : auto.status === 'failed' ? 'danger' : 'muted'}">${
           auto.status === 'ready' ? 'Indent ready' : auto.status === 'running' ? 'Generating…' : auto.status === 'failed' ? 'Failed' : 'Not run yet'
         }</span>
       </div>
-
       <div class="indent-auto-steps">
         <div class="indent-auto-step"><span>1</span><div><strong>Need Identification</strong><small>Gap items needing fresh tender / top-up</small></div></div>
         <div class="indent-auto-step"><span>2</span><div><strong>Stock Check</strong><small>Low / critical warehouse SKUs after redistribution</small></div></div>
-        <div class="indent-auto-step"><span>3</span><div><strong>Indent pack</strong><small>Consolidated line items for CMO approval path</small></div></div>
+        <div class="indent-auto-step"><span>3</span><div><strong>Indent pack</strong><small>Lines added to Indent List</small></div></div>
       </div>
-
-      <div class="wf-actions" style="margin-bottom:1rem">
+      <div class="wf-actions" style="margin-bottom:0.5rem">
         <button type="button" class="btn btn-primary" onclick="runAutomatedIndentProcess()"${disabled || auto.status === 'running' ? ' disabled' : ''}>
           <i class="fa-solid fa-wand-magic-sparkles"></i> ${auto.status === 'ready' ? 'Re-run automated process' : 'Run automated process'}
         </button>
       </div>
-
-      ${auto.status === 'running' ? `<div class="indent-empty-hint"><i class="fa-solid fa-spinner fa-spin"></i><p>Fetching indent recommendations from prior stages…</p></div>` : ''}
-
-      ${auto.status === 'ready' ? `
-        <div class="data-table-wrap need-table">
-          <table class="data-table">
-            <thead><tr><th>Indent line</th><th>Item</th><th>Qty</th><th>Facility</th><th>Source</th><th>Priority</th><th>ML conf.</th><th>Reason</th></tr></thead>
-            <tbody>
-              ${auto.lines.map(l => `<tr>
-                <td><strong>${l.id}</strong></td>
-                <td>${l.item}</td>
-                <td>${l.quantity}</td>
-                <td>${l.facility}</td>
-                <td>${l.source}</td>
-                <td><span class="badge badge-${needStatusBadge(l.priority)}">${l.priority}</span></td>
-                <td><strong>${l.mlConfidence}</strong></td>
-                <td>${l.reason}</td>
-              </tr>`).join('')}
-            </tbody>
-          </table>
-        </div>
-        <p class="report-footnote"><i class="fa-solid fa-circle-info"></i> Generated ${auto.generatedAt || '—'} · Indent saved automatically. You may proceed to the next stage.</p>
-      ` : (auto.status === 'idle' ? `<div class="indent-empty-hint"><i class="fa-solid fa-robot"></i><p>Click <strong>Run automated process</strong> to generate indent lines.</p></div>` : '')}
+      ${auto.status === 'running' ? `<div class="indent-empty-hint"><i class="fa-solid fa-spinner fa-spin"></i><p>Fetching indent recommendations…</p></div>` : ''}
     </div>` : ''}
+
+    ${renderWorkflowPeriodFilter('indent', govIndentState)}
+
+    <div class="need-section" style="margin-top:1rem">
+      <div class="need-section-head">
+        <h4><i class="fa-solid fa-list"></i> Indent List</h4>
+        <span class="meta-chip">${periodLabel} · ${rows.length} record(s)</span>
+      </div>
+      <div class="data-table-wrap need-table">
+        <table class="data-table">
+          <thead><tr><th>Indent ID</th><th>Item</th><th>Qty</th><th>Facility</th><th>Source</th><th>Priority</th><th>Status</th><th>Date</th></tr></thead>
+          <tbody>
+            ${rows.length ? rows.map(r => `
+              <tr class="need-row-clickable" role="button" tabindex="0" onclick="openIndentRowDetail('${r.id}')" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();openIndentRowDetail('${r.id}')}">
+                <td><strong>${r.id}</strong></td>
+                <td>${r.item}</td>
+                <td>${r.quantity}</td>
+                <td>${r.facility}</td>
+                <td>${r.source || '—'}</td>
+                <td><span class="badge badge-${needStatusBadge(r.priority)}">${r.priority}</span></td>
+                <td><span class="badge badge-${needStatusBadge(r.status)}">${r.status}</span></td>
+                <td>${r.date || '—'}</td>
+              </tr>
+            `).join('') : `<tr><td colspan="8" style="text-align:center;color:#64748b">No indents for ${periodLabel}.</td></tr>`}
+          </tbody>
+        </table>
+      </div>
+    </div>
   </div>`;
 }
 
@@ -2479,6 +2730,63 @@ function getConsolidationEstimatedValueRange() {
   if (currentCategory === 'Consumables') return { low: '₹2.2 Cr', high: '₹3.4 Cr', mid: '₹2.8 Cr' };
   if (currentCategory === 'Others') return { low: '₹0.9 Cr', high: '₹1.6 Cr', mid: '₹1.2 Cr' };
   return { low: '₹16.8 Cr', high: '₹21.5 Cr', mid: '₹18.6 Cr' };
+}
+
+function getDemandApprovalRows() {
+  const seed = typeof DEMAND_APPROVAL_LIST !== 'undefined' ? DEMAND_APPROVAL_LIST : [];
+  const rows = currentCategory === 'All'
+    ? seed
+    : seed.filter(r => r.category === currentCategory);
+  return applyStagePeriodFilter(rows, govConsolidationState, 'date');
+}
+
+function openDemandApprovalDetail(demandId) {
+  const seed = typeof DEMAND_APPROVAL_LIST !== 'undefined' ? DEMAND_APPROVAL_LIST : [];
+  const r = seed.find(x => x.id === demandId);
+  if (!r) {
+    showWfAlert('Demand record not found.');
+    return;
+  }
+  openModal(`${r.id} — Demand Approval`, `
+    <div class="kpi-detail need-row-detail">
+      <p class="need-row-detail-lead">Consolidated demand package for district review and approval.</p>
+      <div class="tender-detail-stats tender-detail-stats--4">
+        <div class="tender-stat"><span>Items</span><strong>${r.items}</strong></div>
+        <div class="tender-stat"><span>Facilities</span><strong>${r.facilities}</strong></div>
+        <div class="tender-stat"><span>Status</span><strong><span class="badge badge-${needStatusBadge(r.status)}">${r.status}</span></strong></div>
+        <div class="tender-stat"><span>Date</span><strong>${r.date || '—'}</strong></div>
+      </div>
+      <div class="tender-detail-section">
+        <div class="tender-detail-section-head">
+          <h4>Demand details</h4>
+          <button type="button" class="btn btn-primary btn-sm" onclick="openStageFollowUpModal('consol','demand','${r.id}')">
+            <i class="fa-solid fa-envelope-open-text"></i> Take Follow-up
+          </button>
+        </div>
+        <div class="data-table-wrap">
+          <table class="data-table data-table--modal">
+            <tbody>
+              <tr><td>Demand ID</td><td><strong>${r.id}</strong></td></tr>
+              <tr><td>District</td><td>${r.district}</td></tr>
+              <tr><td>Category</td><td>${r.category}</td></tr>
+              <tr><td>Line items</td><td>${r.items}</td></tr>
+              <tr><td>Facilities</td><td>${r.facilities}</td></tr>
+              <tr><td>Estimated value</td><td>${r.valueLow} – ${r.valueHigh}</td></tr>
+              <tr><td>Linked indent</td><td>${r.indentRef || '—'}</td></tr>
+              <tr><td>Notes</td><td>${r.notes || '—'}</td></tr>
+              <tr><td>Date</td><td><strong>${r.date || '—'}</strong></td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+      <div class="modal-inline-actions">
+        <button type="button" class="btn btn-outline" onclick="modalGoBack()"><i class="fa-solid fa-arrow-left"></i> Back</button>
+        <button type="button" class="btn btn-primary" onclick="openStageFollowUpModal('consol','demand','${r.id}')">
+          <i class="fa-solid fa-envelope-open-text"></i> Take Follow-up
+        </button>
+      </div>
+    </div>
+  `, { wide: true });
 }
 
 function renderDemandConsolidationStage(canEdit = true) {
@@ -2503,6 +2811,36 @@ function renderDemandConsolidationStage(canEdit = true) {
 
     ${renderWorkflowPeriodFilter('consol', st)}
     <p class="report-footnote" style="margin:-0.35rem 0 0.85rem"><i class="fa-solid fa-calendar-days"></i> Viewing period: <strong>${getWfPeriodFilterLabel(st)}</strong></p>
+
+    ${(() => {
+      const demandRows = getDemandApprovalRows();
+      const periodLabel = getWfPeriodFilterLabel(st);
+      return `<div class="need-section" style="margin-bottom:1.1rem">
+        <div class="need-section-head">
+          <h4><i class="fa-solid fa-clipboard-list"></i> Demand Approval List</h4>
+          <span class="meta-chip">${periodLabel} · ${demandRows.length} record(s)</span>
+        </div>
+        <div class="data-table-wrap need-table">
+          <table class="data-table">
+            <thead><tr><th>Demand ID</th><th>District</th><th>Category</th><th>Items</th><th>Facilities</th><th>Est. value</th><th>Status</th><th>Date</th></tr></thead>
+            <tbody>
+              ${demandRows.length ? demandRows.map(r => `
+                <tr class="need-row-clickable" role="button" tabindex="0" onclick="openDemandApprovalDetail('${r.id}')" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();openDemandApprovalDetail('${r.id}')}">
+                  <td><strong>${r.id}</strong></td>
+                  <td>${r.district}</td>
+                  <td>${r.category}</td>
+                  <td>${r.items}</td>
+                  <td>${r.facilities}</td>
+                  <td>${r.valueLow} – ${r.valueHigh}</td>
+                  <td><span class="badge badge-${needStatusBadge(r.status)}">${r.status}</span></td>
+                  <td>${r.date || '—'}</td>
+                </tr>
+              `).join('') : `<tr><td colspan="8" style="text-align:center;color:#64748b">No demand records for ${periodLabel}.</td></tr>`}
+            </tbody>
+          </table>
+        </div>
+      </div>`;
+    })()}
 
     <div class="form-grid wf-form-grid">
       ${customSelectHTML('District', 'consolDistrict', ['Bhopal', 'Indore', 'Jabalpur', 'Gwalior', 'Rewa'], st.district)}
@@ -2803,6 +3141,17 @@ function getPrBudgetData() {
   return typeof PR_BUDGET_APPROVAL_API !== 'undefined' ? PR_BUDGET_APPROVAL_API : null;
 }
 
+function getPrBudgetListRows() {
+  const data = getPrBudgetData();
+  const depts = (data?.departments || []).map(d => ({
+    ...d,
+    date: (d.decisionDate && d.decisionDate !== '—')
+      ? d.decisionDate
+      : (d.documents?.[0]?.uploadedOn || d.decisionDate || '')
+  }));
+  return applyStagePeriodFilter(depts, govBudgetState, 'date');
+}
+
 function renderPrBudgetApprovalStage(canEdit = true) {
   const data = getPrBudgetData();
   if (!data) {
@@ -2810,6 +3159,8 @@ function renderPrBudgetApprovalStage(canEdit = true) {
   }
   const { meta, checklist, departments } = data;
   const disabled = canEdit ? '' : ' disabled';
+  const listRows = getPrBudgetListRows();
+  const periodLabel = getWfPeriodFilterLabel(govBudgetState);
   const approvedCount = departments.filter(d => d.status === 'Approved').length;
   const blockedCount = departments.filter(d => d.status === 'Not Approved').length;
   const reviewCount = departments.filter(d => d.status === 'Under Review' || d.status === 'Partial').length;
@@ -2826,7 +3177,7 @@ function renderPrBudgetApprovalStage(canEdit = true) {
     </div>
 
     ${renderWorkflowPeriodFilter('budget', govBudgetState)}
-    <p class="report-footnote" style="margin:-0.35rem 0 0.85rem"><i class="fa-solid fa-calendar-days"></i> Viewing period: <strong>${getWfPeriodFilterLabel(govBudgetState)}</strong></p>
+    <p class="report-footnote" style="margin:-0.35rem 0 0.85rem"><i class="fa-solid fa-calendar-days"></i> Viewing period: <strong>${periodLabel}</strong></p>
 
     <div class="budget-pr-summary">
       <div class="budget-pr-chip"><span>PR Number</span><strong>${meta.prNumber}</strong></div>
@@ -2863,8 +3214,8 @@ function renderPrBudgetApprovalStage(canEdit = true) {
 
     <section class="budget-section">
       <div class="budget-section-head">
-        <h4><i class="fa-solid fa-building-columns"></i> Department budget approvals</h4>
-        <p>Open a department to see why budget was approved or not, read the decision note, and get the related documents.</p>
+        <h4><i class="fa-solid fa-building-columns"></i> PR &amp; Budget Approval List</h4>
+        <p>Open a row to see why budget was approved or not, read the decision note, and get the related documents.</p>
       </div>
       <div class="budget-dept-stats">
         <div class="budget-dept-stat"><span>Departments</span><strong>${departments.length}</strong></div>
@@ -2872,23 +3223,27 @@ function renderPrBudgetApprovalStage(canEdit = true) {
         <div class="budget-dept-stat"><span>Not approved</span><strong>${blockedCount}</strong></div>
         <div class="budget-dept-stat"><span>Review / partial</span><strong>${reviewCount}</strong></div>
       </div>
-      <div class="budget-dept-grid">
-        ${departments.map(d => `
-          <button type="button" class="budget-dept-card status-${d.status.toLowerCase().replace(/\s+/g, '-')}" onclick="openDepartmentBudgetDetail('${d.id}')">
-            <div class="budget-dept-card-top">
-              <strong>${d.shortName}</strong>
-              <span class="badge badge-${needStatusBadge(d.status)}">${d.status}</span>
-            </div>
-            <p class="budget-dept-name">${d.name}</p>
-            <div class="budget-dept-figures">
-              <div><span>Allocated</span><strong>${d.allocated}</strong></div>
-              <div><span>Requested</span><strong>${d.requested}</strong></div>
-              <div><span>Available</span><strong>${d.available}</strong></div>
-            </div>
-            <p class="budget-dept-head">Budget head: ${d.budgetHead}</p>
-            <span class="budget-dept-cta">View reasons &amp; documents <i class="fa-solid fa-arrow-right"></i></span>
-          </button>
-        `).join('')}
+      <div class="need-section-head" style="margin:0.75rem 0 0.5rem">
+        <span class="meta-chip">${periodLabel} · ${listRows.length} record(s)</span>
+      </div>
+      <div class="data-table-wrap need-table">
+        <table class="data-table">
+          <thead><tr><th>Department</th><th>Budget head</th><th>Scheme</th><th>Allocated</th><th>Requested</th><th>Available</th><th>Status</th><th>Date</th></tr></thead>
+          <tbody>
+            ${listRows.length ? listRows.map(d => `
+              <tr class="need-row-clickable" role="button" tabindex="0" onclick="openDepartmentBudgetDetail('${d.id}')" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();openDepartmentBudgetDetail('${d.id}')}">
+                <td><strong>${d.shortName}</strong><div class="table-sub">${d.name}</div></td>
+                <td>${d.budgetHead}</td>
+                <td>${d.scheme}</td>
+                <td>${d.allocated}</td>
+                <td>${d.requested}</td>
+                <td>${d.available}</td>
+                <td><span class="badge badge-${needStatusBadge(d.status)}">${d.status}</span></td>
+                <td>${d.date || '—'}</td>
+              </tr>
+            `).join('') : `<tr><td colspan="8" style="text-align:center;color:#64748b">No PR &amp; budget records for ${periodLabel}.</td></tr>`}
+          </tbody>
+        </table>
       </div>
     </section>
 
@@ -2907,9 +3262,16 @@ function openDepartmentBudgetDetail(deptId) {
   if (!dept) return;
   const fetched = govBudgetState.fetchedDocs[deptId] || [];
   const note = dept.ocrExtract;
+  const followUpBtn = `<button type="button" class="btn btn-primary btn-sm" onclick="openStageFollowUpModal('budget','dept','${dept.id}')">
+            <i class="fa-solid fa-envelope-open-text"></i> Take Follow-up
+          </button>`;
 
   openModal(`${dept.name} — Budget Detail`, `
     <div class="budget-dept-detail consol-detail-modal">
+      <div class="tender-detail-section-head" style="margin:0 0 0.85rem">
+        <h4 style="margin:0">Department budget detail</h4>
+        ${followUpBtn}
+      </div>
       <div class="consol-detail-stats">
         <div class="consol-detail-stat"><span>Status</span><strong><span class="badge badge-${needStatusBadge(dept.status)}">${dept.status}</span></strong></div>
         <div class="consol-detail-stat"><span>Budget head</span><strong>${dept.budgetHead}</strong></div>
@@ -2986,6 +3348,9 @@ function openDepartmentBudgetDetail(deptId) {
       <div class="modal-inline-actions">
         <button type="button" class="btn btn-outline" onclick="modalGoBack()"><i class="fa-solid fa-arrow-left"></i> Back</button>
         ${note ? `<button type="button" class="btn btn-outline" onclick="openBudgetOcrDocument('${dept.id}')"><i class="fa-solid fa-magnifying-glass"></i> View scanned note</button>` : ''}
+        <button type="button" class="btn btn-primary" onclick="openStageFollowUpModal('budget','dept','${dept.id}')">
+          <i class="fa-solid fa-envelope-open-text"></i> Take Follow-up
+        </button>
       </div>
     </div>
   `, { wide: true, large: true, extraWide: true });
@@ -3206,6 +3571,7 @@ function renderTenderPreparationStage(canEdit = true) {
               <th>BOQ lines</th>
               <th>Est. value</th>
               <th>Draft status</th>
+              <th>Date</th>
             </tr>
           </thead>
           <tbody>
@@ -3216,10 +3582,11 @@ function renderTenderPreparationStage(canEdit = true) {
                 <td>${t.division}</td>
                 <td>${t.category}</td>
                 <td>${t.boqLines}</td>
-                <td>${t.value}</td>
+                <td class="cell-nowrap">${t.value}</td>
                 <td><span class="badge badge-${needStatusBadge(t.status)}">${t.status}</span></td>
+                <td class="cell-date">${t.preparedOn || '—'}</td>
               </tr>
-            `).join('') : `<tr><td colspan="7" style="text-align:center;color:#64748b;padding:1.25rem">No tender drafts for the selected category.</td></tr>`}
+            `).join('') : `<tr><td colspan="8" style="text-align:center;color:#64748b;padding:1.25rem">No tender drafts for the selected category.</td></tr>`}
           </tbody>
         </table>
       </div>
@@ -3275,8 +3642,8 @@ function renderTenderPreparationStage(canEdit = true) {
                 <td>${t.state}<br><span class="cell-sub">${t.division}</span></td>
                 <td>${t.category}</td>
                 <td><span class="badge badge-${needStatusBadge(t.status)}">${t.status}</span></td>
-                <td>${t.value}</td>
-                <td>${t.preparedOn}</td>
+                <td class="cell-nowrap">${t.value}</td>
+                <td class="cell-date">${t.preparedOn || '—'}</td>
               </tr>
             `).join('') : `<tr><td colspan="7" style="text-align:center;color:#64748b;padding:1.25rem">No tenders for the selected category.</td></tr>`}
           </tbody>
@@ -3305,15 +3672,21 @@ function openTenderDraftDetail(tenderId) {
         Department of Public Health &amp; Family Welfare, Government of Madhya Pradesh<br>
         <span style="font-size:0.8rem;opacity:0.85">Auto-prepared tender draft</span>
       </div>
-      <p class="doc-letter-ref">Draft / NIT: ${t.nitNo} &nbsp;|&nbsp; PR: ${t.linkedPr || data?.meta?.linkedPr || '—'} &nbsp;|&nbsp; Prepared: ${t.preparedOn}</p>
-      <h3 style="margin:0.75rem 0 0.5rem;font-size:1.05rem;color:var(--primary)">${t.title}</h3>
+      <p class="doc-letter-ref">Draft / NIT: ${t.nitNo} &nbsp;|&nbsp; PR: ${t.linkedPr || data?.meta?.linkedPr || '—'}</p>
+      <div class="tender-detail-section-head" style="margin:0.75rem 0 0.65rem">
+        <h3 style="margin:0;font-size:1.05rem;color:var(--primary)">${t.title}</h3>
+        <button type="button" class="btn btn-primary btn-sm" onclick="openStageFollowUpModal('tender','draft','${t.id}')">
+          <i class="fa-solid fa-envelope-open-text"></i> Take Follow-up
+        </button>
+      </div>
       <p class="consol-detail-lead">${t.category} · ${t.state} (${t.division} Division) · <span class="badge badge-${needStatusBadge(t.status)}">${t.status}</span></p>
 
-      <div class="consol-detail-stats" style="grid-template-columns:repeat(4,minmax(0,1fr))">
-        <div class="consol-detail-stat"><span>Est. value</span><strong>${t.value}</strong></div>
-        <div class="consol-detail-stat"><span>EMD</span><strong>${t.emd}</strong></div>
+      <div class="consol-detail-stats" style="grid-template-columns:repeat(5,minmax(0,1fr))">
+        <div class="consol-detail-stat"><span>Est. value</span><strong class="cell-nowrap">${t.value}</strong></div>
+        <div class="consol-detail-stat"><span>EMD</span><strong class="cell-nowrap">${t.emd}</strong></div>
         <div class="consol-detail-stat"><span>BOQ lines</span><strong>${t.boqLines}</strong></div>
         <div class="consol-detail-stat"><span>Method</span><strong>${t.method}</strong></div>
+        <div class="consol-detail-stat"><span>Status since</span><strong class="cell-date">${t.preparedOn || '—'}</strong></div>
       </div>
 
       <div class="consol-detail-table-wrap">
@@ -3321,9 +3694,10 @@ function openTenderDraftDetail(tenderId) {
           <tbody>
             <tr><td>Scope</td><td><strong>${t.scope}</strong></td></tr>
             <tr><td>Eligibility</td><td>${t.eligibility}</td></tr>
-            <tr><td>Bid deadline</td><td><strong>${t.bidDeadline}</strong></td></tr>
-            <tr><td>Bid opening</td><td><strong>${t.bidOpening}</strong></td></tr>
+            <tr><td>Bid deadline</td><td><strong class="cell-date">${t.bidDeadline}</strong></td></tr>
+            <tr><td>Bid opening</td><td><strong class="cell-date">${t.bidOpening}</strong></td></tr>
             <tr><td>Delivery period</td><td><strong>${t.deliveryPeriod}</strong></td></tr>
+            <tr><td>Prepared on</td><td><strong class="cell-date">${t.preparedOn || '—'}</strong></td></tr>
             <tr><td>Division checkers</td><td><strong>${t.checkersDone} consensus received</strong></td></tr>
             <tr><td>Built from</td><td>${data?.meta?.sourceStages || 'Prior procurement stages'}</td></tr>
           </tbody>
@@ -3331,7 +3705,10 @@ function openTenderDraftDetail(tenderId) {
       </div>
       <div class="modal-inline-actions">
         <button type="button" class="btn btn-outline" onclick="modalGoBack()"><i class="fa-solid fa-arrow-left"></i> Back</button>
-        <button type="button" class="btn btn-primary" onclick="window.print()"><i class="fa-solid fa-print"></i> Print / Download</button>
+        <button type="button" class="btn btn-outline" onclick="window.print()"><i class="fa-solid fa-print"></i> Print / Download</button>
+        <button type="button" class="btn btn-primary" onclick="openStageFollowUpModal('tender','draft','${t.id}')">
+          <i class="fa-solid fa-envelope-open-text"></i> Take Follow-up
+        </button>
       </div>
     </div>
   `, { wide: true, large: true });
@@ -3383,12 +3760,18 @@ function openTenderPrepRowDetail(tenderId) {
   if (!t) return;
   openModal(`${t.id} — Tender details`, `
     <div class="consol-detail-modal">
-      <p class="consol-detail-lead">${t.title} · ${t.category} · ${t.state} (${t.division} Division)</p>
-      <div class="consol-detail-stats" style="grid-template-columns:repeat(4,minmax(0,1fr))">
+      <div class="tender-detail-section-head" style="margin:0 0 0.75rem">
+        <p class="consol-detail-lead" style="margin:0">${t.title} · ${t.category} · ${t.state} (${t.division} Division)</p>
+        <button type="button" class="btn btn-primary btn-sm" onclick="openStageFollowUpModal('tender','row','${t.id}')">
+          <i class="fa-solid fa-envelope-open-text"></i> Take Follow-up
+        </button>
+      </div>
+      <div class="consol-detail-stats" style="grid-template-columns:repeat(5,minmax(0,1fr))">
         <div class="consol-detail-stat"><span>Status</span><strong><span class="badge badge-${needStatusBadge(t.status)}">${t.status}</span></strong></div>
-        <div class="consol-detail-stat"><span>Est. value</span><strong>${t.value}</strong></div>
-        <div class="consol-detail-stat"><span>EMD</span><strong>${t.emd}</strong></div>
+        <div class="consol-detail-stat"><span>Est. value</span><strong class="cell-nowrap">${t.value}</strong></div>
+        <div class="consol-detail-stat"><span>EMD</span><strong class="cell-nowrap">${t.emd}</strong></div>
         <div class="consol-detail-stat"><span>Method</span><strong>${t.method}</strong></div>
+        <div class="consol-detail-stat"><span>Status since</span><strong class="cell-date">${t.preparedOn || '—'}</strong></div>
       </div>
       <div class="consol-detail-table-wrap">
         <table class="data-table consol-detail-table">
@@ -3398,12 +3781,12 @@ function openTenderPrepRowDetail(tenderId) {
             <tr><td>State</td><td><strong>${t.state}</strong></td></tr>
             <tr><td>Division</td><td><strong>${t.division}</strong></td></tr>
             <tr><td>Category</td><td><strong>${t.category}</strong></td></tr>
-            <tr><td>Prepared on</td><td><strong>${t.preparedOn}</strong></td></tr>
+            <tr><td>Prepared on</td><td><strong class="cell-date">${t.preparedOn || '—'}</strong></td></tr>
             <tr><td>Scope</td><td>${t.scope}</td></tr>
             <tr><td>BOQ lines</td><td><strong>${t.boqLines}</strong></td></tr>
             <tr><td>Eligibility</td><td>${t.eligibility}</td></tr>
-            <tr><td>Bid deadline</td><td><strong>${t.bidDeadline}</strong></td></tr>
-            <tr><td>Bid opening</td><td><strong>${t.bidOpening}</strong></td></tr>
+            <tr><td>Bid deadline</td><td><strong class="cell-date">${t.bidDeadline}</strong></td></tr>
+            <tr><td>Bid opening</td><td><strong class="cell-date">${t.bidOpening}</strong></td></tr>
             <tr><td>Delivery period</td><td><strong>${t.deliveryPeriod}</strong></td></tr>
             <tr><td>Division checkers</td><td><strong>${t.checkersDone} consensus received</strong></td></tr>
           </tbody>
@@ -3411,7 +3794,10 @@ function openTenderPrepRowDetail(tenderId) {
       </div>
       <div class="modal-inline-actions">
         <button type="button" class="btn btn-outline" onclick="modalGoBack()"><i class="fa-solid fa-arrow-left"></i> Back</button>
-        <button type="button" class="btn btn-primary" onclick="openTenderDraftDetail('${t.id}')"><i class="fa-solid fa-file-lines"></i> Open full draft</button>
+        <button type="button" class="btn btn-outline" onclick="openTenderDraftDetail('${t.id}')"><i class="fa-solid fa-file-lines"></i> Open full draft</button>
+        <button type="button" class="btn btn-primary" onclick="openStageFollowUpModal('tender','row','${t.id}')">
+          <i class="fa-solid fa-envelope-open-text"></i> Take Follow-up
+        </button>
       </div>
     </div>
   `, { wide: true, large: true });
@@ -3559,6 +3945,7 @@ function renderWorkflowPeriodFilter(stageKey, filterState) {
 function getWfStageFilterState(stageKey) {
   if (stageKey === 'need') return govNeedState;
   if (stageKey === 'stock') return govStockCheckState;
+  if (stageKey === 'indent') return govIndentState;
   if (stageKey === 'consol') return govConsolidationState;
   if (stageKey === 'budget') return govBudgetState;
   if (stageKey === 'tender') return govTenderPrepState;
@@ -3673,6 +4060,7 @@ function renderBidEvaluationStage(canEdit = true) {
               <th>Status</th>
               <th>L1 / H1</th>
               <th>Bids</th>
+              <th>Date</th>
             </tr>
           </thead>
           <tbody>
@@ -3686,8 +4074,9 @@ function renderBidEvaluationStage(canEdit = true) {
                 <td><span class="badge badge-${needStatusBadge(r.status)}">${r.status}</span></td>
                 <td>${r.l1Vendor}</td>
                 <td>${r.bidsReceived}</td>
+                <td class="cell-date">${r.evalDate && r.evalDate !== '—' ? r.evalDate : '—'}</td>
               </tr>
-            `).join('') : `<tr><td colspan="8" style="text-align:center;color:#64748b;padding:1.25rem">No evaluations match the selected category and period.</td></tr>`}
+            `).join('') : `<tr><td colspan="9" style="text-align:center;color:#64748b;padding:1.25rem">No evaluations match the selected category and period.</td></tr>`}
           </tbody>
         </table>
       </div>
@@ -3699,14 +4088,21 @@ function renderBidEvaluationStage(canEdit = true) {
 function openBidEvaluationDetail(evalId) {
   const r = (typeof BID_EVALUATION_DATA !== 'undefined' ? BID_EVALUATION_DATA.evaluations : []).find(e => e.id === evalId);
   if (!r) return;
+  const statusSince = (r.evalDate && r.evalDate !== '—') ? r.evalDate : '—';
   openModal(`${r.id} — Bid evaluation`, `
     <div class="consol-detail-modal">
-      <p class="consol-detail-lead">${r.title} · ${r.category} · ${r.state} (${r.division})</p>
-      <div class="consol-detail-stats" style="grid-template-columns:repeat(4,minmax(0,1fr))">
+      <div class="tender-detail-section-head" style="margin:0 0 0.75rem">
+        <p class="consol-detail-lead" style="margin:0">${r.title} · ${r.category} · ${r.state} (${r.division})</p>
+        <button type="button" class="btn btn-primary btn-sm" onclick="openStageFollowUpModal('bid','eval','${r.id}')">
+          <i class="fa-solid fa-envelope-open-text"></i> Take Follow-up
+        </button>
+      </div>
+      <div class="consol-detail-stats" style="grid-template-columns:repeat(5,minmax(0,1fr))">
         <div class="consol-detail-stat"><span>Status</span><strong><span class="badge badge-${needStatusBadge(r.status)}">${r.status}</span></strong></div>
         <div class="consol-detail-stat"><span>Method</span><strong>${r.method}</strong></div>
-        <div class="consol-detail-stat"><span>Sheet No.</span><strong>${r.sheetNo}</strong></div>
-        <div class="consol-detail-stat"><span>Est. value</span><strong>${r.l1Value}</strong></div>
+        <div class="consol-detail-stat"><span>Sheet No.</span><strong class="cell-nowrap">${r.sheetNo}</strong></div>
+        <div class="consol-detail-stat"><span>Est. value</span><strong class="cell-nowrap">${r.l1Value}</strong></div>
+        <div class="consol-detail-stat"><span>Status since</span><strong class="cell-date">${statusSince}</strong></div>
       </div>
       <div class="consol-detail-table-wrap" style="margin-bottom:1rem">
         <table class="data-table consol-detail-table">
@@ -3717,7 +4113,7 @@ function openBidEvaluationDetail(evalId) {
             <tr><td>Technical score / stage</td><td><strong>${r.techScore}</strong></td></tr>
             <tr><td>Financial outcome</td><td><strong>${r.finScore}</strong></td></tr>
             <tr><td>Recommended L1 / H1</td><td><strong>${r.l1Vendor}</strong></td></tr>
-            <tr><td>Evaluation date</td><td><strong>${r.evalDate}</strong></td></tr>
+            <tr><td>Evaluation date</td><td><strong class="cell-date">${statusSince}</strong></td></tr>
             <tr><td>Remarks</td><td>${r.remarks}</td></tr>
             <tr><td>Custom sheet</td><td>Generated from bidder documents for this tender (technical + financial format)</td></tr>
           </tbody>
@@ -3739,15 +4135,27 @@ function openBidEvaluationDetail(evalId) {
       </div>
       <div class="modal-inline-actions">
         <button type="button" class="btn btn-outline" onclick="modalGoBack()"><i class="fa-solid fa-arrow-left"></i> Back</button>
+        <button type="button" class="btn btn-primary" onclick="openStageFollowUpModal('bid','eval','${r.id}')">
+          <i class="fa-solid fa-envelope-open-text"></i> Take Follow-up
+        </button>
       </div>
     </div>
   `, { wide: true, large: true, extraWide: true });
 }
 
 /* ========== Stage 8 Contract Approval ========== */
+function getContractStatusDate(r) {
+  if (!r) return '—';
+  if (r.signedOn && r.signedOn !== '—') return r.signedOn;
+  if (r.noaDate && r.noaDate !== '—') return r.noaDate;
+  if (r.date && r.date !== '—') return r.date;
+  return '—';
+}
+
 function getContractApprovalRows() {
-  const rows = filterCategoryRows(typeof CONTRACT_APPROVAL_DATA !== 'undefined' ? CONTRACT_APPROVAL_DATA.contracts : []);
-  return applyStagePeriodFilter(rows, govContractState, 'noaDate');
+  const rows = filterCategoryRows(typeof CONTRACT_APPROVAL_DATA !== 'undefined' ? CONTRACT_APPROVAL_DATA.contracts : [])
+    .map(r => ({ ...r, date: getContractStatusDate(r) }));
+  return applyStagePeriodFilter(rows, govContractState, 'date');
 }
 
 function setContractApprovalPage(page) {
@@ -3806,7 +4214,8 @@ function renderContractApprovalStage(canEdit = true) {
               <th>Category</th>
               <th>L1 bidder</th>
               <th>Status</th>
-              <th>Est. value</th>
+              <th class="th-value">Est. value</th>
+              <th class="th-date">Date</th>
               <th>Action</th>
             </tr>
           </thead>
@@ -3824,10 +4233,11 @@ function renderContractApprovalStage(canEdit = true) {
                 <td>${r.category}</td>
                 <td>${r.l1Vendor}</td>
                 <td><span class="badge badge-${needStatusBadge(r.status)}">${r.status}</span></td>
-                <td>${r.value}</td>
+                <td class="cell-nowrap">${r.value}</td>
+                <td class="cell-date">${r.date || '—'}</td>
                 <td><span class="cell-link">${actionLabel} <i class="fa-solid fa-arrow-right"></i></span></td>
               </tr>`;
-            }).join('') : `<tr><td colspan="8" style="text-align:center;color:#64748b;padding:1.25rem">No contracts match the selected category and period.</td></tr>`}
+            }).join('') : `<tr><td colspan="9" style="text-align:center;color:#64748b;padding:1.25rem">No contracts match the selected category and period.</td></tr>`}
           </tbody>
         </table>
       </div>
@@ -3871,6 +4281,10 @@ function openContractApprovalDetail(contractId) {
   if (!r) return;
   const f = getContractApprovalFormDefaults(r);
   const locked = f.readonly;
+  const statusSince = getContractStatusDate(r);
+  const followUpBtn = `<button type="button" class="btn btn-primary btn-sm" onclick="openStageFollowUpModal('contract','row','${r.id}')">
+          <i class="fa-solid fa-envelope-open-text"></i> Take Follow-up
+        </button>`;
   const check = (id, label, detail, checked) => `
     <label class="ca-check-item ${locked ? 'is-locked' : ''}">
       <input type="checkbox" id="caChk_${id}" ${checked ? 'checked' : ''} ${locked ? 'disabled' : ''}>
@@ -3882,12 +4296,16 @@ function openContractApprovalDetail(contractId) {
 
   openModal(`${r.id} — Contract Approval Form (CA-01)`, `
     <div class="consol-detail-modal ca-form-modal">
-      <p class="consol-detail-lead">${r.title} · ${r.category} · ${r.state} (${r.division})</p>
-      <div class="consol-detail-stats" style="grid-template-columns:repeat(4,minmax(0,1fr))">
+      <div class="tender-detail-section-head" style="margin:0 0 0.75rem">
+        <p class="consol-detail-lead" style="margin:0">${r.title} · ${r.category} · ${r.state} (${r.division})</p>
+        ${followUpBtn}
+      </div>
+      <div class="consol-detail-stats" style="grid-template-columns:repeat(5,minmax(0,1fr))">
         <div class="consol-detail-stat"><span>Status</span><strong><span class="badge badge-${needStatusBadge(r.status)}">${r.status}</span></strong></div>
         <div class="consol-detail-stat"><span>L1 bidder</span><strong>${r.l1Vendor}</strong></div>
-        <div class="consol-detail-stat"><span>NOA</span><strong>${r.noaNo}</strong></div>
-        <div class="consol-detail-stat"><span>Est. value</span><strong>${r.value}</strong></div>
+        <div class="consol-detail-stat"><span>NOA</span><strong class="cell-nowrap">${r.noaNo}</strong></div>
+        <div class="consol-detail-stat"><span>Est. value</span><strong class="cell-nowrap">${r.value}</strong></div>
+        <div class="consol-detail-stat"><span>Status since</span><strong class="cell-date">${statusSince}</strong></div>
       </div>
 
       <div class="ca-policy-note">
@@ -3904,11 +4322,13 @@ function openContractApprovalDetail(contractId) {
           <tbody>
             <tr><td>Tender ID</td><td><strong>${r.tenderId}</strong></td></tr>
             <tr><td>Contract ID</td><td><strong>${r.id}</strong></td></tr>
-            <tr><td>NOA No. / date</td><td><strong>${r.noaNo}</strong> · ${r.noaDate}</td></tr>
+            <tr><td>NOA No.</td><td><strong class="cell-nowrap">${r.noaNo}</strong></td></tr>
+            <tr><td>NOA date</td><td><strong class="cell-date">${r.noaDate && r.noaDate !== '—' ? r.noaDate : '—'}</strong></td></tr>
             <tr><td>Agreement No.</td><td><strong>${r.agreementNo}</strong></td></tr>
             <tr><td>Legal clearance</td><td><span class="badge badge-${needStatusBadge(r.legalStatus)}">${r.legalStatus}</span></td></tr>
             <tr><td>Finance clearance</td><td><span class="badge badge-${needStatusBadge(r.financeStatus)}">${r.financeStatus}</span></td></tr>
-            <tr><td>Signed on</td><td><strong>${r.signedOn}</strong></td></tr>
+            <tr><td>Signed on</td><td><strong class="cell-date">${r.signedOn && r.signedOn !== '—' ? r.signedOn : '—'}</strong></td></tr>
+            <tr><td>Status since</td><td><strong class="cell-date">${statusSince}</strong></td></tr>
           </tbody>
         </table>
       </div>
@@ -3974,10 +4394,16 @@ function openContractApprovalDetail(contractId) {
         </div>
         <div class="modal-inline-actions">
           <button type="button" class="btn btn-outline" onclick="modalGoBack()"><i class="fa-solid fa-arrow-left"></i> Back to list</button>
+          <button type="button" class="btn btn-primary" onclick="openStageFollowUpModal('contract','row','${r.id}')">
+            <i class="fa-solid fa-envelope-open-text"></i> Take Follow-up
+          </button>
         </div>
       ` : `
         <div class="modal-inline-actions ca-form-actions">
           <button type="button" class="btn btn-outline" onclick="modalGoBack()"><i class="fa-solid fa-arrow-left"></i> Back</button>
+          <button type="button" class="btn btn-outline" onclick="openStageFollowUpModal('contract','row','${r.id}')">
+            <i class="fa-solid fa-envelope-open-text"></i> Take Follow-up
+          </button>
           <button type="button" class="btn btn-outline" onclick="submitContractApprovalForm('${r.id}','clarify')"><i class="fa-solid fa-envelope-open-text"></i> Seek clarification</button>
           <button type="button" class="btn btn-outline ca-btn-reject" onclick="submitContractApprovalForm('${r.id}','reject')"><i class="fa-solid fa-ban"></i> Reject</button>
           <button type="button" class="btn btn-primary" onclick="submitContractApprovalForm('${r.id}','approve')"><i class="fa-solid fa-file-signature"></i> Approve contract</button>
@@ -4090,9 +4516,17 @@ function submitContractApprovalForm(contractId, action) {
 }
 
 /* ========== Stage 9 Award ========== */
+function getAwardStatusDate(r) {
+  if (!r) return '—';
+  if (r.loaDate && r.loaDate !== '—') return r.loaDate;
+  if (r.date && r.date !== '—') return r.date;
+  return '—';
+}
+
 function getAwardStageRows() {
-  const rows = filterCategoryRows(typeof AWARD_STAGE_DATA !== 'undefined' ? AWARD_STAGE_DATA.awards : []);
-  return applyStagePeriodFilter(rows, govAwardState, 'loaDate');
+  const rows = filterCategoryRows(typeof AWARD_STAGE_DATA !== 'undefined' ? AWARD_STAGE_DATA.awards : [])
+    .map(r => ({ ...r, date: getAwardStatusDate(r) }));
+  return applyStagePeriodFilter(rows, govAwardState, 'date');
 }
 
 function setAwardStagePage(page) {
@@ -4165,6 +4599,7 @@ function renderAwardStage(canEdit = true) {
               <th>Status</th>
               <th>PBG</th>
               <th>Est. value</th>
+              <th>Date</th>
             </tr>
           </thead>
           <tbody>
@@ -4177,9 +4612,10 @@ function renderAwardStage(canEdit = true) {
                 <td>${r.vendor}</td>
                 <td><span class="badge badge-${needStatusBadge(r.status)}">${r.status}</span></td>
                 <td><span class="badge badge-${needStatusBadge(r.pbgStatus)}">${r.pbgStatus}</span></td>
-                <td>${r.value}</td>
+                <td class="cell-nowrap">${r.value}</td>
+                <td class="cell-date">${r.date || '—'}</td>
               </tr>
-            `).join('') : `<tr><td colspan="8" style="text-align:center;color:#64748b;padding:1.25rem">No awards match the selected category and period.</td></tr>`}
+            `).join('') : `<tr><td colspan="9" style="text-align:center;color:#64748b;padding:1.25rem">No awards match the selected category and period.</td></tr>`}
           </tbody>
         </table>
       </div>
@@ -4192,6 +4628,7 @@ function openAwardStageDetail(awardId) {
   const data = typeof AWARD_STAGE_DATA !== 'undefined' ? AWARD_STAGE_DATA : null;
   const r = data?.awards?.find(a => a.id === awardId);
   if (!r) return;
+  const statusSince = getAwardStatusDate(r);
   const checks = data.checklistTemplate.map(item => {
     const done = !!(r.checklist && r.checklist[item.id]);
     return `<article class="budget-check-item ${done ? 'is-done' : 'is-open'}">
@@ -4208,12 +4645,18 @@ function openAwardStageDetail(awardId) {
 
   openModal(`${r.id} — Award details`, `
     <div class="consol-detail-modal">
-      <p class="consol-detail-lead">${r.title} · ${r.category} · ${r.state} (${r.division})</p>
-      <div class="consol-detail-stats" style="grid-template-columns:repeat(4,minmax(0,1fr))">
+      <div class="tender-detail-section-head" style="margin:0 0 0.75rem">
+        <p class="consol-detail-lead" style="margin:0">${r.title} · ${r.category} · ${r.state} (${r.division})</p>
+        <button type="button" class="btn btn-primary btn-sm" onclick="openStageFollowUpModal('award','row','${r.id}')">
+          <i class="fa-solid fa-envelope-open-text"></i> Take Follow-up
+        </button>
+      </div>
+      <div class="consol-detail-stats" style="grid-template-columns:repeat(5,minmax(0,1fr))">
         <div class="consol-detail-stat"><span>Status</span><strong><span class="badge badge-${needStatusBadge(r.status)}">${r.status}</span></strong></div>
         <div class="consol-detail-stat"><span>Vendor</span><strong>${r.vendor}</strong></div>
         <div class="consol-detail-stat"><span>PBG</span><strong><span class="badge badge-${needStatusBadge(r.pbgStatus)}">${r.pbgStatus}</span></strong></div>
-        <div class="consol-detail-stat"><span>Est. value</span><strong>${r.value}</strong></div>
+        <div class="consol-detail-stat"><span>Est. value</span><strong class="cell-nowrap">${r.value}</strong></div>
+        <div class="consol-detail-stat"><span>Status since</span><strong class="cell-date">${statusSince}</strong></div>
       </div>
 
       <h4 class="budget-subhead">LOA details</h4>
@@ -4221,8 +4664,9 @@ function openAwardStageDetail(awardId) {
         <table class="data-table consol-detail-table">
           <tbody>
             <tr><td>Tender ID</td><td><strong>${r.tenderId}</strong></td></tr>
-            <tr><td>LOA No.</td><td><strong>${r.loaNo}</strong></td></tr>
-            <tr><td>LOA date</td><td><strong>${r.loaDate}</strong></td></tr>
+            <tr><td>LOA No.</td><td><strong class="cell-nowrap">${r.loaNo}</strong></td></tr>
+            <tr><td>LOA date</td><td><strong class="cell-date">${r.loaDate && r.loaDate !== '—' ? r.loaDate : '—'}</strong></td></tr>
+            <tr><td>Status since</td><td><strong class="cell-date">${statusSince}</strong></td></tr>
             <tr><td>LOA acknowledgement</td><td><span class="badge badge-${needStatusBadge(r.loaAck)}">${r.loaAck}</span></td></tr>
             <tr><td>Contract ID</td><td><strong>${r.contractId}</strong></td></tr>
           </tbody>
@@ -4234,8 +4678,8 @@ function openAwardStageDetail(awardId) {
         <table class="data-table consol-detail-table">
           <tbody>
             <tr><td>PBG status</td><td><span class="badge badge-${needStatusBadge(r.pbgStatus)}">${r.pbgStatus}</span></td></tr>
-            <tr><td>PBG amount (range)</td><td><strong>${r.pbgAmount}</strong></td></tr>
-            <tr><td>Due by</td><td><strong>${r.pbgDue}</strong></td></tr>
+            <tr><td>PBG amount (range)</td><td><strong class="cell-nowrap">${r.pbgAmount}</strong></td></tr>
+            <tr><td>Due by</td><td><strong class="cell-date">${r.pbgDue && r.pbgDue !== '—' ? r.pbgDue : '—'}</strong></td></tr>
             <tr><td>BG / SFMS reference</td><td><strong>${r.pbgRef}</strong></td></tr>
           </tbody>
         </table>
@@ -4246,15 +4690,26 @@ function openAwardStageDetail(awardId) {
 
       <div class="modal-inline-actions">
         <button type="button" class="btn btn-outline" onclick="modalGoBack()"><i class="fa-solid fa-arrow-left"></i> Back</button>
+        <button type="button" class="btn btn-primary" onclick="openStageFollowUpModal('award','row','${r.id}')">
+          <i class="fa-solid fa-envelope-open-text"></i> Take Follow-up
+        </button>
       </div>
     </div>
   `, { wide: true, large: true, extraWide: true });
 }
 
 /* ========== Stage 10 Purchase Order ========== */
+function getPoStatusDate(r) {
+  if (!r) return '—';
+  if (r.poDate && r.poDate !== '—') return r.poDate;
+  if (r.date && r.date !== '—') return r.date;
+  return '—';
+}
+
 function getPurchaseOrderRows() {
-  const rows = filterCategoryRows(typeof PURCHASE_ORDER_DATA !== 'undefined' ? PURCHASE_ORDER_DATA.orders : []);
-  return applyStagePeriodFilter(rows, govPoState, 'poDate');
+  const rows = filterCategoryRows(typeof PURCHASE_ORDER_DATA !== 'undefined' ? PURCHASE_ORDER_DATA.orders : [])
+    .map(r => ({ ...r, date: getPoStatusDate(r) }));
+  return applyStagePeriodFilter(rows, govPoState, 'date');
 }
 
 function setPurchaseOrderPage(page) {
@@ -4319,6 +4774,7 @@ function renderPurchaseOrderStage(canEdit = true) {
               <th>Status</th>
               <th>Vendor notified</th>
               <th>Est. value</th>
+              <th>Date</th>
             </tr>
           </thead>
           <tbody>
@@ -4331,9 +4787,10 @@ function renderPurchaseOrderStage(canEdit = true) {
                 <td>${r.vendor}</td>
                 <td><span class="badge badge-${needStatusBadge(r.status)}">${r.status}</span></td>
                 <td><span class="badge badge-${needStatusBadge(r.vendorNotified)}">${r.vendorNotified}</span></td>
-                <td>${r.value}</td>
+                <td class="cell-nowrap">${r.value}</td>
+                <td class="cell-date">${r.date || '—'}</td>
               </tr>
-            `).join('') : `<tr><td colspan="8" style="text-align:center;color:#64748b;padding:1.25rem">No purchase orders match the selected category and period.</td></tr>`}
+            `).join('') : `<tr><td colspan="9" style="text-align:center;color:#64748b;padding:1.25rem">No purchase orders match the selected category and period.</td></tr>`}
           </tbody>
         </table>
       </div>
@@ -4345,14 +4802,24 @@ function renderPurchaseOrderStage(canEdit = true) {
 function openPurchaseOrderDetail(poId) {
   const r = (typeof PURCHASE_ORDER_DATA !== 'undefined' ? PURCHASE_ORDER_DATA.orders : []).find(o => o.id === poId);
   if (!r) return;
+  const statusSince = getPoStatusDate(r);
+  const deliveryWindow = (r.deliveryStart && r.deliveryStart !== '—' && r.deliveryEnd && r.deliveryEnd !== '—')
+    ? `${r.deliveryStart} – ${r.deliveryEnd}`
+    : '—';
   openModal(`${r.id} — Purchase order`, `
     <div class="consol-detail-modal">
-      <p class="consol-detail-lead">${r.title} · ${r.category} · ${r.state} (${r.division})</p>
-      <div class="consol-detail-stats" style="grid-template-columns:repeat(4,minmax(0,1fr))">
+      <div class="tender-detail-section-head" style="margin:0 0 0.75rem">
+        <p class="consol-detail-lead" style="margin:0">${r.title} · ${r.category} · ${r.state} (${r.division})</p>
+        <button type="button" class="btn btn-primary btn-sm" onclick="openStageFollowUpModal('po','row','${r.id}')">
+          <i class="fa-solid fa-envelope-open-text"></i> Take Follow-up
+        </button>
+      </div>
+      <div class="consol-detail-stats" style="grid-template-columns:repeat(5,minmax(0,1fr))">
         <div class="consol-detail-stat"><span>Status</span><strong><span class="badge badge-${needStatusBadge(r.status)}">${r.status}</span></strong></div>
         <div class="consol-detail-stat"><span>Vendor</span><strong>${r.vendor}</strong></div>
         <div class="consol-detail-stat"><span>Vendor notified</span><strong><span class="badge badge-${needStatusBadge(r.vendorNotified)}">${r.vendorNotified}</span></strong></div>
-        <div class="consol-detail-stat"><span>Est. value</span><strong>${r.value}</strong></div>
+        <div class="consol-detail-stat"><span>Est. value</span><strong class="cell-nowrap">${r.value}</strong></div>
+        <div class="consol-detail-stat"><span>Status since</span><strong class="cell-date">${statusSince}</strong></div>
       </div>
 
       <h4 class="budget-subhead">PO &amp; contract linkage</h4>
@@ -4362,7 +4829,8 @@ function openPurchaseOrderDetail(poId) {
             <tr><td>Tender ID</td><td><strong>${r.tenderId}</strong></td></tr>
             <tr><td>Award ID</td><td><strong>${r.awardId}</strong></td></tr>
             <tr><td>Contract ID</td><td><strong>${r.contractId}</strong></td></tr>
-            <tr><td>PO date</td><td><strong>${r.poDate}</strong></td></tr>
+            <tr><td>PO date</td><td><strong class="cell-date">${r.poDate && r.poDate !== '—' ? r.poDate : '—'}</strong></td></tr>
+            <tr><td>Status since</td><td><strong class="cell-date">${statusSince}</strong></td></tr>
             <tr><td>Acknowledgement</td><td><span class="badge badge-${needStatusBadge(r.ackStatus)}">${r.ackStatus}</span></td></tr>
             <tr><td>Line items</td><td><strong>${r.lines}</strong></td></tr>
           </tbody>
@@ -4374,7 +4842,7 @@ function openPurchaseOrderDetail(poId) {
         <table class="data-table consol-detail-table">
           <tbody>
             <tr><td>Ship to</td><td><strong>${r.shipTo}</strong></td></tr>
-            <tr><td>Delivery window</td><td><strong>${r.deliveryStart} – ${r.deliveryEnd}</strong></td></tr>
+            <tr><td>Delivery window</td><td><strong class="cell-nowrap">${deliveryWindow}</strong></td></tr>
             <tr><td>Schedule</td><td>${r.schedule}</td></tr>
             <tr><td>Payment terms</td><td><strong>${r.paymentTerms}</strong></td></tr>
             <tr><td>Contract terms</td><td>${r.terms}</td></tr>
@@ -4385,15 +4853,26 @@ function openPurchaseOrderDetail(poId) {
 
       <div class="modal-inline-actions">
         <button type="button" class="btn btn-outline" onclick="modalGoBack()"><i class="fa-solid fa-arrow-left"></i> Back</button>
+        <button type="button" class="btn btn-primary" onclick="openStageFollowUpModal('po','row','${r.id}')">
+          <i class="fa-solid fa-envelope-open-text"></i> Take Follow-up
+        </button>
       </div>
     </div>
   `, { wide: true, large: true, extraWide: true });
 }
 
 /* ========== Stage 11 GRN & Inspection ========== */
+function getGrnStatusDate(r) {
+  if (!r) return '—';
+  if (r.grnDate && r.grnDate !== '—') return r.grnDate;
+  if (r.date && r.date !== '—') return r.date;
+  return '—';
+}
+
 function getGrnInspectionRows() {
-  const rows = filterCategoryRows(typeof GRN_INSPECTION_DATA !== 'undefined' ? GRN_INSPECTION_DATA.receipts : []);
-  return applyStagePeriodFilter(rows, govGrnState, 'grnDate');
+  const rows = filterCategoryRows(typeof GRN_INSPECTION_DATA !== 'undefined' ? GRN_INSPECTION_DATA.receipts : [])
+    .map(r => ({ ...r, date: getGrnStatusDate(r) }));
+  return applyStagePeriodFilter(rows, govGrnState, 'date');
 }
 
 function setGrnInspectionPage(page) {
@@ -4458,6 +4937,7 @@ function renderGrnInspectionStage(canEdit = true) {
               <th>Status</th>
               <th>QA</th>
               <th>Est. value</th>
+              <th>Date</th>
             </tr>
           </thead>
           <tbody>
@@ -4470,9 +4950,10 @@ function renderGrnInspectionStage(canEdit = true) {
                 <td>${r.vendor}</td>
                 <td><span class="badge badge-${needStatusBadge(r.status)}">${r.status}</span></td>
                 <td><span class="badge badge-${needStatusBadge(r.qaStatus)}">${r.qaStatus}</span></td>
-                <td>${r.value}</td>
+                <td class="cell-nowrap">${r.value}</td>
+                <td class="cell-date">${r.date || '—'}</td>
               </tr>
-            `).join('') : `<tr><td colspan="8" style="text-align:center;color:#64748b;padding:1.25rem">No GRNs match the selected category and period.</td></tr>`}
+            `).join('') : `<tr><td colspan="9" style="text-align:center;color:#64748b;padding:1.25rem">No GRNs match the selected category and period.</td></tr>`}
           </tbody>
         </table>
       </div>
@@ -4484,14 +4965,21 @@ function renderGrnInspectionStage(canEdit = true) {
 function openGrnInspectionDetail(grnId) {
   const r = (typeof GRN_INSPECTION_DATA !== 'undefined' ? GRN_INSPECTION_DATA.receipts : []).find(g => g.id === grnId);
   if (!r) return;
+  const statusSince = getGrnStatusDate(r);
   openModal(`${r.id} — GRN & inspection`, `
     <div class="consol-detail-modal">
-      <p class="consol-detail-lead">${r.title} · ${r.category} · ${r.state} (${r.division})</p>
-      <div class="consol-detail-stats" style="grid-template-columns:repeat(4,minmax(0,1fr))">
+      <div class="tender-detail-section-head" style="margin:0 0 0.75rem">
+        <p class="consol-detail-lead" style="margin:0">${r.title} · ${r.category} · ${r.state} (${r.division})</p>
+        <button type="button" class="btn btn-primary btn-sm" onclick="openStageFollowUpModal('grn','row','${r.id}')">
+          <i class="fa-solid fa-envelope-open-text"></i> Take Follow-up
+        </button>
+      </div>
+      <div class="consol-detail-stats" style="grid-template-columns:repeat(5,minmax(0,1fr))">
         <div class="consol-detail-stat"><span>Status</span><strong><span class="badge badge-${needStatusBadge(r.status)}">${r.status}</span></strong></div>
         <div class="consol-detail-stat"><span>Vendor</span><strong>${r.vendor}</strong></div>
         <div class="consol-detail-stat"><span>QA</span><strong><span class="badge badge-${needStatusBadge(r.qaStatus)}">${r.qaStatus}</span></strong></div>
-        <div class="consol-detail-stat"><span>Est. value</span><strong>${r.value}</strong></div>
+        <div class="consol-detail-stat"><span>Est. value</span><strong class="cell-nowrap">${r.value}</strong></div>
+        <div class="consol-detail-stat"><span>Status since</span><strong class="cell-date">${statusSince}</strong></div>
       </div>
       <h4 class="budget-subhead">Receipt &amp; quantities</h4>
       <div class="consol-detail-table-wrap" style="margin-bottom:1rem">
@@ -4499,7 +4987,8 @@ function openGrnInspectionDetail(grnId) {
           <tbody>
             <tr><td>PO ID</td><td><strong>${r.poId}</strong></td></tr>
             <tr><td>Tender ID</td><td><strong>${r.tenderId}</strong></td></tr>
-            <tr><td>GRN date</td><td><strong>${r.grnDate}</strong></td></tr>
+            <tr><td>GRN date</td><td><strong class="cell-date">${r.grnDate && r.grnDate !== '—' ? r.grnDate : '—'}</strong></td></tr>
+            <tr><td>Status since</td><td><strong class="cell-date">${statusSince}</strong></td></tr>
             <tr><td>Ordered</td><td><strong>${r.qtyOrdered}</strong></td></tr>
             <tr><td>Received</td><td><strong>${r.qtyReceived}</strong></td></tr>
             <tr><td>Accepted</td><td><strong>${r.qtyAccepted}</strong></td></tr>
@@ -4511,8 +5000,8 @@ function openGrnInspectionDetail(grnId) {
       <div class="consol-detail-table-wrap" style="margin-bottom:1rem">
         <table class="data-table consol-detail-table">
           <tbody>
-            <tr><td>Batch / serial</td><td><strong>${r.batchNo}</strong></td></tr>
-            <tr><td>Expiry</td><td><strong>${r.expiry}</strong></td></tr>
+            <tr><td>Batch / serial</td><td><strong class="cell-nowrap">${r.batchNo}</strong></td></tr>
+            <tr><td>Expiry</td><td><strong class="cell-date">${r.expiry}</strong></td></tr>
             <tr><td>Inspector</td><td><strong>${r.inspector}</strong></td></tr>
             <tr><td>Acceptance certificate</td><td><strong>${r.acceptanceCert}</strong></td></tr>
             <tr><td>Remarks</td><td>${r.remarks}</td></tr>
@@ -4521,15 +5010,26 @@ function openGrnInspectionDetail(grnId) {
       </div>
       <div class="modal-inline-actions">
         <button type="button" class="btn btn-outline" onclick="modalGoBack()"><i class="fa-solid fa-arrow-left"></i> Back</button>
+        <button type="button" class="btn btn-primary" onclick="openStageFollowUpModal('grn','row','${r.id}')">
+          <i class="fa-solid fa-envelope-open-text"></i> Take Follow-up
+        </button>
       </div>
     </div>
   `, { wide: true, large: true, extraWide: true });
 }
 
 /* ========== Stage 12 Invoice Matching ========== */
+function getInvoiceStatusDate(r) {
+  if (!r) return '—';
+  if (r.invoiceDate && r.invoiceDate !== '—') return r.invoiceDate;
+  if (r.date && r.date !== '—') return r.date;
+  return '—';
+}
+
 function getInvoiceMatchingRows() {
-  const rows = filterCategoryRows(typeof INVOICE_MATCHING_DATA !== 'undefined' ? INVOICE_MATCHING_DATA.invoices : []);
-  return applyStagePeriodFilter(rows, govInvoiceState, 'invoiceDate');
+  const rows = filterCategoryRows(typeof INVOICE_MATCHING_DATA !== 'undefined' ? INVOICE_MATCHING_DATA.invoices : [])
+    .map(r => ({ ...r, date: getInvoiceStatusDate(r) }));
+  return applyStagePeriodFilter(rows, govInvoiceState, 'date');
 }
 
 function setInvoiceMatchingPage(page) {
@@ -4594,6 +5094,7 @@ function renderInvoiceMatchingStage(canEdit = true) {
               <th>Status</th>
               <th>Match</th>
               <th>Est. value</th>
+              <th>Date</th>
             </tr>
           </thead>
           <tbody>
@@ -4606,9 +5107,10 @@ function renderInvoiceMatchingStage(canEdit = true) {
                 <td>${r.vendor}</td>
                 <td><span class="badge badge-${needStatusBadge(r.status)}">${r.status}</span></td>
                 <td>${r.matchScore}</td>
-                <td>${r.value}</td>
+                <td class="cell-nowrap">${r.value}</td>
+                <td class="cell-date">${r.date || '—'}</td>
               </tr>
-            `).join('') : `<tr><td colspan="8" style="text-align:center;color:#64748b;padding:1.25rem">No invoices match the selected category and period.</td></tr>`}
+            `).join('') : `<tr><td colspan="9" style="text-align:center;color:#64748b;padding:1.25rem">No invoices match the selected category and period.</td></tr>`}
           </tbody>
         </table>
       </div>
@@ -4620,14 +5122,21 @@ function renderInvoiceMatchingStage(canEdit = true) {
 function openInvoiceMatchingDetail(invId) {
   const r = (typeof INVOICE_MATCHING_DATA !== 'undefined' ? INVOICE_MATCHING_DATA.invoices : []).find(i => i.id === invId);
   if (!r) return;
+  const statusSince = getInvoiceStatusDate(r);
   openModal(`${r.id} — Invoice matching`, `
     <div class="consol-detail-modal">
-      <p class="consol-detail-lead">${r.title} · ${r.category} · ${r.state} (${r.division})</p>
-      <div class="consol-detail-stats" style="grid-template-columns:repeat(4,minmax(0,1fr))">
+      <div class="tender-detail-section-head" style="margin:0 0 0.75rem">
+        <p class="consol-detail-lead" style="margin:0">${r.title} · ${r.category} · ${r.state} (${r.division})</p>
+        <button type="button" class="btn btn-primary btn-sm" onclick="openStageFollowUpModal('invoice','row','${r.id}')">
+          <i class="fa-solid fa-envelope-open-text"></i> Take Follow-up
+        </button>
+      </div>
+      <div class="consol-detail-stats" style="grid-template-columns:repeat(5,minmax(0,1fr))">
         <div class="consol-detail-stat"><span>Status</span><strong><span class="badge badge-${needStatusBadge(r.status)}">${r.status}</span></strong></div>
         <div class="consol-detail-stat"><span>Match score</span><strong>${r.matchScore}</strong></div>
         <div class="consol-detail-stat"><span>Finance</span><strong><span class="badge badge-${needStatusBadge(r.financeStatus)}">${r.financeStatus}</span></strong></div>
-        <div class="consol-detail-stat"><span>Invoice value</span><strong>${r.value}</strong></div>
+        <div class="consol-detail-stat"><span>Invoice value</span><strong class="cell-nowrap">${r.value}</strong></div>
+        <div class="consol-detail-stat"><span>Status since</span><strong class="cell-date">${statusSince}</strong></div>
       </div>
       <div class="consol-detail-table-wrap">
         <table class="data-table consol-detail-table">
@@ -4636,10 +5145,11 @@ function openInvoiceMatchingDetail(invId) {
             <tr><td>GRN ID</td><td><strong>${r.grnId}</strong></td></tr>
             <tr><td>Tender ID</td><td><strong>${r.tenderId}</strong></td></tr>
             <tr><td>Vendor</td><td><strong>${r.vendor}</strong></td></tr>
-            <tr><td>Invoice date</td><td><strong>${r.invoiceDate}</strong></td></tr>
-            <tr><td>Tax invoice No.</td><td><strong>${r.taxInvoice}</strong></td></tr>
-            <tr><td>PO value</td><td><strong>${r.poValue}</strong></td></tr>
-            <tr><td>GRN value</td><td><strong>${r.grnValue}</strong></td></tr>
+            <tr><td>Invoice date</td><td><strong class="cell-date">${r.invoiceDate && r.invoiceDate !== '—' ? r.invoiceDate : '—'}</strong></td></tr>
+            <tr><td>Status since</td><td><strong class="cell-date">${statusSince}</strong></td></tr>
+            <tr><td>Tax invoice No.</td><td><strong class="cell-nowrap">${r.taxInvoice}</strong></td></tr>
+            <tr><td>PO value</td><td><strong class="cell-nowrap">${r.poValue}</strong></td></tr>
+            <tr><td>GRN value</td><td><strong class="cell-nowrap">${r.grnValue}</strong></td></tr>
             <tr><td>Deductions / LD</td><td><strong>${r.deductions}</strong></td></tr>
             <tr><td>Remarks</td><td>${r.remarks}</td></tr>
           </tbody>
@@ -4647,15 +5157,26 @@ function openInvoiceMatchingDetail(invId) {
       </div>
       <div class="modal-inline-actions">
         <button type="button" class="btn btn-outline" onclick="modalGoBack()"><i class="fa-solid fa-arrow-left"></i> Back</button>
+        <button type="button" class="btn btn-primary" onclick="openStageFollowUpModal('invoice','row','${r.id}')">
+          <i class="fa-solid fa-envelope-open-text"></i> Take Follow-up
+        </button>
       </div>
     </div>
   `, { wide: true, large: true });
 }
 
 /* ========== Stage 13 Payment ========== */
+function getPaymentStatusDate(r) {
+  if (!r) return '—';
+  if (r.paymentDate && r.paymentDate !== '—') return r.paymentDate;
+  if (r.date && r.date !== '—') return r.date;
+  return '—';
+}
+
 function getPaymentStageRows() {
-  const rows = filterCategoryRows(typeof PAYMENT_STAGE_DATA !== 'undefined' ? PAYMENT_STAGE_DATA.payments : []);
-  return applyStagePeriodFilter(rows, govPaymentState, 'paymentDate');
+  const rows = filterCategoryRows(typeof PAYMENT_STAGE_DATA !== 'undefined' ? PAYMENT_STAGE_DATA.payments : [])
+    .map(r => ({ ...r, date: getPaymentStatusDate(r) }));
+  return applyStagePeriodFilter(rows, govPaymentState, 'date');
 }
 
 function setPaymentStagePage(page) {
@@ -4720,6 +5241,7 @@ function renderPaymentStage(canEdit = true) {
               <th>Status</th>
               <th>Mode</th>
               <th>Net payable</th>
+              <th>Date</th>
             </tr>
           </thead>
           <tbody>
@@ -4732,9 +5254,10 @@ function renderPaymentStage(canEdit = true) {
                 <td>${r.vendor}</td>
                 <td><span class="badge badge-${needStatusBadge(r.status)}">${r.status}</span></td>
                 <td>${r.mode}</td>
-                <td>${r.netPayable}</td>
+                <td class="cell-nowrap">${r.netPayable}</td>
+                <td class="cell-date">${r.date || '—'}</td>
               </tr>
-            `).join('') : `<tr><td colspan="8" style="text-align:center;color:#64748b;padding:1.25rem">No payments match the selected category and period.</td></tr>`}
+            `).join('') : `<tr><td colspan="9" style="text-align:center;color:#64748b;padding:1.25rem">No payments match the selected category and period.</td></tr>`}
           </tbody>
         </table>
       </div>
@@ -4746,14 +5269,21 @@ function renderPaymentStage(canEdit = true) {
 function openPaymentStageDetail(payId) {
   const r = (typeof PAYMENT_STAGE_DATA !== 'undefined' ? PAYMENT_STAGE_DATA.payments : []).find(p => p.id === payId);
   if (!r) return;
+  const statusSince = getPaymentStatusDate(r);
   openModal(`${r.id} — Payment`, `
     <div class="consol-detail-modal">
-      <p class="consol-detail-lead">${r.title} · ${r.category} · ${r.state} (${r.division})</p>
-      <div class="consol-detail-stats" style="grid-template-columns:repeat(4,minmax(0,1fr))">
+      <div class="tender-detail-section-head" style="margin:0 0 0.75rem">
+        <p class="consol-detail-lead" style="margin:0">${r.title} · ${r.category} · ${r.state} (${r.division})</p>
+        <button type="button" class="btn btn-primary btn-sm" onclick="openStageFollowUpModal('payment','row','${r.id}')">
+          <i class="fa-solid fa-envelope-open-text"></i> Take Follow-up
+        </button>
+      </div>
+      <div class="consol-detail-stats" style="grid-template-columns:repeat(5,minmax(0,1fr))">
         <div class="consol-detail-stat"><span>Status</span><strong><span class="badge badge-${needStatusBadge(r.status)}">${r.status}</span></strong></div>
         <div class="consol-detail-stat"><span>Vendor</span><strong>${r.vendor}</strong></div>
-        <div class="consol-detail-stat"><span>Net payable</span><strong>${r.netPayable}</strong></div>
-        <div class="consol-detail-stat"><span>Payment date</span><strong>${r.paymentDate}</strong></div>
+        <div class="consol-detail-stat"><span>Net payable</span><strong class="cell-nowrap">${r.netPayable}</strong></div>
+        <div class="consol-detail-stat"><span>Payment date</span><strong class="cell-date">${r.paymentDate && r.paymentDate !== '—' ? r.paymentDate : '—'}</strong></div>
+        <div class="consol-detail-stat"><span>Status since</span><strong class="cell-date">${statusSince}</strong></div>
       </div>
       <div class="consol-detail-table-wrap">
         <table class="data-table consol-detail-table">
@@ -4761,17 +5291,21 @@ function openPaymentStageDetail(payId) {
             <tr><td>Invoice ID</td><td><strong>${r.invoiceId}</strong></td></tr>
             <tr><td>PO ID</td><td><strong>${r.poId}</strong></td></tr>
             <tr><td>Tender ID</td><td><strong>${r.tenderId}</strong></td></tr>
-            <tr><td>Gross amount</td><td><strong>${r.gross}</strong></td></tr>
+            <tr><td>Gross amount</td><td><strong class="cell-nowrap">${r.gross}</strong></td></tr>
             <tr><td>LD / deductions</td><td><strong>${r.ld}</strong></td></tr>
             <tr><td>Mode</td><td><strong>${r.mode}</strong></td></tr>
-            <tr><td>UTR / reference</td><td><strong>${r.utr}</strong></td></tr>
-            <tr><td>Due date</td><td><strong>${r.dueDate}</strong></td></tr>
+            <tr><td>UTR / reference</td><td><strong class="cell-nowrap">${r.utr}</strong></td></tr>
+            <tr><td>Due date</td><td><strong class="cell-date">${r.dueDate && r.dueDate !== '—' ? r.dueDate : '—'}</strong></td></tr>
+            <tr><td>Status since</td><td><strong class="cell-date">${statusSince}</strong></td></tr>
             <tr><td>Remarks</td><td>${r.remarks}</td></tr>
           </tbody>
         </table>
       </div>
       <div class="modal-inline-actions">
         <button type="button" class="btn btn-outline" onclick="modalGoBack()"><i class="fa-solid fa-arrow-left"></i> Back</button>
+        <button type="button" class="btn btn-primary" onclick="openStageFollowUpModal('payment','row','${r.id}')">
+          <i class="fa-solid fa-envelope-open-text"></i> Take Follow-up
+        </button>
       </div>
     </div>
   `, { wide: true, large: true });
@@ -5471,6 +6005,281 @@ function resolveFollowUpRowContext(stage, section, index) {
         ]
       };
     }
+  }
+  if (stage === 'indent' && section === 'row') {
+    const r = getIndentRowById(String(index));
+    if (!r) return null;
+    return {
+      stage, section, index: r.id,
+      regardingTitle: r.item,
+      regardingMeta: `${r.id} · ${r.status}`,
+      status: r.status,
+      date: r.date || '—',
+      subject: `Follow-up: Indent ${r.id} — ${r.item}`,
+      contextLines: [
+        ['Source', 'Indent Raised · Indent List'],
+        ['Indent ID', r.id],
+        ['Item', r.item],
+        ['Facility', r.facility || '—'],
+        ['Quantity', r.quantity || '—'],
+        ['Priority', r.priority || '—'],
+        ['Status', r.status || '—'],
+        ['Required by', r.requiredBy || '—'],
+        ['Status since', r.date || '—']
+      ]
+    };
+  }
+  if (stage === 'consol' && section === 'demand') {
+    const seed = typeof DEMAND_APPROVAL_LIST !== 'undefined' ? DEMAND_APPROVAL_LIST : [];
+    const r = seed.find(x => x.id === String(index));
+    if (!r) return null;
+    return {
+      stage, section, index: r.id,
+      regardingTitle: r.id,
+      regardingMeta: `${r.district} · ${r.status}`,
+      status: r.status,
+      date: r.date || '—',
+      subject: `Follow-up: Demand ${r.id} — ${r.district}`,
+      contextLines: [
+        ['Source', 'Demand Consolidation · Demand Approval List'],
+        ['Demand ID', r.id],
+        ['District', r.district],
+        ['Category', r.category],
+        ['Items', String(r.items)],
+        ['Facilities', String(r.facilities)],
+        ['Estimated value', `${r.valueLow} – ${r.valueHigh}`],
+        ['Status', r.status],
+        ['Date', r.date || '—']
+      ]
+    };
+  }
+  if (stage === 'budget' && section === 'dept') {
+    const data = getPrBudgetData();
+    const r = data?.departments?.find(d => d.id === String(index));
+    if (!r) return null;
+    const date = (r.decisionDate && r.decisionDate !== '—')
+      ? r.decisionDate
+      : (r.documents?.[0]?.uploadedOn || r.decisionDate || '—');
+    return {
+      stage, section, index: r.id,
+      regardingTitle: r.name,
+      regardingMeta: `${r.shortName} · ${r.status}`,
+      status: r.status,
+      date,
+      subject: `Follow-up: Budget — ${r.shortName} (${r.status})`,
+      contextLines: [
+        ['Source', 'PR & Budget Approval · Department list'],
+        ['Department', r.name],
+        ['Budget head', r.budgetHead],
+        ['Scheme', r.scheme],
+        ['Allocated', r.allocated],
+        ['Requested', r.requested],
+        ['Available', r.available],
+        ['Status', r.status],
+        ['Decision by', r.decisionBy || '—'],
+        ['Date', date]
+      ]
+    };
+  }
+  if (stage === 'tender' && (section === 'draft' || section === 'row')) {
+    const t = getTenderPrepById(String(index));
+    if (!t) return null;
+    return {
+      stage, section, index: t.id,
+      regardingTitle: t.title,
+      regardingMeta: `${t.id} · ${t.status}`,
+      status: t.status,
+      date: t.preparedOn || '—',
+      subject: `Follow-up: Tender ${t.id} — ${t.title}`,
+      contextLines: [
+        ['Source', section === 'draft' ? 'Tender Preparation · Auto-prepared drafts' : 'Tender Preparation · Status by category & division'],
+        ['Tender ID', t.id],
+        ['Title', t.title],
+        ['Division', t.division],
+        ['Category', t.category],
+        ['Status', t.status],
+        ['Est. value', t.value],
+        ['Status since', t.preparedOn || '—']
+      ]
+    };
+  }
+  if (stage === 'bid' && section === 'eval') {
+    const r = (typeof BID_EVALUATION_DATA !== 'undefined' ? BID_EVALUATION_DATA.evaluations : []).find(e => e.id === String(index));
+    if (!r) return null;
+    const date = (r.evalDate && r.evalDate !== '—') ? r.evalDate : '—';
+    return {
+      stage, section, index: r.id,
+      regardingTitle: r.title,
+      regardingMeta: `${r.id} · ${r.status}`,
+      status: r.status,
+      date,
+      subject: `Follow-up: Bid evaluation ${r.id} — ${r.title}`,
+      contextLines: [
+        ['Source', 'Bid Evaluation · Bids evaluated'],
+        ['Eval ID', r.id],
+        ['Tender ID', r.tenderId],
+        ['Title', r.title],
+        ['Division', r.division],
+        ['Category', r.category],
+        ['Status', r.status],
+        ['Method', r.method],
+        ['Status since', date]
+      ]
+    };
+  }
+  if (stage === 'contract' && section === 'row') {
+    const r = (typeof CONTRACT_APPROVAL_DATA !== 'undefined' ? CONTRACT_APPROVAL_DATA.contracts : []).find(c => c.id === String(index));
+    if (!r) return null;
+    const date = getContractStatusDate(r);
+    return {
+      stage, section, index: r.id,
+      regardingTitle: r.title,
+      regardingMeta: `${r.id} · ${r.status}`,
+      status: r.status,
+      date,
+      subject: `Follow-up: Contract ${r.id} — ${r.title}`,
+      contextLines: [
+        ['Source', 'Contract Approval · Contract approvals'],
+        ['Contract ID', r.id],
+        ['Tender ID', r.tenderId],
+        ['Title', r.title],
+        ['Division', r.division],
+        ['Category', r.category],
+        ['L1 bidder', r.l1Vendor],
+        ['Status', r.status],
+        ['Status since', date]
+      ]
+    };
+  }
+  if (stage === 'award' && section === 'row') {
+    const r = (typeof AWARD_STAGE_DATA !== 'undefined' ? AWARD_STAGE_DATA.awards : []).find(a => a.id === String(index));
+    if (!r) return null;
+    const date = getAwardStatusDate(r);
+    return {
+      stage, section, index: r.id,
+      regardingTitle: r.title,
+      regardingMeta: `${r.id} · ${r.status}`,
+      status: r.status,
+      date,
+      subject: `Follow-up: Award ${r.id} — ${r.title}`,
+      contextLines: [
+        ['Source', 'Award · Tenders awarded'],
+        ['Award ID', r.id],
+        ['Tender ID', r.tenderId],
+        ['Title', r.title],
+        ['Division', r.division],
+        ['Category', r.category],
+        ['Vendor', r.vendor],
+        ['Status', r.status],
+        ['PBG', r.pbgStatus],
+        ['Status since', date]
+      ]
+    };
+  }
+  if (stage === 'po' && section === 'row') {
+    const r = (typeof PURCHASE_ORDER_DATA !== 'undefined' ? PURCHASE_ORDER_DATA.orders : []).find(o => o.id === String(index));
+    if (!r) return null;
+    const date = getPoStatusDate(r);
+    return {
+      stage, section, index: r.id,
+      regardingTitle: r.title,
+      regardingMeta: `${r.id} · ${r.status}`,
+      status: r.status,
+      date,
+      subject: `Follow-up: Purchase order ${r.id} — ${r.title}`,
+      contextLines: [
+        ['Source', 'Purchase Order · Purchase orders'],
+        ['PO ID', r.id],
+        ['Tender ID', r.tenderId],
+        ['Title', r.title],
+        ['Division', r.division],
+        ['Category', r.category],
+        ['Vendor', r.vendor],
+        ['Status', r.status],
+        ['Vendor notified', r.vendorNotified],
+        ['Status since', date]
+      ]
+    };
+  }
+  if (stage === 'grn' && section === 'row') {
+    const r = (typeof GRN_INSPECTION_DATA !== 'undefined' ? GRN_INSPECTION_DATA.receipts : []).find(g => g.id === String(index));
+    if (!r) return null;
+    const date = getGrnStatusDate(r);
+    return {
+      stage, section, index: r.id,
+      regardingTitle: r.title,
+      regardingMeta: `${r.id} · ${r.status}`,
+      status: r.status,
+      date,
+      subject: `Follow-up: GRN ${r.id} — ${r.title}`,
+      contextLines: [
+        ['Source', 'GRN & Inspection · GRNs'],
+        ['GRN ID', r.id],
+        ['PO ID', r.poId],
+        ['Tender ID', r.tenderId],
+        ['Title', r.title],
+        ['Division', r.division],
+        ['Category', r.category],
+        ['Vendor', r.vendor],
+        ['Status', r.status],
+        ['QA', r.qaStatus],
+        ['Status since', date]
+      ]
+    };
+  }
+  if (stage === 'invoice' && section === 'row') {
+    const r = (typeof INVOICE_MATCHING_DATA !== 'undefined' ? INVOICE_MATCHING_DATA.invoices : []).find(i => i.id === String(index));
+    if (!r) return null;
+    const date = getInvoiceStatusDate(r);
+    return {
+      stage, section, index: r.id,
+      regardingTitle: r.title,
+      regardingMeta: `${r.id} · ${r.status}`,
+      status: r.status,
+      date,
+      subject: `Follow-up: Invoice ${r.id} — ${r.title}`,
+      contextLines: [
+        ['Source', 'Invoice Matching · Invoices generated'],
+        ['Invoice ID', r.id],
+        ['PO ID', r.poId],
+        ['GRN ID', r.grnId],
+        ['Tender ID', r.tenderId],
+        ['Title', r.title],
+        ['Division', r.division],
+        ['Category', r.category],
+        ['Vendor', r.vendor],
+        ['Status', r.status],
+        ['Match score', r.matchScore],
+        ['Status since', date]
+      ]
+    };
+  }
+  if (stage === 'payment' && section === 'row') {
+    const r = (typeof PAYMENT_STAGE_DATA !== 'undefined' ? PAYMENT_STAGE_DATA.payments : []).find(p => p.id === String(index));
+    if (!r) return null;
+    const date = getPaymentStatusDate(r);
+    return {
+      stage, section, index: r.id,
+      regardingTitle: r.title,
+      regardingMeta: `${r.id} · ${r.status}`,
+      status: r.status,
+      date,
+      subject: `Follow-up: Payment ${r.id} — ${r.title}`,
+      contextLines: [
+        ['Source', 'Payment · Payments generated'],
+        ['Payment ID', r.id],
+        ['Invoice ID', r.invoiceId],
+        ['PO ID', r.poId],
+        ['Tender ID', r.tenderId],
+        ['Title', r.title],
+        ['Division', r.division],
+        ['Category', r.category],
+        ['Vendor', r.vendor],
+        ['Status', r.status],
+        ['Net payable', r.netPayable],
+        ['Status since', date]
+      ]
+    };
   }
   return null;
 }
@@ -6305,9 +7114,9 @@ function renderWorkflowDetail(step, canEdit = true) {
       <div>Upload technical and financial bid documents. Tender reference and related bid details are extracted via OCR after upload — no manual tender reference entry.</div>
     </div>
     <div class="label-grid">
-      <div class="label-item"><span class="label-key">Tender Reference</span><span class="label-val">${ocr && s.bid.tenderId ? s.bid.tenderId : '— Pending OCR'}</span></div>
-      <div class="label-item"><span class="label-key">EMD Status</span><span class="label-val">${ocr && s.bid.emdStatus ? `<span class="badge badge-warning">${s.bid.emdStatus}</span>` : '— Pending OCR'}</span></div>
-      <div class="label-item"><span class="label-key">Bid Deadline</span><span class="label-val${ocr ? ' text-danger' : ''}">${ocr && s.bid.deadline ? s.bid.deadline : '— Pending OCR'}</span></div>
+      <div class="label-item"><span class="label-key">Tender Reference</span><span class="label-val">${ocr && s.bid.tenderId ? s.bid.tenderId : 'Pending'}</span></div>
+      <div class="label-item"><span class="label-key">EMD Status</span><span class="label-val">${ocr && s.bid.emdStatus ? `<span class="badge badge-warning">${s.bid.emdStatus}</span>` : 'Pending'}</span></div>
+      <div class="label-item"><span class="label-key">Bid Deadline</span><span class="label-val${ocr ? ' text-danger' : ''}">${ocr && s.bid.deadline ? s.bid.deadline : 'Pending'}</span></div>
       <div class="label-item"><span class="label-key">Bid Submission Status</span><span class="label-val"><span class="badge ${locked ? 'badge-success' : 'badge-warning'}">${locked ? 'Submitted — Locked' : 'Draft — Not Submitted'}</span></span></div>
       <div class="label-item"><span class="label-key">${reqLabel('Technical Documents')}</span><span class="label-val">${tech.length ? tech.map(d => d.name).join(', ') : '<span class="text-muted">Not uploaded</span>'}</span></div>
       <div class="label-item"><span class="label-key">${reqLabel('Financial Documents')}</span><span class="label-val">${fin.length ? fin.map(d => d.name).join(', ') : '<span class="text-muted">Not uploaded</span>'}</span></div>
@@ -8891,6 +9700,7 @@ function setCategory(cat) {
   govRenewalState.page = 1;
   govNeedState.period = 'all';
   govStockCheckState.period = 'all';
+  govIndentState.period = 'all';
   govConsolidationState.period = 'all';
   govBudgetState.period = 'all';
   govTenderPrepState.period = 'all';

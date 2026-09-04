@@ -3524,6 +3524,39 @@ body {
   padding: 0.65rem 0.85rem;
 }
 
+.cell-date,
+.cell-nowrap,
+.consol-detail-table tbody td.cell-date,
+.consol-detail-table tbody td.cell-nowrap,
+.consol-detail-table.tender-prep-table tbody td.cell-date,
+.consol-detail-table.tender-prep-table tbody td.cell-nowrap,
+.data-table tbody td.cell-date,
+.data-table tbody td.cell-nowrap {
+  white-space: nowrap !important;
+  font-variant-numeric: tabular-nums;
+  word-break: keep-all;
+  overflow-wrap: normal;
+  width: 1%;
+  min-width: max-content;
+  letter-spacing: 0.01em;
+  color: #0f172a;
+  font-weight: 600;
+}
+
+.consol-detail-table thead th.th-date,
+.consol-detail-table thead th.th-value {
+  white-space: nowrap;
+  width: 1%;
+}
+
+.consol-detail-stat .cell-date,
+.consol-detail-stat .cell-nowrap {
+  display: inline-block;
+  max-width: 100%;
+  width: auto;
+  min-width: 0;
+}
+
 .wf-lifecycle-complete {
   display: flex;
   align-items: flex-start;
@@ -3717,7 +3750,7 @@ body {
 }
 
 .tender-prep-table {
-  min-width: 860px;
+  min-width: 1180px;
 }
 
 .tender-prep-row {
@@ -7592,4 +7625,172 @@ body {
   color: #0f172a;
   font-weight: 600;
   font-size: 0.9rem;
+}
+
+/* ========== Custom date picker (indent form) ========== */
+.date-picker {
+  position: relative;
+  width: 100%;
+}
+
+.date-picker-trigger {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 0.55rem;
+  min-height: 2.55rem;
+  padding: 0.55rem 0.85rem;
+  border: 1px solid #cbd5e1;
+  border-radius: 10px;
+  background: #fff;
+  color: #0f172a;
+  font-family: inherit;
+  font-size: 0.9rem;
+  font-weight: 500;
+  cursor: pointer;
+  text-align: left;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+.date-picker-trigger:hover:not(:disabled) {
+  border-color: #94a3b8;
+}
+
+.date-picker-trigger:focus-visible {
+  outline: none;
+  border-color: var(--primary);
+  box-shadow: 0 0 0 3px rgba(0, 61, 93, 0.12);
+}
+
+.date-picker-trigger:disabled {
+  opacity: 0.65;
+  cursor: not-allowed;
+  background: #f8fafc;
+}
+
+.date-picker-trigger > .fa-calendar-days {
+  color: var(--primary);
+  flex-shrink: 0;
+}
+
+.date-picker-trigger > .fa-chevron-down {
+  margin-left: auto;
+  color: #94a3b8;
+  font-size: 0.75rem;
+}
+
+.date-picker-value.is-placeholder {
+  color: #94a3b8;
+  font-weight: 400;
+}
+
+.date-picker-panel {
+  background: #fff;
+  border: 1px solid #e2e8f0;
+  border-radius: 12px;
+  box-shadow: 0 12px 32px rgba(15, 23, 42, 0.14);
+  padding: 0.75rem;
+  min-width: 280px;
+}
+
+.date-picker-panel[hidden] {
+  display: none !important;
+}
+
+.date-picker-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  margin-bottom: 0.65rem;
+}
+
+.date-picker-head strong {
+  color: #003D5D;
+  font-size: 0.92rem;
+}
+
+.date-picker-nav {
+  width: 2rem;
+  height: 2rem;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  background: #f8fafc;
+  color: #334155;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.date-picker-nav:hover {
+  background: #eff6ff;
+  border-color: #bfdbfe;
+  color: var(--primary);
+}
+
+.date-picker-dow {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  gap: 0.2rem;
+  margin-bottom: 0.35rem;
+}
+
+.date-picker-dow span {
+  text-align: center;
+  font-size: 0.7rem;
+  font-weight: 700;
+  color: #94a3b8;
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
+  padding: 0.2rem 0;
+}
+
+.date-picker-grid {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  gap: 0.2rem;
+}
+
+.date-picker-day {
+  aspect-ratio: 1;
+  border: none;
+  border-radius: 8px;
+  background: transparent;
+  color: #0f172a;
+  font-family: inherit;
+  font-size: 0.85rem;
+  font-weight: 600;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.date-picker-day:not(.is-empty):hover {
+  background: #eff6ff;
+  color: var(--primary);
+}
+
+.date-picker-day.is-selected {
+  background: var(--primary);
+  color: #fff;
+}
+
+.date-picker-day.is-empty {
+  cursor: default;
+  pointer-events: none;
+}
+
+.table-sub {
+  display: block;
+  margin-top: 0.15rem;
+  font-size: 0.78rem;
+  font-weight: 400;
+  color: #64748b;
+  line-height: 1.3;
+}
+
+.indent-modal-form .form-grid {
+  margin-bottom: 0.25rem;
 }
