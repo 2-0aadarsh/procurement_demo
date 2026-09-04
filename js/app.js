@@ -23,81 +23,256 @@ let activeSlaThreadId = 'SLA-2026-014';
 /** Prototype "today" — used for deadline countdown (DD-MM-YYYY: 03-09-2026) */
 const APP_TODAY = '2026-09-03';
 
-/** Vendor workflow runtime state (prototype) */
-const vendorStageState = {
-  completed: { 1: true, 2: true, 3: true, 4: false, 5: false, 6: false, 7: false, 8: false, 9: false },
-  locked: { 4: false },
-  uploads: {
-    kyc: [],
-    approvalLetter: null,
-    technicalDocs: [],
-    financialDocs: [],
-    pbg: null,
-    deliveryProof: null
-  },
-  bid: {
-    tenderId: '',
-    emdStatus: '',
-    deadline: '',
-    submitted: false,
-    ocrReady: false
-  },
-  award: {
-    tenderId: 'TND-2026-MP-0038',
-    title: 'Hospital Linen Supply',
-    loaStatus: 'Issued',
-    loaDate: '29-08-2026',
-    pbgDue: '13-09-2026',
-    value: '₹85 L',
-    acknowledged: false
-  },
-  contract: {
-    id: '',
-    pbgStatus: '',
-    pbgAmount: '',
-    contractStatus: '',
-    pbgSubmitted: false,
-    signed: false,
-    pbgOcr: null,
-    contractOcr: null,
-    bank: '',
-    bgRef: '',
-    validUntil: ''
-  },
-  delivery: {
-    challan: '',
-    vehicle: '',
-    dispatchDate: '',
-    expectedDate: '',
-    coldChain: 'No',
-    remarks: '',
-    status: '',
-    updated: false,
-    ocrReady: false,
-    fileName: null
-  },
-  invoice: {
-    number: '',
-    grn: '',
-    amount: '',
-    status: '',
-    submitted: false,
-    ocrReady: false,
-    fileName: null
-  },
-  payment: {
-    status: 'Awaiting Processing',
-    timeline: 'Within 45 days of invoice acceptance',
-    bank: 'HDFC Bank - ****4567',
-    lastUpdate: '—',
-    milestones: [
-      { label: 'Invoice submitted', done: false },
-      { label: 'Three-way match (PO / GRN / Invoice)', done: false },
-      { label: 'Finance verification', done: false },
-      { label: 'Payment released', done: false }
-    ]
+/** Vendor workflow runtime state (prototype) — mutated per session; persisted in localStorage */
+const vendorStageState = createDefaultVendorStageState('new');
+
+const VENDOR_LIFECYCLE_STORAGE_VERSION = 2;
+const VENDOR_LIFECYCLE_STORAGE_PREFIX = 'mph_vendor_lifecycle_v1_';
+
+function createDefaultVendorStageState(profileType = 'new') {
+  const onboardingDone = profileType === 'existing';
+  return {
+    profileType: onboardingDone ? 'existing' : 'new',
+    completed: {
+      1: onboardingDone, 2: onboardingDone, 3: onboardingDone,
+      4: false, 5: false, 6: false, 7: false, 8: false, 9: false
+    },
+    locked: { 4: false },
+    uploads: {
+      kyc: [],
+      approvalLetter: null,
+      technicalDocs: [],
+      financialDocs: [],
+      pbg: null,
+      deliveryProof: null
+    },
+    bid: {
+      tenderId: '',
+      emdStatus: '',
+      deadline: '',
+      submitted: false,
+      ocrReady: false
+    },
+    award: {
+      tenderId: 'TND-2026-MP-0038',
+      title: 'Hospital Linen Supply',
+      loaStatus: 'Issued',
+      loaDate: '29-08-2026',
+      pbgDue: '13-09-2026',
+      value: '₹85 L',
+      acknowledged: false
+    },
+    contract: {
+      id: '',
+      pbgStatus: '',
+      pbgAmount: '',
+      contractStatus: '',
+      pbgSubmitted: false,
+      signed: false,
+      pbgOcr: null,
+      contractOcr: null,
+      bank: '',
+      bgRef: '',
+      validUntil: ''
+    },
+    delivery: {
+      challan: '',
+      vehicle: '',
+      dispatchDate: '',
+      expectedDate: '',
+      coldChain: 'No',
+      remarks: '',
+      status: '',
+      updated: false,
+      ocrReady: false,
+      fileName: null
+    },
+    invoice: {
+      number: '',
+      grn: '',
+      amount: '',
+      status: '',
+      submitted: false,
+      ocrReady: false,
+      fileName: null
+    },
+    payment: {
+      status: 'Awaiting Processing',
+      timeline: 'Within 45 days of invoice acceptance',
+      bank: 'HDFC Bank - ****4567',
+      lastUpdate: '—',
+      milestones: [
+        { label: 'Invoice submitted', done: false },
+        { label: 'Three-way match (PO / GRN / Invoice)', done: false },
+        { label: 'Finance verification', done: false },
+        { label: 'Payment released', done: false }
+      ]
+    }
+  };
+}
+
+function cloneVendorStageState(profileType = 'new') {
+  return JSON.parse(JSON.stringify(createDefaultVendorStageState(profileType)));
+}
+
+function getVendorLifecycleStorageKey(user = authUser) {
+  if (!user) return null;
+  const id = user.vendorId || user.email || user.id;
+  if (!id) return null;
+  return VENDOR_LIFECYCLE_STORAGE_PREFIX + String(id).toLowerCase().trim();
+}
+
+function resolveVendorProfileType(user) {
+  if (!user) return 'new';
+  // "Existing" only after onboarding (Stages 1–3) is completed and saved — not by demo email alone.
+  const saved = readVendorLifecycleSnapshot(user);
+  if (saved?.completed?.[1] && saved?.completed?.[2] && saved?.completed?.[3]) {
+    return 'existing';
   }
-};
+  return 'new';
+}
+
+function serializeVendorUploadMeta(file) {
+  if (!file) return null;
+  if (Array.isArray(file)) return file.map(serializeVendorUploadMeta).filter(Boolean);
+  return {
+    name: file.name || 'document',
+    size: Number(file.size) || 0
+  };
+}
+
+function buildVendorLifecycleSnapshot() {
+  return {
+    version: VENDOR_LIFECYCLE_STORAGE_VERSION,
+    profileType: vendorStageState.profileType || 'new',
+    currentStep: currentWorkflowStep || getVendorActiveStageId(),
+    lifecycleComplete: !!vendorLifecycleComplete,
+    completed: { ...vendorStageState.completed },
+    locked: { ...vendorStageState.locked },
+    uploads: {
+      kyc: serializeVendorUploadMeta(vendorStageState.uploads.kyc) || [],
+      approvalLetter: serializeVendorUploadMeta(vendorStageState.uploads.approvalLetter),
+      technicalDocs: serializeVendorUploadMeta(vendorStageState.uploads.technicalDocs) || [],
+      financialDocs: serializeVendorUploadMeta(vendorStageState.uploads.financialDocs) || [],
+      pbg: serializeVendorUploadMeta(vendorStageState.uploads.pbg),
+      deliveryProof: serializeVendorUploadMeta(vendorStageState.uploads.deliveryProof)
+    },
+    bid: { ...vendorStageState.bid },
+    award: { ...vendorStageState.award },
+    contract: {
+      ...vendorStageState.contract,
+      pbgOcr: vendorStageState.contract.pbgOcr ? { ...vendorStageState.contract.pbgOcr } : null,
+      contractOcr: vendorStageState.contract.contractOcr ? { ...vendorStageState.contract.contractOcr } : null
+    },
+    delivery: { ...vendorStageState.delivery },
+    invoice: { ...vendorStageState.invoice },
+    payment: {
+      ...vendorStageState.payment,
+      milestones: (vendorStageState.payment.milestones || []).map(m => ({ ...m }))
+    },
+    updatedAt: new Date().toISOString()
+  };
+}
+
+function persistVendorLifecycle() {
+  if (currentRole !== 'vendor') return;
+  const key = getVendorLifecycleStorageKey();
+  if (!key || typeof localStorage === 'undefined') return;
+  try {
+    localStorage.setItem(key, JSON.stringify(buildVendorLifecycleSnapshot()));
+  } catch (err) {
+    console.warn('Unable to persist vendor lifecycle progress', err);
+  }
+}
+
+function readVendorLifecycleSnapshot(user = authUser) {
+  const key = getVendorLifecycleStorageKey(user);
+  if (!key || typeof localStorage === 'undefined') return null;
+  try {
+    const raw = localStorage.getItem(key);
+    if (!raw) return null;
+    const data = JSON.parse(raw);
+    if (!data || data.version !== VENDOR_LIFECYCLE_STORAGE_VERSION) return null;
+    return data;
+  } catch {
+    return null;
+  }
+}
+
+function applyVendorStageStateObject(next) {
+  if (!next) return;
+  vendorStageState.profileType = next.profileType || vendorStageState.profileType || 'new';
+  vendorStageState.completed = { ...vendorStageState.completed, ...(next.completed || {}) };
+  vendorStageState.locked = { ...vendorStageState.locked, ...(next.locked || {}) };
+  vendorStageState.uploads = {
+    kyc: Array.isArray(next.uploads?.kyc) ? next.uploads.kyc : [],
+    approvalLetter: next.uploads?.approvalLetter || null,
+    technicalDocs: Array.isArray(next.uploads?.technicalDocs) ? next.uploads.technicalDocs : [],
+    financialDocs: Array.isArray(next.uploads?.financialDocs) ? next.uploads.financialDocs : [],
+    pbg: next.uploads?.pbg || null,
+    deliveryProof: next.uploads?.deliveryProof || null
+  };
+  Object.assign(vendorStageState.bid, next.bid || {});
+  Object.assign(vendorStageState.award, next.award || {});
+  Object.assign(vendorStageState.contract, next.contract || {});
+  Object.assign(vendorStageState.delivery, next.delivery || {});
+  Object.assign(vendorStageState.invoice, next.invoice || {});
+  Object.assign(vendorStageState.payment, next.payment || {});
+  if (Array.isArray(next.payment?.milestones)) {
+    vendorStageState.payment.milestones = next.payment.milestones.map(m => ({ ...m }));
+  }
+}
+
+function resetVendorStageState(profileType = 'new') {
+  const fresh = cloneVendorStageState(profileType);
+  applyVendorStageStateObject(fresh);
+  vendorLifecycleComplete = false;
+}
+
+function clampVendorWorkflowStep(step) {
+  const n = Math.max(1, Math.min(9, Number(step) || 1));
+  return n;
+}
+
+/**
+ * Restore or initialize vendor Bid-to-Pay progress for this login.
+ * - First visit (no cache): always Step 1
+ * - Returning with cache: resume saved step
+ * - Onboarding (1–3) already done: land on Step 4+ / active progress
+ */
+function initVendorLifecycleForSession(user) {
+  const saved = readVendorLifecycleSnapshot(user);
+  if (saved) {
+    applyVendorStageStateObject(saved);
+    vendorLifecycleComplete = !!saved.lifecycleComplete;
+    const progress = getVendorActiveStageId();
+    let step = clampVendorWorkflowStep(saved.currentStep || progress);
+    const onboardingDone = !!(saved.completed?.[1] && saved.completed?.[2] && saved.completed?.[3]);
+    if (onboardingDone && step < 4) step = Math.max(4, progress);
+    currentWorkflowStep = step;
+    vendorStageState.profileType = onboardingDone ? 'existing' : 'new';
+    syncVendorWorkflowStatuses();
+    return { resumed: true, step: currentWorkflowStep, profileType: vendorStageState.profileType };
+  }
+
+  // First login / signup with no saved progress — always begin at Registration
+  resetVendorStageState('new');
+  currentWorkflowStep = 1;
+  syncVendorWorkflowStatuses();
+  persistVendorLifecycle();
+  return { resumed: false, step: 1, profileType: 'new' };
+}
+
+function clearInMemoryVendorLifecycle() {
+  resetVendorStageState('new');
+  currentWorkflowStep = null;
+  vendorLifecycleComplete = false;
+  if (typeof VENDOR_WORKFLOW !== 'undefined') {
+    VENDOR_WORKFLOW.forEach(s => {
+      s.status = s.id <= 3 ? 'pending' : 'pending';
+    });
+  }
+}
 
 /** Vendor Profile & KYC page state */
 const vendorProfileState = {
@@ -122,6 +297,7 @@ const govIndentState = {
   year: 'all',
   viewBy: 'quarter',
   period: 'all',
+  page: 1,
   listItems: [], // user-created / automated rows prepended to seed
   manual: {
     facility: 'Gandhi Medical College',
@@ -147,20 +323,27 @@ const govIndentState = {
 /** Custom date picker view state */
 let datePickerState = { id: null, viewYear: 2026, viewMonth: 8 };
 
-/** Stage 1 — Need Identification (gov) period filter */
-const govNeedState = { year: 'all', viewBy: 'quarter', period: 'all' };
-
-/** Stage 2 — Stock Check (gov) period filter */
-const govStockCheckState = { year: 'all', viewBy: 'quarter', period: 'all' };
-
-/** Need Identification — Take Follow-up email (prototype) */
-const FOLLOW_UP_SENDER = {
-  name: 'Super Admin',
-  email: 'super.admin@mphp.gov.in'
+/** Stage 1 — Need Identification (gov) period filter + table pages */
+const govNeedState = {
+  year: 'all', viewBy: 'quarter', period: 'all',
+  stockPage: 1, patientPage: 1, diseasePage: 1, gapPage: 1
 };
 
+/** Stage 2 — Stock Check (gov) period filter + table pages */
+const govStockCheckState = {
+  year: 'all', viewBy: 'quarter', period: 'all',
+  warehousePage: 1, otherPage: 1, openpoPage: 1, redistributePage: 1
+};
+
+/** Follow-up is sent by Resource Manager (gov super-admin role) — never to themselves */
+const FOLLOW_UP_SENDER = {
+  name: 'Resource Manager',
+  email: 'gov.admin@mphp.gov.in'
+};
+
+const FOLLOW_UP_SENDER_ROLE = 'Resource Manager';
+
 const FOLLOW_UP_ROLE_RECIPIENTS = [
-  { role: 'Resource Manager', email: 'gov.admin@mphp.gov.in', name: 'Dr. Rajesh Sharma' },
   { role: 'Procurement Officer', email: 'procurement@mphp.gov.in', name: 'Procurement Cell' },
   { role: 'Finance / Budget Officer', email: 'finance@mphp.gov.in', name: 'Finance Wing' },
   { role: 'Stores / Warehouse Manager', email: 'stores@mphp.gov.in', name: 'Central Stores' },
@@ -184,7 +367,8 @@ const govConsolidationState = {
   lastClarificationRef: '',
   year: 'all',
   viewBy: 'quarter',
-  period: 'all'
+  period: 'all',
+  page: 1
 };
 
 /** Stage 5 — PR & Budget Approval (gov) state */
@@ -193,13 +377,16 @@ const govBudgetState = {
   fetchedDocs: {}, // deptId -> [{...}]
   year: 'all',
   viewBy: 'quarter',
-  period: 'all'
+  period: 'all',
+  page: 1
 };
 
 /** Stage 6 — Tender Preparation (gov) state */
 const govTenderPrepState = {
   finalReady: false,
   consensusAck: false,
+  draftsPage: 1,
+  checkersPage: 1,
   preparedPage: 1,
   year: 'all',
   viewBy: 'quarter',
@@ -234,6 +421,237 @@ const govRenewalState = {
 let govSequentialCommitted = false;
 let govLifecycleComplete = false;
 let vendorLifecycleComplete = false;
+
+const GOV_LIFECYCLE_STORAGE_VERSION = 1;
+const GOV_LIFECYCLE_STORAGE_PREFIX = 'mph_gov_lifecycle_v1_';
+
+function getGovLifecycleStorageKey(user = authUser) {
+  if (!user) return null;
+  const id = user.email || user.id;
+  if (!id) return null;
+  return GOV_LIFECYCLE_STORAGE_PREFIX + String(id).toLowerCase().trim();
+}
+
+function clonePlain(value) {
+  return JSON.parse(JSON.stringify(value));
+}
+
+function overwritePlainObject(target, source) {
+  if (!target || !source) return;
+  Object.keys(target).forEach(k => { delete target[k]; });
+  Object.assign(target, clonePlain(source));
+}
+
+function getGovActiveStageId() {
+  if (govLifecycleComplete) return 14;
+  // Early jump to Renewal from Stage 1 — keep 14 as the viewed/active focus without marking 2–13 done
+  if (currentWorkflowStep === 14 && !govSequentialCommitted) return 14;
+  if (!govIndentState.saved) {
+    const step = currentWorkflowStep || 1;
+    return Math.min(Math.max(step, 1), 3);
+  }
+  if (!govConsolidationState.approved) return 4;
+  if (!govBudgetState.verified) return 5;
+  if (!govTenderPrepState.finalReady) return 6;
+  const step = currentWorkflowStep || 7;
+  return Math.min(Math.max(step, 7), 14);
+}
+
+function syncGovWorkflowStatuses() {
+  if (typeof GOV_WORKFLOW === 'undefined') return;
+  if (currentRole && currentRole !== 'gov') return;
+
+  // Special case: Stage 1 → 14 jump (sequential path not started)
+  if (currentWorkflowStep === 14 && !govSequentialCommitted && !govLifecycleComplete) {
+    GOV_WORKFLOW.forEach(s => {
+      if (s.id === 1) s.status = 'done';
+      else if (s.id === 14) s.status = 'active';
+      else s.status = 'pending';
+    });
+    return;
+  }
+
+  const active = getGovActiveStageId();
+  GOV_WORKFLOW.forEach(s => {
+    if (govLifecycleComplete || s.id < active) s.status = 'done';
+    else if (s.id === active) s.status = 'active';
+    else s.status = 'pending';
+  });
+}
+
+function buildGovLifecycleSnapshot() {
+  return {
+    version: GOV_LIFECYCLE_STORAGE_VERSION,
+    currentStep: currentWorkflowStep || 1,
+    sequentialCommitted: !!govSequentialCommitted,
+    lifecycleComplete: !!govLifecycleComplete,
+    indent: clonePlain(govIndentState),
+    need: clonePlain(govNeedState),
+    stock: clonePlain(govStockCheckState),
+    consolidation: clonePlain(govConsolidationState),
+    budget: clonePlain(govBudgetState),
+    tenderPrep: clonePlain(govTenderPrepState),
+    bidEval: clonePlain(govBidEvalState),
+    contract: clonePlain(govContractState),
+    award: clonePlain(govAwardState),
+    po: clonePlain(govPoState),
+    grn: clonePlain(govGrnState),
+    invoice: clonePlain(govInvoiceState),
+    payment: clonePlain(govPaymentState),
+    renewal: clonePlain(govRenewalState),
+    updatedAt: new Date().toISOString()
+  };
+}
+
+function persistGovLifecycle() {
+  if (currentRole !== 'gov') return;
+  const key = getGovLifecycleStorageKey();
+  if (!key || typeof localStorage === 'undefined') return;
+  try {
+    localStorage.setItem(key, JSON.stringify(buildGovLifecycleSnapshot()));
+  } catch (err) {
+    console.warn('Unable to persist Resource Manager lifecycle progress', err);
+  }
+}
+
+function readGovLifecycleSnapshot(user = authUser) {
+  const key = getGovLifecycleStorageKey(user);
+  if (!key || typeof localStorage === 'undefined') return null;
+  try {
+    const raw = localStorage.getItem(key);
+    if (!raw) return null;
+    const data = JSON.parse(raw);
+    if (!data || data.version !== GOV_LIFECYCLE_STORAGE_VERSION) return null;
+    return data;
+  } catch {
+    return null;
+  }
+}
+
+function resetGovLifecycleInMemory() {
+  overwritePlainObject(govIndentState, {
+    mode: null,
+    saved: false,
+    indentId: '',
+    year: 'all',
+    viewBy: 'quarter',
+    period: 'all',
+    page: 1,
+    listItems: [],
+    manual: {
+      facility: 'Gandhi Medical College',
+      district: 'Bhopal',
+      category: 'Drugs',
+      itemName: '',
+      quantity: '',
+      unit: 'Packs',
+      priority: 'High',
+      requiredBy: '',
+      justification: '',
+      raisedBy: 'Store Manager — Bhopal',
+      approvingAuthority: 'CMO / Competent Authority',
+      remarks: ''
+    },
+    automated: { status: 'idle', lines: [], generatedAt: null }
+  });
+  overwritePlainObject(govNeedState, {
+    year: 'all', viewBy: 'quarter', period: 'all',
+    stockPage: 1, patientPage: 1, diseasePage: 1, gapPage: 1
+  });
+  overwritePlainObject(govStockCheckState, {
+    year: 'all', viewBy: 'quarter', period: 'all',
+    warehousePage: 1, otherPage: 1, openpoPage: 1, redistributePage: 1
+  });
+  overwritePlainObject(govConsolidationState, {
+    approved: false,
+    district: 'Bhopal',
+    status: 'Pending Review',
+    clarificationSent: false,
+    lastClarificationRef: '',
+    year: 'all',
+    viewBy: 'quarter',
+    period: 'all',
+    page: 1
+  });
+  overwritePlainObject(govBudgetState, {
+    verified: false,
+    fetchedDocs: {},
+    year: 'all',
+    viewBy: 'quarter',
+    period: 'all',
+    page: 1
+  });
+  overwritePlainObject(govTenderPrepState, {
+    finalReady: false,
+    consensusAck: false,
+    draftsPage: 1,
+    checkersPage: 1,
+    preparedPage: 1,
+    year: 'all',
+    viewBy: 'quarter',
+    period: 'all'
+  });
+  overwritePlainObject(govBidEvalState, { page: 1, year: 'all', viewBy: 'quarter', period: 'all' });
+  overwritePlainObject(govContractState, {
+    page: 1, year: 'all', viewBy: 'quarter', period: 'all', approvals: {}
+  });
+  overwritePlainObject(govAwardState, { page: 1, year: 'all', viewBy: 'quarter', period: 'all' });
+  overwritePlainObject(govPoState, { page: 1, year: 'all', viewBy: 'quarter', period: 'all' });
+  overwritePlainObject(govGrnState, { page: 1, year: 'all', viewBy: 'quarter', period: 'all' });
+  overwritePlainObject(govInvoiceState, { page: 1, year: 'all', viewBy: 'quarter', period: 'all' });
+  overwritePlainObject(govPaymentState, { page: 1, year: 'all', viewBy: 'quarter', period: 'all' });
+  overwritePlainObject(govRenewalState, {
+    page: 1, year: 'all', viewBy: 'quarter', period: 'all',
+    selectedId: null, finalizeVendorId: '', uploadName: '', finalized: {}
+  });
+  govSequentialCommitted = false;
+  govLifecycleComplete = false;
+  currentWorkflowStep = null;
+  if (typeof GOV_WORKFLOW !== 'undefined') {
+    GOV_WORKFLOW.forEach(s => { s.status = 'pending'; });
+  }
+}
+
+function applyGovLifecycleSnapshot(saved) {
+  if (!saved) return;
+  if (saved.indent) overwritePlainObject(govIndentState, saved.indent);
+  if (saved.need) overwritePlainObject(govNeedState, saved.need);
+  if (saved.stock) overwritePlainObject(govStockCheckState, saved.stock);
+  if (saved.consolidation) overwritePlainObject(govConsolidationState, saved.consolidation);
+  if (saved.budget) overwritePlainObject(govBudgetState, saved.budget);
+  if (saved.tenderPrep) overwritePlainObject(govTenderPrepState, saved.tenderPrep);
+  if (saved.bidEval) overwritePlainObject(govBidEvalState, saved.bidEval);
+  if (saved.contract) overwritePlainObject(govContractState, saved.contract);
+  if (saved.award) overwritePlainObject(govAwardState, saved.award);
+  if (saved.po) overwritePlainObject(govPoState, saved.po);
+  if (saved.grn) overwritePlainObject(govGrnState, saved.grn);
+  if (saved.invoice) overwritePlainObject(govInvoiceState, saved.invoice);
+  if (saved.payment) overwritePlainObject(govPaymentState, saved.payment);
+  if (saved.renewal) overwritePlainObject(govRenewalState, saved.renewal);
+  govSequentialCommitted = !!saved.sequentialCommitted;
+  govLifecycleComplete = !!saved.lifecycleComplete;
+  currentWorkflowStep = Math.max(1, Math.min(14, Number(saved.currentStep) || 1));
+  syncGovWorkflowStatuses();
+}
+
+/**
+ * Restore or initialize Resource Manager procurement lifecycle.
+ * Preserves Stage 1 → Stage 14 jump when sequentialCommitted is still false.
+ */
+function initGovLifecycleForSession(user) {
+  const saved = readGovLifecycleSnapshot(user);
+  if (saved) {
+    applyGovLifecycleSnapshot(saved);
+    return { resumed: true, step: currentWorkflowStep };
+  }
+  resetGovLifecycleInMemory();
+  currentWorkflowStep = 1;
+  govSequentialCommitted = false;
+  govLifecycleComplete = false;
+  syncGovWorkflowStatuses();
+  persistGovLifecycle();
+  return { resumed: false, step: 1 };
+}
 
 function maskSensitiveValue(value) {
   if (!value) return '₹ ●●●';
@@ -275,6 +693,10 @@ function getWorkflowProgressStep() {
   if (currentRole === 'vendor') {
     syncVendorWorkflowStatuses();
     return getVendorActiveStageId();
+  }
+  if (currentRole === 'gov') {
+    syncGovWorkflowStatuses();
+    return getGovActiveStageId();
   }
   const steps = getWorkflowSteps();
   const active = steps.find(s => s.status === 'active');
@@ -331,6 +753,17 @@ function completeAuthLogin(role, user) {
   sidebar.classList.toggle('vendor-theme', role === 'vendor');
 
   pageStack = [];
+  if (role === 'vendor') {
+    resetGovLifecycleInMemory();
+    initVendorLifecycleForSession(user);
+  } else if (role === 'gov') {
+    clearInMemoryVendorLifecycle();
+    initGovLifecycleForSession(user);
+  } else {
+    clearInMemoryVendorLifecycle();
+    resetGovLifecycleInMemory();
+    currentWorkflowStep = null;
+  }
   renderSidebar();
   renderTopbar();
   navigateTo('dashboard', true);
@@ -351,10 +784,17 @@ function confirmLogout() {
 }
 
 function logout() {
+  if (currentRole === 'vendor') {
+    persistVendorLifecycle();
+  }
+  if (currentRole === 'gov') {
+    persistGovLifecycle();
+  }
   currentRole = null;
   authUser = null;
   currentPage = 'dashboard';
-  currentWorkflowStep = null;
+  clearInMemoryVendorLifecycle();
+  resetGovLifecycleInMemory();
   pageStack = [];
   noticesShownThisSession = false;
   resetGovNoticesForDemo();
@@ -382,7 +822,7 @@ function resetGovNoticesForDemo() {
 function getVendorNavBadgeInfo(pageId) {
   switch (pageId) {
     case 'workflow': {
-      const pending = [4, 5, 6, 7, 8, 9].filter(id => !vendorStageState.completed[id]).length;
+      const pending = [1, 2, 3, 4, 5, 6, 7, 8, 9].filter(id => !vendorStageState.completed[id]).length;
       return { count: pending, title: `${pending} lifecycle stage(s) still open` };
     }
     case 'registration':
@@ -685,9 +1125,15 @@ function navigateTo(page, arg = {}) {
     else if (!opts.keepTenderFilter) tenderStatusFilter = 'all';
   }
   if (page === 'workflow' && currentRole === 'gov') {
-    // Opening Need Identification to Pay always starts at Stage 1; Stage 14 jump resets.
-    currentWorkflowStep = 1;
-    govSequentialCommitted = false;
+    // Resume saved progress — do NOT force Stage 1 or clear Stage 14 jump eligibility.
+    ensureWorkflowViewStep();
+    syncGovWorkflowStatuses();
+    persistGovLifecycle();
+  }
+  if (page === 'workflow' && currentRole === 'vendor') {
+    // Resume from cached step / progress (never force Stage 1 for returning vendors).
+    ensureWorkflowViewStep();
+    persistVendorLifecycle();
   }
   currentPage = page;
   renderSidebar();
@@ -1075,9 +1521,7 @@ function paginateItems(items, page, pageSize = PIPELINE_PAGE_SIZE) {
 }
 
 function renderPaginationControls(page, totalPages, total, from, to, handlerName) {
-  if (totalPages <= 1) {
-    return total ? `<div class="table-pagination table-pagination--single"><span>Showing ${total} tender${total !== 1 ? 's' : ''}</span></div>` : '';
-  }
+  if (!total) return '';
   const pages = [];
   for (let i = 1; i <= totalPages; i++) {
     if (i === 1 || i === totalPages || Math.abs(i - page) <= 1) {
@@ -1087,14 +1531,14 @@ function renderPaginationControls(page, totalPages, total, from, to, handlerName
     }
   }
   return `<div class="table-pagination">
-    <span class="pagination-info">Showing ${from}–${to} of ${total} tenders</span>
+    <span class="pagination-info">Showing ${from}–${to} of ${total} · 10 per page</span>
     <div class="pagination-controls">
-      <button type="button" class="pagination-btn" ${page <= 1 ? 'disabled' : ''} onclick="${handlerName}(${page - 1})"><i class="fa-solid fa-chevron-left"></i></button>
+      <button type="button" class="pagination-btn" ${page <= 1 ? 'disabled' : ''} onclick="${handlerName}(${page - 1})" aria-label="Previous page"><i class="fa-solid fa-chevron-left"></i></button>
       ${pages.map(p => p === '…'
         ? `<span class="pagination-ellipsis">…</span>`
         : `<button type="button" class="pagination-btn ${p === page ? 'active' : ''}" onclick="${handlerName}(${p})">${p}</button>`
       ).join('')}
-      <button type="button" class="pagination-btn" ${page >= totalPages ? 'disabled' : ''} onclick="${handlerName}(${page + 1})"><i class="fa-solid fa-chevron-right"></i></button>
+      <button type="button" class="pagination-btn" ${page >= totalPages ? 'disabled' : ''} onclick="${handlerName}(${page + 1})" aria-label="Next page"><i class="fa-solid fa-chevron-right"></i></button>
     </div>
   </div>`;
 }
@@ -1575,7 +2019,20 @@ function ensureWorkflowViewStep() {
   const total = getWorkflowSteps().length;
   if (currentRole === 'gov') {
     if (!currentWorkflowStep || currentWorkflowStep < 1 || currentWorkflowStep > total) {
-      currentWorkflowStep = 1;
+      const saved = readGovLifecycleSnapshot();
+      currentWorkflowStep = saved
+        ? Math.max(1, Math.min(total, Number(saved.currentStep) || 1))
+        : 1;
+    }
+    syncGovWorkflowStatuses();
+    return;
+  }
+  if (currentRole === 'vendor') {
+    const progress = getWorkflowProgressStep();
+    if (!currentWorkflowStep || currentWorkflowStep < 1 || currentWorkflowStep > total) {
+      const saved = readVendorLifecycleSnapshot();
+      const cachedStep = saved ? clampVendorWorkflowStep(saved.currentStep) : null;
+      currentWorkflowStep = cachedStep || progress;
     }
     return;
   }
@@ -1595,7 +2052,7 @@ function renderWorkflow() {
 
   return `
     <div class="wf-page-header">
-      <p class="wf-page-hint">${isGov ? '14 stages · from Stage 1 you may jump to Renewal (14); after Stage 2, complete the flow sequentially' : '9 stages · click any step to review or update'}</p>
+      <p class="wf-page-hint">${isGov ? '14 stages · progress is saved automatically · from Stage 1 you may still jump to Renewal (14)' : '9 stages · progress is saved automatically — you resume where you left off'}</p>
     </div>
     <div class="workflow-timeline" role="tablist" aria-label="Procurement lifecycle stages">
       ${steps.map(s => `<div class="${getWorkflowStepClasses(s, viewId)}" data-step="${s.id}" role="tab" aria-selected="${s.id === viewId}" tabindex="0" onclick="selectWorkflowStep(${s.id})" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();selectWorkflowStep(${s.id})}">
@@ -1730,14 +2187,14 @@ function renderLifecycleCompleteBanner() {
 function completeProcurementLifecycle() {
   if (currentRole === 'gov') {
     govLifecycleComplete = true;
-    if (typeof GOV_WORKFLOW !== 'undefined') {
-      GOV_WORKFLOW.forEach(s => { s.status = 'done'; });
-    }
+    syncGovWorkflowStatuses();
+    persistGovLifecycle();
   } else {
     vendorLifecycleComplete = true;
     const total = getWorkflowSteps().length;
     for (let i = 1; i <= total; i++) vendorStageState.completed[i] = true;
     syncVendorWorkflowStatuses();
+    persistVendorLifecycle();
   }
   refreshWorkflowUI();
   openLifecycleCompleteSummary();
@@ -1910,6 +2367,15 @@ function renderStockCheckStage(canEdit = true) {
   const warehouseRows = applyStagePeriodFilter(warehouse.rows || [], govStockCheckState, 'date');
   const otherRows = applyStagePeriodFilter(otherLocations.rows || [], govStockCheckState, 'date');
   const openPoRows = applyStagePeriodFilter(openPos.rows || [], govStockCheckState, 'date');
+  const redistributeRows = applyStagePeriodFilter(redistributable.rows || [], govStockCheckState, 'date');
+  const warehousePaged = paginateItems(warehouseRows, govStockCheckState.warehousePage, 10);
+  const otherPaged = paginateItems(otherRows, govStockCheckState.otherPage, 10);
+  const openPoPaged = paginateItems(openPoRows, govStockCheckState.openpoPage, 10);
+  const redistributePaged = paginateItems(redistributeRows, govStockCheckState.redistributePage, 10);
+  govStockCheckState.warehousePage = warehousePaged.page;
+  govStockCheckState.otherPage = otherPaged.page;
+  govStockCheckState.openpoPage = openPoPaged.page;
+  govStockCheckState.redistributePage = redistributePaged.page;
   const disabled = canEdit ? '' : ' disabled';
   const periodLabel = getWfPeriodFilterLabel(govStockCheckState);
   const periodDisplay = govStockCheckState.year === 'all' ? meta.assessmentPeriod : periodLabel;
@@ -1986,16 +2452,20 @@ function renderStockCheckStage(canEdit = true) {
         <table class="data-table">
           <thead><tr><th>Facility</th><th>Item</th><th>On hand</th><th>Usable</th><th>ML score</th><th>Recommendation</th><th>Status</th><th>Date</th></tr></thead>
           <tbody>
-            ${warehouseRows.length ? warehouseRows.map((r, i) => `<tr class="need-row-clickable" role="button" tabindex="0" onclick="openStockCheckRowDetail('warehouse',${i})" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();openStockCheckRowDetail('warehouse',${i})}">
+            ${warehousePaged.items.length ? warehousePaged.items.map((r, localI) => {
+              const i = (warehousePaged.page - 1) * 10 + localI;
+              return `<tr class="need-row-clickable" role="button" tabindex="0" onclick="openStockCheckRowDetail('warehouse',${i})" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();openStockCheckRowDetail('warehouse',${i})}">
               <td><strong>${r.facility}</strong></td><td>${r.item}</td>
               <td>${r.onHand}</td><td>${r.usable}</td>
               <td><strong>${r.mlScore}</strong></td><td>${r.recommendation}</td>
               <td><span class="badge badge-${needStatusBadge(r.status)}">${r.status}</span></td>
-              <td>${r.date || '—'}</td>
-            </tr>`).join('') : `<tr><td colspan="8" style="text-align:center;color:#64748b">No warehouse rows for ${periodLabel}.</td></tr>`}
+              <td class="cell-date">${r.date || '—'}</td>
+            </tr>`;
+            }).join('') : `<tr><td colspan="8" style="text-align:center;color:#64748b">No warehouse rows for ${periodLabel}.</td></tr>`}
           </tbody>
         </table>
       </div>
+      ${renderPaginationControls(warehousePaged.page, warehousePaged.totalPages, warehousePaged.total, warehousePaged.from, warehousePaged.to, 'setStockWarehousePage')}
     </div>
 
     <div class="need-section" id="stock-sec-other">
@@ -2007,15 +2477,19 @@ function renderStockCheckStage(canEdit = true) {
         <table class="data-table">
           <thead><tr><th>From</th><th>To</th><th>Item</th><th>Qty</th><th>Cover gain</th><th>ML score</th><th>Status</th><th>Date</th></tr></thead>
           <tbody>
-            ${otherRows.length ? otherRows.map((r, i) => `<tr class="need-row-clickable" role="button" tabindex="0" onclick="openStockCheckRowDetail('other',${i})" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();openStockCheckRowDetail('other',${i})}">
+            ${otherPaged.items.length ? otherPaged.items.map((r, localI) => {
+              const i = (otherPaged.page - 1) * 10 + localI;
+              return `<tr class="need-row-clickable" role="button" tabindex="0" onclick="openStockCheckRowDetail('other',${i})" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();openStockCheckRowDetail('other',${i})}">
               <td><strong>${r.from}</strong></td><td>${r.to}</td><td>${r.item}</td>
               <td>${r.qty}</td><td>${r.coverGain}</td><td><strong>${r.mlScore}</strong></td>
               <td><span class="badge badge-${needStatusBadge(r.status)}">${r.status}</span></td>
-              <td>${r.date || '—'}</td>
-            </tr>`).join('') : `<tr><td colspan="8" style="text-align:center;color:#64748b">No transfer rows for ${periodLabel}.</td></tr>`}
+              <td class="cell-date">${r.date || '—'}</td>
+            </tr>`;
+            }).join('') : `<tr><td colspan="8" style="text-align:center;color:#64748b">No transfer rows for ${periodLabel}.</td></tr>`}
           </tbody>
         </table>
       </div>
+      ${renderPaginationControls(otherPaged.page, otherPaged.totalPages, otherPaged.total, otherPaged.from, otherPaged.to, 'setStockOtherPage')}
     </div>
 
     <div class="need-section" id="stock-sec-openpo">
@@ -2027,15 +2501,19 @@ function renderStockCheckStage(canEdit = true) {
         <table class="data-table">
           <thead><tr><th>PO</th><th>Vendor</th><th>Item</th><th>Facility</th><th>ETA</th><th>ML score</th><th>Status</th><th>Date</th></tr></thead>
           <tbody>
-            ${openPoRows.length ? openPoRows.map((r, i) => `<tr class="need-row-clickable" role="button" tabindex="0" onclick="openStockCheckRowDetail('openpo',${i})" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();openStockCheckRowDetail('openpo',${i})}">
+            ${openPoPaged.items.length ? openPoPaged.items.map((r, localI) => {
+              const i = (openPoPaged.page - 1) * 10 + localI;
+              return `<tr class="need-row-clickable" role="button" tabindex="0" onclick="openStockCheckRowDetail('openpo',${i})" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();openStockCheckRowDetail('openpo',${i})}">
               <td><strong>${r.po}</strong></td><td>${r.vendor}</td><td>${r.item}</td>
               <td>${r.facility}</td><td>${r.eta}</td><td><strong>${r.mlScore}</strong></td>
               <td><span class="badge badge-${needStatusBadge(r.status)}">${r.status}</span></td>
-              <td>${r.date || '—'}</td>
-            </tr>`).join('') : `<tr><td colspan="8" style="text-align:center;color:#64748b">No open PO rows for ${periodLabel}.</td></tr>`}
+              <td class="cell-date">${r.date || '—'}</td>
+            </tr>`;
+            }).join('') : `<tr><td colspan="8" style="text-align:center;color:#64748b">No open PO rows for ${periodLabel}.</td></tr>`}
           </tbody>
         </table>
       </div>
+      ${renderPaginationControls(openPoPaged.page, openPoPaged.totalPages, openPoPaged.total, openPoPaged.from, openPoPaged.to, 'setStockOpenPoPage')}
     </div>
 
     <div class="need-section" id="stock-sec-redistribute">
@@ -2045,16 +2523,21 @@ function renderStockCheckStage(canEdit = true) {
       </div>
       <div class="data-table-wrap need-table">
         <table class="data-table">
-          <thead><tr><th>Item</th><th>From</th><th>To</th><th>Qty</th><th>Savings</th><th>ML score</th><th>Status</th></tr></thead>
+          <thead><tr><th>Item</th><th>From</th><th>To</th><th>Qty</th><th>Savings</th><th>ML score</th><th>Status</th><th>Date</th></tr></thead>
           <tbody>
-            ${redistributable.rows.map((r, i) => `<tr class="need-row-clickable" role="button" tabindex="0" onclick="openStockCheckRowDetail('redistribute',${i})" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();openStockCheckRowDetail('redistribute',${i})}">
+            ${redistributePaged.items.length ? redistributePaged.items.map((r, localI) => {
+              const i = (redistributePaged.page - 1) * 10 + localI;
+              return `<tr class="need-row-clickable" role="button" tabindex="0" onclick="openStockCheckRowDetail('redistribute',${i})" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();openStockCheckRowDetail('redistribute',${i})}">
               <td><strong>${r.item}</strong></td><td>${r.from}</td><td>${r.to}</td>
               <td>${r.qty}</td><td>${r.savings}</td><td><strong>${r.mlScore}</strong></td>
               <td><span class="badge badge-${needStatusBadge(r.status)}">${r.status}</span></td>
-            </tr>`).join('')}
+              <td class="cell-date">${r.date || '—'}</td>
+            </tr>`;
+            }).join('') : `<tr><td colspan="8" style="text-align:center;color:#64748b">No redistributable rows for ${periodLabel}.</td></tr>`}
           </tbody>
         </table>
       </div>
+      ${renderPaginationControls(redistributePaged.page, redistributePaged.totalPages, redistributePaged.total, redistributePaged.from, redistributePaged.to, 'setStockRedistributePage')}
     </div>
 
     <div class="wf-actions mt-2">
@@ -2179,24 +2662,38 @@ function openStockCheckRowDetail(section, index) {
       </div>
     </div>`;
   } else if (section === 'redistribute') {
-    const r = data.redistributable.rows[i];
+    const r = applyStagePeriodFilter(data.redistributable.rows || [], govStockCheckState, 'date')[i];
     if (!r) return;
     title = `Redistribute — ${r.item}`;
     body = `<div class="kpi-detail need-row-detail">
       <p class="need-row-detail-lead">AI/ML allocation proposal to fulfill demand without new tender.</p>
       <div class="tender-detail-stats tender-detail-stats--4">
-        <div class="tender-stat"><span>From</span><strong>${r.from}</strong></div>
-        <div class="tender-stat"><span>To</span><strong>${r.to}</strong></div>
         <div class="tender-stat"><span>Qty</span><strong>${r.qty}</strong></div>
         <div class="tender-stat"><span>Savings</span><strong>${r.savings}</strong></div>
+        <div class="tender-stat"><span>Status</span><strong><span class="badge badge-${needStatusBadge(r.status)}">${r.status}</span></strong></div>
+        <div class="tender-stat"><span>Status since</span><strong class="cell-date">${r.date || '—'}</strong></div>
       </div>
       <div class="tender-detail-section">
-        <h4>Outcome</h4>
-        <p>ML score <strong>${r.mlScore}</strong> · <span class="badge badge-${needStatusBadge(r.status)}">${r.status}</span></p>
+        <div class="tender-detail-section-head">
+          <h4>Outcome</h4>
+          ${followUpActionButton('stock', 'redistribute', i)}
+        </div>
+        <div class="data-table-wrap" style="margin-bottom:0.75rem">
+          <table class="data-table data-table--modal">
+            <tbody>
+              <tr><td>From</td><td><strong>${r.from}</strong></td></tr>
+              <tr><td>To</td><td><strong>${r.to}</strong></td></tr>
+              <tr><td>Item</td><td>${r.item}</td></tr>
+              <tr><td>ML score</td><td><strong>${r.mlScore}</strong></td></tr>
+              <tr><td>Status since</td><td><strong class="cell-date">${r.date || '—'}</strong></td></tr>
+            </tbody>
+          </table>
+        </div>
         <p>${r.recommendation}</p>
       </div>
       <div class="modal-inline-actions">
         <button type="button" class="btn btn-outline" onclick="modalGoBack()"><i class="fa-solid fa-arrow-left"></i> Back</button>
+        ${followUpActionButton('stock', 'redistribute', i)}
       </div>
     </div>`;
   } else {
@@ -2341,6 +2838,8 @@ function runAutomatedIndentProcess() {
         govIndentState.listItems.unshift({ ...l, source: l.source || 'Automated' });
       }
     });
+    syncGovWorkflowStatuses();
+    persistGovLifecycle();
     refreshWorkflowUI();
     openModal('Automated indent ready', `
       <div class="sync-success-msg">
@@ -2573,6 +3072,8 @@ function saveManualIndent() {
     justification: m.justification,
     remarks: m.remarks || ''
   });
+  syncGovWorkflowStatuses();
+  persistGovLifecycle();
   closeModal();
   refreshWorkflowUI();
   setTimeout(() => {
@@ -2641,6 +3142,8 @@ function renderIndentRaisedStage(canEdit = true) {
   const auto = govIndentState.automated;
   const rows = getIndentListRows();
   const periodLabel = getWfPeriodFilterLabel(govIndentState);
+  const indentPaged = paginateItems(rows, govIndentState.page, 10);
+  govIndentState.page = indentPaged.page;
 
   return `<div class="indent-stage">
     <div class="indent-mode-banner">
@@ -2704,7 +3207,7 @@ function renderIndentRaisedStage(canEdit = true) {
         <table class="data-table">
           <thead><tr><th>Indent ID</th><th>Item</th><th>Qty</th><th>Facility</th><th>Source</th><th>Priority</th><th>Status</th><th>Date</th></tr></thead>
           <tbody>
-            ${rows.length ? rows.map(r => `
+            ${indentPaged.items.length ? indentPaged.items.map(r => `
               <tr class="need-row-clickable" role="button" tabindex="0" onclick="openIndentRowDetail('${r.id}')" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();openIndentRowDetail('${r.id}')}">
                 <td><strong>${r.id}</strong></td>
                 <td>${r.item}</td>
@@ -2713,12 +3216,13 @@ function renderIndentRaisedStage(canEdit = true) {
                 <td>${r.source || '—'}</td>
                 <td><span class="badge badge-${needStatusBadge(r.priority)}">${r.priority}</span></td>
                 <td><span class="badge badge-${needStatusBadge(r.status)}">${r.status}</span></td>
-                <td>${r.date || '—'}</td>
+                <td class="cell-date">${r.date || '—'}</td>
               </tr>
             `).join('') : `<tr><td colspan="8" style="text-align:center;color:#64748b">No indents for ${periodLabel}.</td></tr>`}
           </tbody>
         </table>
       </div>
+      ${renderPaginationControls(indentPaged.page, indentPaged.totalPages, indentPaged.total, indentPaged.from, indentPaged.to, 'setIndentListPage')}
     </div>
   </div>`;
 }
@@ -2814,6 +3318,8 @@ function renderDemandConsolidationStage(canEdit = true) {
 
     ${(() => {
       const demandRows = getDemandApprovalRows();
+      const demandPaged = paginateItems(demandRows, govConsolidationState.page, 10);
+      govConsolidationState.page = demandPaged.page;
       const periodLabel = getWfPeriodFilterLabel(st);
       return `<div class="need-section" style="margin-bottom:1.1rem">
         <div class="need-section-head">
@@ -2824,7 +3330,7 @@ function renderDemandConsolidationStage(canEdit = true) {
           <table class="data-table">
             <thead><tr><th>Demand ID</th><th>District</th><th>Category</th><th>Items</th><th>Facilities</th><th>Est. value</th><th>Status</th><th>Date</th></tr></thead>
             <tbody>
-              ${demandRows.length ? demandRows.map(r => `
+              ${demandPaged.items.length ? demandPaged.items.map(r => `
                 <tr class="need-row-clickable" role="button" tabindex="0" onclick="openDemandApprovalDetail('${r.id}')" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();openDemandApprovalDetail('${r.id}')}">
                   <td><strong>${r.id}</strong></td>
                   <td>${r.district}</td>
@@ -2833,12 +3339,13 @@ function renderDemandConsolidationStage(canEdit = true) {
                   <td>${r.facilities}</td>
                   <td>${r.valueLow} – ${r.valueHigh}</td>
                   <td><span class="badge badge-${needStatusBadge(r.status)}">${r.status}</span></td>
-                  <td>${r.date || '—'}</td>
+                  <td class="cell-date">${r.date || '—'}</td>
                 </tr>
               `).join('') : `<tr><td colspan="8" style="text-align:center;color:#64748b">No demand records for ${periodLabel}.</td></tr>`}
             </tbody>
           </table>
         </div>
+        ${renderPaginationControls(demandPaged.page, demandPaged.totalPages, demandPaged.total, demandPaged.from, demandPaged.to, 'setDemandApprovalPage')}
       </div>`;
     })()}
 
@@ -3001,13 +3508,8 @@ function approveConsolidatedDemand() {
   govConsolidationState.district = district || govConsolidationState.district;
   govConsolidationState.status = 'Approved';
   govConsolidationState.approved = true;
-  // Mark workflow stage complete for progress tracking
-  if (typeof GOV_WORKFLOW !== 'undefined') {
-    const s4 = GOV_WORKFLOW.find(s => s.id === 4);
-    const s5 = GOV_WORKFLOW.find(s => s.id === 5);
-    if (s4) s4.status = 'done';
-    if (s5 && s5.status === 'pending') s5.status = 'active';
-  }
+  syncGovWorkflowStatuses();
+  persistGovLifecycle();
   refreshWorkflowUI();
   openModal('Demand approved', `
     <div class="sync-success-msg">
@@ -3160,6 +3662,8 @@ function renderPrBudgetApprovalStage(canEdit = true) {
   const { meta, checklist, departments } = data;
   const disabled = canEdit ? '' : ' disabled';
   const listRows = getPrBudgetListRows();
+  const budgetPaged = paginateItems(listRows, govBudgetState.page, 10);
+  govBudgetState.page = budgetPaged.page;
   const periodLabel = getWfPeriodFilterLabel(govBudgetState);
   const approvedCount = departments.filter(d => d.status === 'Approved').length;
   const blockedCount = departments.filter(d => d.status === 'Not Approved').length;
@@ -3230,7 +3734,7 @@ function renderPrBudgetApprovalStage(canEdit = true) {
         <table class="data-table">
           <thead><tr><th>Department</th><th>Budget head</th><th>Scheme</th><th>Allocated</th><th>Requested</th><th>Available</th><th>Status</th><th>Date</th></tr></thead>
           <tbody>
-            ${listRows.length ? listRows.map(d => `
+            ${budgetPaged.items.length ? budgetPaged.items.map(d => `
               <tr class="need-row-clickable" role="button" tabindex="0" onclick="openDepartmentBudgetDetail('${d.id}')" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();openDepartmentBudgetDetail('${d.id}')}">
                 <td><strong>${d.shortName}</strong><div class="table-sub">${d.name}</div></td>
                 <td>${d.budgetHead}</td>
@@ -3239,12 +3743,13 @@ function renderPrBudgetApprovalStage(canEdit = true) {
                 <td>${d.requested}</td>
                 <td>${d.available}</td>
                 <td><span class="badge badge-${needStatusBadge(d.status)}">${d.status}</span></td>
-                <td>${d.date || '—'}</td>
+                <td class="cell-date">${d.date || '—'}</td>
               </tr>
             `).join('') : `<tr><td colspan="8" style="text-align:center;color:#64748b">No PR &amp; budget records for ${periodLabel}.</td></tr>`}
           </tbody>
         </table>
       </div>
+      ${renderPaginationControls(budgetPaged.page, budgetPaged.totalPages, budgetPaged.total, budgetPaged.from, budgetPaged.to, 'setPrBudgetListPage')}
     </section>
 
     <div class="wf-actions mt-2">
@@ -3418,12 +3923,8 @@ function confirmBudgetVerification() {
   const data = getPrBudgetData();
   const blocked = (data?.departments || []).filter(d => d.status === 'Not Approved');
   govBudgetState.verified = true;
-  if (typeof GOV_WORKFLOW !== 'undefined') {
-    const s5 = GOV_WORKFLOW.find(s => s.id === 5);
-    const s6 = GOV_WORKFLOW.find(s => s.id === 6);
-    if (s5) s5.status = 'done';
-    if (s6 && s6.status === 'pending') s6.status = 'active';
-  }
+  syncGovWorkflowStatuses();
+  persistGovLifecycle();
   refreshWorkflowUI();
   openModal('Budget verification confirmed', `
     <div class="sync-success-msg">
@@ -3500,6 +4001,70 @@ function setTenderPrepPreparedPage(page) {
   document.getElementById('tenderPrepPreparedTable')?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
 }
 
+function setTenderPrepDraftsPage(page) {
+  govTenderPrepState.draftsPage = Math.max(1, Number(page) || 1);
+  refreshWorkflowUI();
+  document.getElementById('tenderPrepDraftsTable')?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+}
+
+function setTenderPrepCheckersPage(page) {
+  govTenderPrepState.checkersPage = Math.max(1, Number(page) || 1);
+  refreshWorkflowUI();
+  document.getElementById('tenderPrepCheckersTable')?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+}
+
+function setNeedTablePage(section, page) {
+  const key = { stock: 'stockPage', patient: 'patientPage', disease: 'diseasePage', gap: 'gapPage' }[section];
+  if (!key) return;
+  govNeedState[key] = Math.max(1, Number(page) || 1);
+  refreshWorkflowUI();
+  document.getElementById(`need-sec-${section}`)?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+}
+function setNeedStockPage(page) { setNeedTablePage('stock', page); }
+function setNeedPatientPage(page) { setNeedTablePage('patient', page); }
+function setNeedDiseasePage(page) { setNeedTablePage('disease', page); }
+function setNeedGapPage(page) { setNeedTablePage('gap', page); }
+
+function setStockTablePage(section, page) {
+  const key = {
+    warehouse: 'warehousePage', other: 'otherPage', openpo: 'openpoPage', redistribute: 'redistributePage'
+  }[section];
+  if (!key) return;
+  govStockCheckState[key] = Math.max(1, Number(page) || 1);
+  refreshWorkflowUI();
+  document.getElementById(`stock-sec-${section}`)?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+}
+function setStockWarehousePage(page) { setStockTablePage('warehouse', page); }
+function setStockOtherPage(page) { setStockTablePage('other', page); }
+function setStockOpenPoPage(page) { setStockTablePage('openpo', page); }
+function setStockRedistributePage(page) { setStockTablePage('redistribute', page); }
+
+function setIndentListPage(page) {
+  govIndentState.page = Math.max(1, Number(page) || 1);
+  refreshWorkflowUI();
+}
+
+function setDemandApprovalPage(page) {
+  govConsolidationState.page = Math.max(1, Number(page) || 1);
+  refreshWorkflowUI();
+}
+
+function setPrBudgetListPage(page) {
+  govBudgetState.page = Math.max(1, Number(page) || 1);
+  refreshWorkflowUI();
+}
+
+function getNeedSectionRows(section) {
+  const data = getNeedIdentificationData();
+  if (!data) return [];
+  const raw = section === 'stock' ? data.stockLevels.rows
+    : section === 'patient' ? data.patientLoad.rows
+      : section === 'disease' ? data.diseaseBurden.rows
+        : section === 'gap' ? data.gapAnalysis.rows
+          : [];
+  return applyStagePeriodFilter(raw || [], govNeedState, 'date');
+}
+
 function renderTenderPreparationStage(canEdit = true) {
   const data = getTenderPreparationData();
   if (!data) {
@@ -3509,7 +4074,11 @@ function renderTenderPreparationStage(canEdit = true) {
   const rows = getTenderPrepRows();
   const disabled = canEdit ? '' : ' disabled';
   const consensusCount = checkers.filter(c => c.status === 'Consensus uploaded').length;
+  const draftsPaged = paginateItems(rows, govTenderPrepState.draftsPage, 10);
+  const checkersPaged = paginateItems(checkers, govTenderPrepState.checkersPage, 10);
   const paged = paginateItems(rows, govTenderPrepState.preparedPage, 10);
+  govTenderPrepState.draftsPage = draftsPaged.page;
+  govTenderPrepState.checkersPage = checkersPaged.page;
   govTenderPrepState.preparedPage = paged.page;
 
   return `<div class="tender-prep-stage">
@@ -3555,7 +4124,7 @@ function renderTenderPreparationStage(canEdit = true) {
       </div>
     </section>
 
-    <section class="budget-section">
+    <section class="budget-section" id="tenderPrepDraftsTable">
       <div class="budget-section-head">
         <h4><i class="fa-solid fa-file-lines"></i> Auto-prepared drafts — tender wise</h4>
         <p>Each row is one tender draft. Click a row to open scope, BOQ, eligibility, EMD, timelines and other draft details.</p>
@@ -3575,7 +4144,7 @@ function renderTenderPreparationStage(canEdit = true) {
             </tr>
           </thead>
           <tbody>
-            ${rows.length ? rows.map(t => `
+            ${draftsPaged.items.length ? draftsPaged.items.map(t => `
               <tr class="tender-prep-row" onclick="openTenderDraftDetail('${t.id}')" title="View draft details">
                 <td><strong>${t.id}</strong></td>
                 <td>${t.title}</td>
@@ -3590,9 +4159,10 @@ function renderTenderPreparationStage(canEdit = true) {
           </tbody>
         </table>
       </div>
+      ${renderPaginationControls(draftsPaged.page, draftsPaged.totalPages, draftsPaged.total, draftsPaged.from, draftsPaged.to, 'setTenderPrepDraftsPage')}
     </section>
 
-    <section class="budget-section">
+    <section class="budget-section" id="tenderPrepCheckersTable">
       <div class="budget-section-head">
         <h4><i class="fa-solid fa-users"></i> Division checkers — consensus</h4>
         <p>Each division reviews the draft and uploads concurrence. Click a row for full checker details.</p>
@@ -3601,18 +4171,19 @@ function renderTenderPreparationStage(canEdit = true) {
         <table class="data-table consol-detail-table tender-checker-table">
           <thead><tr><th>Division</th><th>Officer</th><th>Status</th><th>Remark</th><th>Uploaded on</th></tr></thead>
           <tbody>
-            ${checkers.map(c => `
+            ${checkersPaged.items.length ? checkersPaged.items.map(c => `
               <tr class="tender-prep-row" onclick="openTenderCheckerDetail('${c.id}')" title="View checker details">
                 <td><strong>${c.division}</strong></td>
                 <td>${c.officer}</td>
                 <td><span class="badge badge-${needStatusBadge(c.status)}">${c.status}</span></td>
                 <td class="consol-detail-note">${c.remark}</td>
-                <td>${c.uploadedOn}</td>
+                <td class="cell-date">${c.uploadedOn}</td>
               </tr>
-            `).join('')}
+            `).join('') : `<tr><td colspan="5" style="text-align:center;color:#64748b;padding:1.25rem">No checkers found.</td></tr>`}
           </tbody>
         </table>
       </div>
+      ${renderPaginationControls(checkersPaged.page, checkersPaged.totalPages, checkersPaged.total, checkersPaged.from, checkersPaged.to, 'setTenderPrepCheckersPage')}
     </section>
 
     <section class="budget-section" id="tenderPrepPreparedTable">
@@ -3808,12 +4379,8 @@ function confirmFinalNitRfp() {
   const pending = (data?.checkers || []).filter(c => c.status !== 'Consensus uploaded');
   govTenderPrepState.finalReady = true;
   govTenderPrepState.consensusAck = true;
-  if (typeof GOV_WORKFLOW !== 'undefined') {
-    const s6 = GOV_WORKFLOW.find(s => s.id === 6);
-    const s7 = GOV_WORKFLOW.find(s => s.id === 7);
-    if (s6) s6.status = 'done';
-    if (s7 && s7.status === 'pending') s7.status = 'active';
-  }
+  syncGovWorkflowStatuses();
+  persistGovLifecycle();
   refreshWorkflowUI();
   openModal('Final NIT / RFP prepared', `
     <div class="sync-success-msg">
@@ -3960,12 +4527,27 @@ function getWfStageFilterState(stageKey) {
   return govAwardState;
 }
 
+function resetWfStageTablePages(st) {
+  if (!st) return;
+  st.page = 1;
+  if (st.preparedPage != null) st.preparedPage = 1;
+  if (st.draftsPage != null) st.draftsPage = 1;
+  if (st.checkersPage != null) st.checkersPage = 1;
+  if (st.stockPage != null) st.stockPage = 1;
+  if (st.patientPage != null) st.patientPage = 1;
+  if (st.diseasePage != null) st.diseasePage = 1;
+  if (st.gapPage != null) st.gapPage = 1;
+  if (st.warehousePage != null) st.warehousePage = 1;
+  if (st.otherPage != null) st.otherPage = 1;
+  if (st.openpoPage != null) st.openpoPage = 1;
+  if (st.redistributePage != null) st.redistributePage = 1;
+}
+
 function setWfStagePeriodYear(stageKey, year) {
   const st = getWfStageFilterState(stageKey);
   st.year = year;
   st.period = 'all';
-  st.page = 1;
-  if (st.preparedPage != null) st.preparedPage = 1;
+  resetWfStageTablePages(st);
   if (year === 'all') st.viewBy = 'quarter';
   refreshWorkflowUI();
 }
@@ -3975,16 +4557,14 @@ function setWfStagePeriodView(stageKey, viewBy) {
   if (st.year === 'all') return;
   st.viewBy = viewBy;
   st.period = 'all';
-  st.page = 1;
-  if (st.preparedPage != null) st.preparedPage = 1;
+  resetWfStageTablePages(st);
   refreshWorkflowUI();
 }
 
 function setWfStagePeriodFocus(stageKey, period) {
   const st = getWfStageFilterState(stageKey);
   st.period = period;
-  st.page = 1;
-  if (st.preparedPage != null) st.preparedPage = 1;
+  resetWfStageTablePages(st);
   refreshWorkflowUI();
 }
 
@@ -5697,6 +6277,18 @@ function renderNeedIdentificationStage(canEdit = true) {
 
   const periodLabel = getWfPeriodFilterLabel(govNeedState);
   const periodDisplay = govNeedState.year === 'all' ? meta.assessmentPeriod : periodLabel;
+  const stockRows = getNeedSectionRows('stock');
+  const patientRows = getNeedSectionRows('patient');
+  const diseaseRows = getNeedSectionRows('disease');
+  const gapRows = getNeedSectionRows('gap');
+  const stockPaged = paginateItems(stockRows, govNeedState.stockPage, 10);
+  const patientPaged = paginateItems(patientRows, govNeedState.patientPage, 10);
+  const diseasePaged = paginateItems(diseaseRows, govNeedState.diseasePage, 10);
+  const gapPaged = paginateItems(gapRows, govNeedState.gapPage, 10);
+  govNeedState.stockPage = stockPaged.page;
+  govNeedState.patientPage = patientPaged.page;
+  govNeedState.diseasePage = diseasePaged.page;
+  govNeedState.gapPage = gapPaged.page;
 
   return `<div class="need-api">
     ${renderWorkflowPeriodFilter('need', govNeedState)}
@@ -5740,16 +6332,20 @@ function renderNeedIdentificationStage(canEdit = true) {
         <table class="data-table">
           <thead><tr><th>Facility</th><th>SKU / Item</th><th>On hand</th><th>Reorder point</th><th>Cover (days)</th><th>Status</th><th>Date</th></tr></thead>
           <tbody>
-            ${stockLevels.rows.map((r, i) => `<tr class="need-row-clickable" role="button" tabindex="0" onclick="openNeedRowDetail('stock',${i})" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();openNeedRowDetail('stock',${i})}">
+            ${stockPaged.items.length ? stockPaged.items.map((r, localI) => {
+              const i = (stockPaged.page - 1) * 10 + localI;
+              return `<tr class="need-row-clickable" role="button" tabindex="0" onclick="openNeedRowDetail('stock',${i})" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();openNeedRowDetail('stock',${i})}">
               <td><strong>${r.facility}</strong></td><td>${r.sku}</td>
               <td>${r.onHand.toLocaleString('en-IN')}</td><td>${r.reorder.toLocaleString('en-IN')}</td>
               <td>${r.coverDays}</td>
               <td><span class="badge badge-${needStatusBadge(r.status)}">${r.status}</span></td>
-              <td>${r.date || '—'}</td>
-            </tr>`).join('')}
+              <td class="cell-date">${r.date || '—'}</td>
+            </tr>`;
+            }).join('') : `<tr><td colspan="7" style="text-align:center;color:#64748b">No stock rows for ${periodLabel}.</td></tr>`}
           </tbody>
         </table>
       </div>
+      ${renderPaginationControls(stockPaged.page, stockPaged.totalPages, stockPaged.total, stockPaged.from, stockPaged.to, 'setNeedStockPage')}
     </div>
 
     <div class="need-section" id="need-sec-patient">
@@ -5761,14 +6357,18 @@ function renderNeedIdentificationStage(canEdit = true) {
         <table class="data-table">
           <thead><tr><th>Facility</th><th>Type</th><th>OPD (month)</th><th>IPD bed occ.</th><th>Trend</th><th>Date</th></tr></thead>
           <tbody>
-            ${patientLoad.rows.map((r, i) => `<tr class="need-row-clickable" role="button" tabindex="0" onclick="openNeedRowDetail('patient',${i})" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();openNeedRowDetail('patient',${i})}">
+            ${patientPaged.items.length ? patientPaged.items.map((r, localI) => {
+              const i = (patientPaged.page - 1) * 10 + localI;
+              return `<tr class="need-row-clickable" role="button" tabindex="0" onclick="openNeedRowDetail('patient',${i})" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();openNeedRowDetail('patient',${i})}">
               <td><strong>${r.facility}</strong></td><td>${r.category}</td>
               <td>${r.opd.toLocaleString('en-IN')}</td><td>${r.ipdBedOcc}</td><td>${r.trend}</td>
-              <td>${r.date || '—'}</td>
-            </tr>`).join('')}
+              <td class="cell-date">${r.date || '—'}</td>
+            </tr>`;
+            }).join('') : `<tr><td colspan="6" style="text-align:center;color:#64748b">No patient-load rows for ${periodLabel}.</td></tr>`}
           </tbody>
         </table>
       </div>
+      ${renderPaginationControls(patientPaged.page, patientPaged.totalPages, patientPaged.total, patientPaged.from, patientPaged.to, 'setNeedPatientPage')}
     </div>
 
     <div class="need-section" id="need-sec-disease">
@@ -5780,15 +6380,19 @@ function renderNeedIdentificationStage(canEdit = true) {
         <table class="data-table">
           <thead><tr><th>Condition / Programme</th><th>Cases</th><th>Trend</th><th>SKU focus</th><th>Priority</th><th>Date</th></tr></thead>
           <tbody>
-            ${diseaseBurden.rows.map((r, i) => `<tr class="need-row-clickable" role="button" tabindex="0" onclick="openNeedRowDetail('disease',${i})" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();openNeedRowDetail('disease',${i})}">
+            ${diseasePaged.items.length ? diseasePaged.items.map((r, localI) => {
+              const i = (diseasePaged.page - 1) * 10 + localI;
+              return `<tr class="need-row-clickable" role="button" tabindex="0" onclick="openNeedRowDetail('disease',${i})" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();openNeedRowDetail('disease',${i})}">
               <td><strong>${r.condition}</strong></td><td>${r.cases}</td><td>${r.trend}</td>
               <td>${r.skuFocus}</td>
               <td><span class="badge badge-${needStatusBadge(r.priority)}">${r.priority}</span></td>
-              <td>${r.date || '—'}</td>
-            </tr>`).join('')}
+              <td class="cell-date">${r.date || '—'}</td>
+            </tr>`;
+            }).join('') : `<tr><td colspan="6" style="text-align:center;color:#64748b">No disease-burden rows for ${periodLabel}.</td></tr>`}
           </tbody>
         </table>
       </div>
+      ${renderPaginationControls(diseasePaged.page, diseasePaged.totalPages, diseasePaged.total, diseasePaged.from, diseasePaged.to, 'setNeedDiseasePage')}
     </div>
 
     <div class="need-section" id="need-sec-gap">
@@ -5800,14 +6404,18 @@ function renderNeedIdentificationStage(canEdit = true) {
         <table class="data-table">
           <thead><tr><th>Item</th><th>Required</th><th>Available</th><th>Open PO</th><th>Gap</th><th>Recommended action</th><th>Date</th></tr></thead>
           <tbody>
-            ${gapAnalysis.rows.map((r, i) => `<tr class="need-row-clickable" role="button" tabindex="0" onclick="openNeedRowDetail('gap',${i})" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();openNeedRowDetail('gap',${i})}">
+            ${gapPaged.items.length ? gapPaged.items.map((r, localI) => {
+              const i = (gapPaged.page - 1) * 10 + localI;
+              return `<tr class="need-row-clickable" role="button" tabindex="0" onclick="openNeedRowDetail('gap',${i})" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();openNeedRowDetail('gap',${i})}">
               <td><strong>${r.item}</strong></td><td>${r.required}</td><td>${r.available}</td>
               <td>${r.openPo}</td><td><strong>${r.gap}</strong></td><td>${r.action}</td>
-              <td>${r.date || '—'}</td>
-            </tr>`).join('')}
+              <td class="cell-date">${r.date || '—'}</td>
+            </tr>`;
+            }).join('') : `<tr><td colspan="7" style="text-align:center;color:#64748b">No gap-analysis rows for ${periodLabel}.</td></tr>`}
           </tbody>
         </table>
       </div>
+      ${renderPaginationControls(gapPaged.page, gapPaged.totalPages, gapPaged.total, gapPaged.from, gapPaged.to, 'setNeedGapPage')}
     </div>
 
     <div class="wf-actions mt-2">
@@ -5822,8 +6430,10 @@ function scrollToNeedSection(key) {
 
 function getFollowUpRecipients() {
   const fromAuth = (typeof AUTH_ROLE_OPTIONS !== 'undefined' ? AUTH_ROLE_OPTIONS : [])
-    .filter(role => role !== 'Vendor / Bidder');
-  const mapped = FOLLOW_UP_ROLE_RECIPIENTS.filter(r => fromAuth.includes(r.role));
+    .filter(role => role !== 'Vendor / Bidder' && role !== FOLLOW_UP_SENDER_ROLE);
+  const mapped = FOLLOW_UP_ROLE_RECIPIENTS.filter(r =>
+    r.role !== FOLLOW_UP_SENDER_ROLE && fromAuth.includes(r.role)
+  );
   const missing = fromAuth.filter(role => !mapped.some(r => r.role === role));
   return [
     ...mapped,
@@ -5852,10 +6462,8 @@ function followUpActionButton(stage, section, index) {
 function resolveFollowUpRowContext(stage, section, index) {
   const i = Number(index);
   if (stage === 'need') {
-    const data = getNeedIdentificationData();
-    if (!data) return null;
     if (section === 'stock') {
-      const r = data.stockLevels.rows[i];
+      const r = getNeedSectionRows('stock')[i];
       if (!r) return null;
       return {
         stage, section, index: i,
@@ -5874,7 +6482,7 @@ function resolveFollowUpRowContext(stage, section, index) {
       };
     }
     if (section === 'patient') {
-      const r = data.patientLoad.rows[i];
+      const r = getNeedSectionRows('patient')[i];
       if (!r) return null;
       return {
         stage, section, index: i,
@@ -5895,7 +6503,7 @@ function resolveFollowUpRowContext(stage, section, index) {
       };
     }
     if (section === 'disease') {
-      const r = data.diseaseBurden.rows[i];
+      const r = getNeedSectionRows('disease')[i];
       if (!r) return null;
       return {
         stage, section, index: i,
@@ -5916,7 +6524,7 @@ function resolveFollowUpRowContext(stage, section, index) {
       };
     }
     if (section === 'gap') {
-      const r = data.gapAnalysis.rows[i];
+      const r = getNeedSectionRows('gap')[i];
       if (!r) return null;
       return {
         stage, section, index: i,
@@ -6000,6 +6608,28 @@ function resolveFollowUpRowContext(stage, section, index) {
           ['Item', r.item],
           ['Facility', r.facility],
           ['ETA', r.eta],
+          ['Status', r.status],
+          ['Status since', r.date || '—']
+        ]
+      };
+    }
+    if (section === 'redistribute') {
+      const r = applyStagePeriodFilter(data.redistributable.rows || [], govStockCheckState, 'date')[i];
+      if (!r) return null;
+      return {
+        stage, section, index: i,
+        regardingTitle: r.item,
+        regardingMeta: `${r.from} → ${r.to} · ${r.status}`,
+        status: r.status,
+        date: r.date || '—',
+        subject: `Follow-up: Redistribute — ${r.item}`,
+        contextLines: [
+          ['Source', 'Stock Check · Redistributable Inventory'],
+          ['From', r.from],
+          ['To', r.to],
+          ['Item', r.item],
+          ['Qty', r.qty],
+          ['Savings', r.savings],
           ['Status', r.status],
           ['Status since', r.date || '—']
         ]
@@ -6447,10 +7077,10 @@ function renderFollowUpQuickPicks() {
   const wrap = document.getElementById('followUpQuick');
   if (!wrap || !needFollowUpContext) return;
   const preferred = [
-    'Resource Manager',
     'Procurement Officer',
+    'Finance / Budget Officer',
     'Stores / Warehouse Manager',
-    'Finance / Budget Officer'
+    'District CMO / Administrative Officer'
   ];
   const selectedRoles = new Set((needFollowUpContext.selected || []).map(r => r.role));
   const picks = getFollowUpRecipients()
@@ -6664,7 +7294,7 @@ function openNeedRowDetail(section, index) {
   let body = '';
 
   if (section === 'stock') {
-    const r = data.stockLevels.rows[i];
+    const r = getNeedSectionRows('stock')[i];
     if (!r) return;
     const shortfall = Math.max(0, r.reorder - r.onHand);
     const fillPct = r.reorder ? Math.round((r.onHand / r.reorder) * 100) : 0;
@@ -6700,7 +7330,7 @@ function openNeedRowDetail(section, index) {
       </div>
     </div>`;
   } else if (section === 'patient') {
-    const r = data.patientLoad.rows[i];
+    const r = getNeedSectionRows('patient')[i];
     if (!r) return;
     title = `Patient Load — ${r.facility}`;
     body = `<div class="kpi-detail need-row-detail">
@@ -6732,7 +7362,7 @@ function openNeedRowDetail(section, index) {
       </div>
     </div>`;
   } else if (section === 'disease') {
-    const r = data.diseaseBurden.rows[i];
+    const r = getNeedSectionRows('disease')[i];
     if (!r) return;
     title = `Disease Burden — ${r.condition}`;
     body = `<div class="kpi-detail need-row-detail">
@@ -6755,7 +7385,7 @@ function openNeedRowDetail(section, index) {
       </div>
     </div>`;
   } else if (section === 'gap') {
-    const r = data.gapAnalysis.rows[i];
+    const r = getNeedSectionRows('gap')[i];
     if (!r) return;
     title = `Gap Analysis — ${r.item}`;
     body = `<div class="kpi-detail need-row-detail">
@@ -7336,7 +7966,9 @@ function renderWorkflowDetail(step, canEdit = true) {
 
 function completeVendorStage(id) {
   vendorStageState.completed[id] = true;
+  if (id >= 3) vendorStageState.profileType = 'existing';
   syncVendorWorkflowStatuses();
+  persistVendorLifecycle();
 }
 
 function validateVendorStageFields(stageId) {
@@ -7399,6 +8031,7 @@ function saveWorkflowStage(id) {
       completeVendorStage(1);
     }
     if (id === 2 && vendorStageState.uploads.kyc.length >= 3) completeVendorStage(2);
+    persistVendorLifecycle();
     openDrillDown('workflow', `Stage ${id} Saved`, `Your changes for Stage ${id}: ${getWorkflowSteps().find(s => s.id === id)?.name || ''} have been saved.`);
     refreshWorkflowUI();
     return;
@@ -8064,7 +8697,7 @@ function selectWorkflowStep(id) {
       const allowedJump = from === 1 && !govSequentialCommitted;
       const allowedSequential = from === 13 || govLifecycleComplete;
       if (!allowedJump && !allowedSequential) {
-        showWfAlert('Once you proceed past Stage 1 into the sequential lifecycle (Stage 2 onwards), you cannot jump directly to Renewal (Stage 14). Complete Stages 2–13 in order, or reopen Need Identification to Pay to start again at Stage 1.');
+        showWfAlert('Once you proceed past Stage 1 into the sequential lifecycle (Stage 2 onwards), you cannot jump directly to Renewal (Stage 14). Complete Stages 2–13 in order to reach Renewal sequentially.');
         return;
       }
     }
@@ -8090,6 +8723,11 @@ function selectWorkflowStep(id) {
     return;
   }
   currentWorkflowStep = id;
+  if (currentRole === 'vendor') persistVendorLifecycle();
+  if (currentRole === 'gov') {
+    syncGovWorkflowStatuses();
+    persistGovLifecycle();
+  }
   refreshWorkflowUI();
   document.getElementById('wfDetail')?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
 }
@@ -9689,7 +10327,12 @@ function setCategory(cat) {
   if (cat === currentCategory) return;
   currentCategory = cat;
   pipelinePage = 1;
-  govTenderPrepState.preparedPage = 1;
+  resetWfStageTablePages(govNeedState);
+  resetWfStageTablePages(govStockCheckState);
+  resetWfStageTablePages(govIndentState);
+  resetWfStageTablePages(govConsolidationState);
+  resetWfStageTablePages(govBudgetState);
+  resetWfStageTablePages(govTenderPrepState);
   govBidEvalState.page = 1;
   govContractState.page = 1;
   govAwardState.page = 1;

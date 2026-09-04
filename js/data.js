@@ -3,10 +3,10 @@
 const CATEGORIES = ['All', 'Drugs', 'Equipment', 'Services', 'Consumables', 'Others'];
 
 const GOV_WORKFLOW = [
-  { id: 1, name: 'Need Identification', desc: 'Stock levels, patient load, disease burden and gap analysis are auto-populated from integrated health & inventory APIs to determine requirements.', status: 'done' },
-  { id: 2, name: 'Stock Check', desc: 'Verify existing warehouse stock, other locations, approved open POs, and redistributable inventory.', status: 'done' },
-  { id: 3, name: 'Indent Raised', desc: 'Store Manager searches stock, checks open orders, raises indent only if stock unavailable.', status: 'done' },
-  { id: 4, name: 'Demand Consolidation', desc: 'Stock Manager checks duplicates, consolidates district requirements for optimization.', status: 'active' },
+  { id: 1, name: 'Need Identification', desc: 'Stock levels, patient load, disease burden and gap analysis are auto-populated from integrated health & inventory APIs to determine requirements.', status: 'pending' },
+  { id: 2, name: 'Stock Check', desc: 'Verify existing warehouse stock, other locations, approved open POs, and redistributable inventory.', status: 'pending' },
+  { id: 3, name: 'Indent Raised', desc: 'Store Manager searches stock, checks open orders, raises indent only if stock unavailable.', status: 'pending' },
+  { id: 4, name: 'Demand Consolidation', desc: 'Stock Manager checks duplicates, consolidates district requirements for optimization.', status: 'pending' },
   { id: 5, name: 'PR & Budget Approval', desc: 'Purchase requisition with budget head allocation and administrative/financial sanction.', status: 'pending' },
   { id: 6, name: 'Tender Preparation', desc: 'System prepares NIT/RFP draft from prior stage data; division checkers upload consensus; final tender is issued.', status: 'pending' },
   { id: 7, name: 'Bid Evaluation', desc: 'System-assisted technical and financial bid evaluation; custom evaluation sheet generated for each tender.', status: 'pending' },
@@ -95,7 +95,15 @@ const NEED_IDENTIFICATION_API = {
       { facility: 'Gandhi Medical College', sku: 'Paracetamol 500mg', onHand: 42000, reorder: 80000, coverDays: 8, status: 'Critical', date: '28-08-2026' },
       { facility: 'M.Y. Hospital Indore', sku: 'IV Fluids (NS)', onHand: 18500, reorder: 25000, coverDays: 12, status: 'Low', date: '01-09-2026' },
       { facility: 'NSCB Jabalpur', sku: 'Insulin 40 IU', onHand: 9200, reorder: 15000, coverDays: 9, status: 'Critical', date: '25-08-2026' },
-      { facility: 'GR Medical Gwalior', sku: 'Amoxicillin 250mg', onHand: 61000, reorder: 45000, coverDays: 22, status: 'Adequate', date: '03-09-2026' }
+      { facility: 'GR Medical Gwalior', sku: 'Amoxicillin 250mg', onHand: 61000, reorder: 45000, coverDays: 22, status: 'Adequate', date: '03-09-2026' },
+      { facility: 'District Hospital Rewa', sku: 'ORS Sachets', onHand: 11000, reorder: 20000, coverDays: 10, status: 'Low', date: '30-08-2026' },
+      { facility: 'CHC Sehore', sku: 'Surgical Gloves', onHand: 8500, reorder: 12000, coverDays: 14, status: 'Low', date: '02-09-2026' },
+      { facility: 'Civil Hospital Sagar', sku: 'Metformin 500mg', onHand: 34000, reorder: 28000, coverDays: 26, status: 'Adequate', date: '29-08-2026' },
+      { facility: 'District Hospital Ujjain', sku: 'Ceftriaxone 1g', onHand: 4200, reorder: 9000, coverDays: 7, status: 'Critical', date: '27-08-2026' },
+      { facility: 'GMC Bhopal — Stores', sku: 'PPE Kit', onHand: 2600, reorder: 5000, coverDays: 11, status: 'Low', date: '31-08-2026' },
+      { facility: 'Regional Store Indore', sku: 'Hospital Linen', onHand: 18000, reorder: 15000, coverDays: 30, status: 'Adequate', date: '04-09-2026' },
+      { facility: 'District Hospital Satna', sku: 'Iron Folic Acid', onHand: 7200, reorder: 14000, coverDays: 9, status: 'Critical', date: '26-08-2026' },
+      { facility: 'CHC Hoshangabad', sku: 'Rabies Vaccine', onHand: 980, reorder: 1500, coverDays: 13, status: 'Low', date: '03-09-2026' }
     ]
   },
   patientLoad: {
@@ -110,7 +118,15 @@ const NEED_IDENTIFICATION_API = {
       { facility: 'Gandhi Medical College', opd: 48500, ipdBedOcc: '92%', trend: '↑ 8%', category: 'Tertiary', date: '02-09-2026' },
       { facility: 'M.Y. Hospital Indore', opd: 52100, ipdBedOcc: '89%', trend: '↑ 5%', category: 'Tertiary', date: '01-09-2026' },
       { facility: 'District Hospital Rewa', opd: 18200, ipdBedOcc: '78%', trend: '↑ 3%', category: 'Secondary', date: '31-08-2026' },
-      { facility: 'CHC Sehore', opd: 9400, ipdBedOcc: '71%', trend: '→ 0%', category: 'CHC', date: '03-09-2026' }
+      { facility: 'CHC Sehore', opd: 9400, ipdBedOcc: '71%', trend: '→ 0%', category: 'CHC', date: '03-09-2026' },
+      { facility: 'NSCB Jabalpur', opd: 41200, ipdBedOcc: '88%', trend: '↑ 4%', category: 'Tertiary', date: '30-08-2026' },
+      { facility: 'GR Medical Gwalior', opd: 35600, ipdBedOcc: '84%', trend: '↑ 2%', category: 'Tertiary', date: '29-08-2026' },
+      { facility: 'District Hospital Ujjain', opd: 22100, ipdBedOcc: '80%', trend: '↑ 6%', category: 'Secondary', date: '28-08-2026' },
+      { facility: 'Civil Hospital Sagar', opd: 16800, ipdBedOcc: '76%', trend: '→ 1%', category: 'Secondary', date: '27-08-2026' },
+      { facility: 'District Hospital Satna', opd: 14200, ipdBedOcc: '74%', trend: '↑ 3%', category: 'Secondary', date: '26-08-2026' },
+      { facility: 'CHC Hoshangabad', opd: 8100, ipdBedOcc: '68%', trend: '↓ 2%', category: 'CHC', date: '25-08-2026' },
+      { facility: 'District Hospital Mandla', opd: 11900, ipdBedOcc: '72%', trend: '↑ 1%', category: 'Secondary', date: '24-08-2026' },
+      { facility: 'PHC Berasia', opd: 5200, ipdBedOcc: '61%', trend: '→ 0%', category: 'PHC', date: '04-09-2026' }
     ]
   },
   diseaseBurden: {
@@ -125,7 +141,15 @@ const NEED_IDENTIFICATION_API = {
       { condition: 'Seasonal Influenza / ARI', cases: '28,400', trend: '↑', skuFocus: 'Antipyretics, Antibiotics', priority: 'High', date: '30-08-2026' },
       { condition: 'Vector-borne (Dengue / Malaria)', cases: '6,120', trend: '↑', skuFocus: 'IV Fluids, Antimalarials', priority: 'Critical', date: '02-09-2026' },
       { condition: 'NCD — Diabetes', cases: '41,800', trend: '↑', skuFocus: 'Insulin, Oral hypoglycemics', priority: 'High', date: '20-08-2026' },
-      { condition: 'Maternal & Child Health', cases: '12,600', trend: '→', skuFocus: 'Iron, Vaccines, ORS', priority: 'Medium', date: '01-09-2026' }
+      { condition: 'Maternal & Child Health', cases: '12,600', trend: '→', skuFocus: 'Iron, Vaccines, ORS', priority: 'Medium', date: '01-09-2026' },
+      { condition: 'TB Elimination Programme', cases: '3,840', trend: '↓', skuFocus: 'Anti-TB drugs, Diagnostics', priority: 'High', date: '29-08-2026' },
+      { condition: 'Cardiovascular / Hypertension', cases: '22,100', trend: '↑', skuFocus: 'Anti-hypertensives, Statins', priority: 'High', date: '28-08-2026' },
+      { condition: 'Diarrhoea / Dehydration (U5)', cases: '9,750', trend: '↑', skuFocus: 'ORS, Zinc, IV Fluids', priority: 'Critical', date: '03-09-2026' },
+      { condition: 'Snakebite / Trauma', cases: '1,120', trend: '→', skuFocus: 'ASV, Trauma consumables', priority: 'Medium', date: '27-08-2026' },
+      { condition: 'Oncology Support Care', cases: '2,460', trend: '↑', skuFocus: 'Cytotoxics, Supportive meds', priority: 'High', date: '26-08-2026' },
+      { condition: 'Mental Health Programme', cases: '5,300', trend: '↑', skuFocus: 'Psychotropics', priority: 'Medium', date: '25-08-2026' },
+      { condition: 'Eye Care / Cataract camps', cases: '4,980', trend: '→', skuFocus: 'Ophthalmic consumables', priority: 'Medium', date: '24-08-2026' },
+      { condition: 'Immunisation drive (MR)', cases: '18,200', trend: '↑', skuFocus: 'Vaccines, Syringes', priority: 'High', date: '04-09-2026' }
     ]
   },
   gapAnalysis: {
@@ -141,7 +165,15 @@ const NEED_IDENTIFICATION_API = {
       { item: 'Paracetamol 500mg Tab', required: '12.0 L packs', available: '4.2 L', openPo: '1.5 L', gap: '6.3 L', action: 'Fresh tender', date: '03-09-2026' },
       { item: 'IV Normal Saline 500ml', required: '2.8 L units', available: '1.1 L', openPo: '0.4 L', gap: '1.3 L', action: 'Fresh tender', date: '03-09-2026' },
       { item: 'Insulin 40 IU Vial', required: '45,000', available: '18,200', openPo: '8,000', gap: '18,800', action: 'Rate contract top-up', date: '29-08-2026' },
-      { item: 'Surgical Gloves (pair)', required: '9.5 L', available: '6.2 L', openPo: '2.0 L', gap: '1.3 L', action: 'Redistribute + PO', date: '01-09-2026' }
+      { item: 'Surgical Gloves (pair)', required: '9.5 L', available: '6.2 L', openPo: '2.0 L', gap: '1.3 L', action: 'Redistribute + PO', date: '01-09-2026' },
+      { item: 'Amoxicillin 250mg Cap', required: '5.4 L packs', available: '2.1 L', openPo: '0.8 L', gap: '2.5 L', action: 'Fresh tender', date: '02-09-2026' },
+      { item: 'ORS Sachets', required: '3.2 L', available: '1.4 L', openPo: '0.5 L', gap: '1.3 L', action: 'Redistribute + PO', date: '31-08-2026' },
+      { item: 'Ceftriaxone 1g Inj', required: '28,000', available: '9,500', openPo: '4,000', gap: '14,500', action: 'Rate contract top-up', date: '30-08-2026' },
+      { item: 'PPE Kit', required: '22,000', available: '8,200', openPo: '3,500', gap: '10,300', action: 'Fresh tender', date: '28-08-2026' },
+      { item: 'Metformin 500mg', required: '6.8 L packs', available: '4.1 L', openPo: '1.0 L', gap: '1.7 L', action: 'Rate contract top-up', date: '27-08-2026' },
+      { item: 'Iron Folic Acid Tab', required: '4.5 L', available: '1.9 L', openPo: '0.6 L', gap: '2.0 L', action: 'Fresh tender', date: '26-08-2026' },
+      { item: 'Rabies Vaccine', required: '6,400', available: '2,100', openPo: '1,200', gap: '3,100', action: 'Emergency purchase', date: '25-08-2026' },
+      { item: 'Hospital Linen sets', required: '18,000', available: '11,000', openPo: '2,500', gap: '4,500', action: 'Redistribute + PO', date: '04-09-2026' }
     ]
   }
 };
@@ -174,7 +206,15 @@ const STOCK_CHECK_API = {
       { facility: 'Central Warehouse — Bhopal', item: 'Paracetamol 500mg Tab', onHand: '2.8 L packs', reorder: '2.0 L', usable: '2.6 L', mlScore: 92, recommendation: 'Release to GMC Bhopal', status: 'Surplus', date: '01-09-2026' },
       { facility: 'Central Warehouse — Bhopal', item: 'IV Normal Saline 500ml', onHand: '0.9 L units', reorder: '1.2 L', usable: '0.85 L', mlScore: 78, recommendation: 'Hold buffer; await open PO', status: 'Low', date: '28-08-2026' },
       { facility: 'Regional Store — Indore', item: 'Surgical Gloves (pair)', onHand: '4.1 L', reorder: '3.0 L', usable: '3.9 L', mlScore: 88, recommendation: 'Redistribute 0.8 L to Rewa', status: 'Surplus', date: '02-09-2026' },
-      { facility: 'Regional Store — Jabalpur', item: 'Amoxicillin 250mg', onHand: '1.1 L packs', reorder: '1.5 L', usable: '1.0 L', mlScore: 71, recommendation: 'Top-up via open PO INV-0910', status: 'Low', date: '30-08-2026' }
+      { facility: 'Regional Store — Jabalpur', item: 'Amoxicillin 250mg', onHand: '1.1 L packs', reorder: '1.5 L', usable: '1.0 L', mlScore: 71, recommendation: 'Top-up via open PO INV-0910', status: 'Low', date: '30-08-2026' },
+      { facility: 'Regional Store — Gwalior', item: 'ORS Sachets', onHand: '2.4 L', reorder: '1.8 L', usable: '2.3 L', mlScore: 85, recommendation: 'Release to DH Rewa', status: 'Surplus', date: '29-08-2026' },
+      { facility: 'Central Warehouse — Bhopal', item: 'Insulin 40 IU', onHand: '0.6 L vials', reorder: '0.9 L', usable: '0.55 L', mlScore: 74, recommendation: 'Cold-chain hold', status: 'Low', date: '27-08-2026' },
+      { facility: 'Regional Store — Rewa', item: 'PPE Kit', onHand: '1.8 L', reorder: '1.2 L', usable: '1.7 L', mlScore: 90, recommendation: 'Release to GMC Bhopal', status: 'Surplus', date: '03-09-2026' },
+      { facility: 'Central Warehouse — Bhopal', item: 'Ceftriaxone 1g', onHand: '0.45 L', reorder: '0.7 L', usable: '0.42 L', mlScore: 69, recommendation: 'Await open PO', status: 'Low', date: '26-08-2026' },
+      { facility: 'Regional Store — Indore', item: 'Metformin 500mg', onHand: '3.2 L', reorder: '2.5 L', usable: '3.0 L', mlScore: 87, recommendation: 'Release to Ujjain DH', status: 'Surplus', date: '25-08-2026' },
+      { facility: 'Regional Store — Jabalpur', item: 'Hospital Linen', onHand: '0.95 L', reorder: '1.4 L', usable: '0.9 L', mlScore: 66, recommendation: 'Top-up via PO', status: 'Low', date: '24-08-2026' },
+      { facility: 'Central Warehouse — Bhopal', item: 'Iron Folic Acid', onHand: '2.1 L', reorder: '1.6 L', usable: '2.0 L', mlScore: 91, recommendation: 'Release to Satna DH', status: 'Surplus', date: '04-09-2026' },
+      { facility: 'Regional Store — Gwalior', item: 'Rabies Vaccine', onHand: '0.22 L', reorder: '0.35 L', usable: '0.2 L', mlScore: 72, recommendation: 'Hold; cold-chain', status: 'Low', date: '23-08-2026' }
     ]
   },
   otherLocations: {
@@ -189,7 +229,15 @@ const STOCK_CHECK_API = {
       { from: 'M.Y. Hospital Indore', to: 'District Hospital Rewa', item: 'Insulin 40 IU Vial', qty: '6,200', coverGain: '+9 days', mlScore: 94, recommendation: 'Approve transfer', status: 'Recommended', date: '03-09-2026' },
       { from: 'NSCB Jabalpur', to: 'CHC Sehore', item: 'ORS Sachets', qty: '18,000', coverGain: '+14 days', mlScore: 86, recommendation: 'Approve transfer', status: 'Recommended', date: '01-09-2026' },
       { from: 'GR Medical Gwalior', to: 'Gandhi Medical College', item: 'PPE Kit', qty: '2,400', coverGain: '+6 days', mlScore: 81, recommendation: 'Partial transfer (60%)', status: 'Review', date: '29-08-2026' },
-      { from: 'District Hospital Rewa', to: 'M.Y. Hospital Indore', item: 'Paracetamol 500mg Tab', qty: '0.4 L', coverGain: '+3 days', mlScore: 64, recommendation: 'Defer — low surplus margin', status: 'Hold', date: '27-08-2026' }
+      { from: 'District Hospital Rewa', to: 'M.Y. Hospital Indore', item: 'Paracetamol 500mg Tab', qty: '0.4 L', coverGain: '+3 days', mlScore: 64, recommendation: 'Defer — low surplus margin', status: 'Hold', date: '27-08-2026' },
+      { from: 'Civil Hospital Sagar', to: 'District Hospital Satna', item: 'Amoxicillin 250mg', qty: '12,000', coverGain: '+8 days', mlScore: 88, recommendation: 'Approve transfer', status: 'Recommended', date: '02-09-2026' },
+      { from: 'District Hospital Ujjain', to: 'CHC Hoshangabad', item: 'IV Fluids (NS)', qty: '3,500', coverGain: '+5 days', mlScore: 79, recommendation: 'Approve transfer', status: 'Recommended', date: '30-08-2026' },
+      { from: 'GMC Bhopal — Stores', to: 'PHC Berasia', item: 'ORS Sachets', qty: '4,800', coverGain: '+11 days', mlScore: 83, recommendation: 'Approve transfer', status: 'Recommended', date: '28-08-2026' },
+      { from: 'Regional Store Indore', to: 'NSCB Jabalpur', item: 'Surgical Gloves', qty: '0.6 L', coverGain: '+4 days', mlScore: 76, recommendation: 'Partial transfer', status: 'Review', date: '26-08-2026' },
+      { from: 'District Hospital Mandla', to: 'District Hospital Rewa', item: 'Iron Folic Acid', qty: '8,500', coverGain: '+7 days', mlScore: 84, recommendation: 'Approve transfer', status: 'Recommended', date: '25-08-2026' },
+      { from: 'CHC Sehore', to: 'CHC Hoshangabad', item: 'Metformin 500mg', qty: '5,200', coverGain: '+6 days', mlScore: 70, recommendation: 'Defer — verify expiry', status: 'Hold', date: '24-08-2026' },
+      { from: 'M.Y. Hospital Indore', to: 'District Hospital Ujjain', item: 'Ceftriaxone 1g', qty: '1,800', coverGain: '+5 days', mlScore: 89, recommendation: 'Approve transfer', status: 'Recommended', date: '04-09-2026' },
+      { from: 'GR Medical Gwalior', to: 'Civil Hospital Sagar', item: 'Hospital Linen', qty: '900', coverGain: '+3 days', mlScore: 67, recommendation: 'Review logistics cost', status: 'Review', date: '23-08-2026' }
     ]
   },
   openPos: {
@@ -204,7 +252,15 @@ const STOCK_CHECK_API = {
       { po: 'PO-2026-0089', vendor: 'MediSupply India', item: 'Hospital Linen — Batch 3', qty: '12,000 sets', eta: '06-09-2026', facility: 'GMC Bhopal', mlScore: 90, recommendation: 'Expedite GRN slot', status: 'On Track', date: '02-09-2026' },
       { po: 'PO-2025-0234', vendor: 'PharmaCare Distributors', item: 'Essential Medicines Q3', qty: 'Mixed SKU', eta: '10-09-2026', facility: 'Central Warehouse', mlScore: 75, recommendation: 'Net against gap analysis', status: 'On Track', date: '25-08-2026' },
       { po: 'PO-2026-0095', vendor: 'MedEquip Solutions', item: 'Patient Monitor accessories', qty: '48 kits', eta: '18-09-2026', facility: 'M.Y. Indore', mlScore: 58, recommendation: 'Flag delay risk', status: 'At Risk', date: '30-08-2026' },
-      { po: 'PO-2026-0102', vendor: 'CleanCare Supplies', item: 'Disposable Gloves', qty: '1.5 L pairs', eta: '08-09-2026', facility: 'Regional Store Indore', mlScore: 84, recommendation: 'Use before fresh tender', status: 'On Track', date: '01-09-2026' }
+      { po: 'PO-2026-0102', vendor: 'CleanCare Supplies', item: 'Disposable Gloves', qty: '1.5 L pairs', eta: '08-09-2026', facility: 'Regional Store Indore', mlScore: 84, recommendation: 'Use before fresh tender', status: 'On Track', date: '01-09-2026' },
+      { po: 'PO-2026-0110', vendor: 'MediSupply India', item: 'Paracetamol 500mg', qty: '2.0 L packs', eta: '12-09-2026', facility: 'Central Warehouse', mlScore: 88, recommendation: 'Offset gap analysis', status: 'On Track', date: '03-09-2026' },
+      { po: 'PO-2026-0114', vendor: 'PharmaCare Distributors', item: 'Insulin 40 IU', qty: '10,000 vials', eta: '15-09-2026', facility: 'Regional Store Rewa', mlScore: 81, recommendation: 'Cold-chain slot ready', status: 'On Track', date: '29-08-2026' },
+      { po: 'PO-2026-0118', vendor: 'CleanCare Supplies', item: 'PPE Kit', qty: '8,000', eta: '20-09-2026', facility: 'GMC Bhopal', mlScore: 62, recommendation: 'Monitor vendor ETA', status: 'At Risk', date: '28-08-2026' },
+      { po: 'PO-2026-0121', vendor: 'MedEquip Solutions', item: 'IV Fluids (NS)', qty: '0.8 L units', eta: '09-09-2026', facility: 'NSCB Jabalpur', mlScore: 86, recommendation: 'Net against indent', status: 'On Track', date: '27-08-2026' },
+      { po: 'PO-2026-0125', vendor: 'MediSupply India', item: 'Amoxicillin 250mg', qty: '1.2 L packs', eta: '14-09-2026', facility: 'Regional Store Gwalior', mlScore: 79, recommendation: 'Use before tender', status: 'On Track', date: '26-08-2026' },
+      { po: 'PO-2026-0128', vendor: 'PharmaCare Distributors', item: 'Ceftriaxone 1g', qty: '6,000', eta: '22-09-2026', facility: 'District Hospital Ujjain', mlScore: 55, recommendation: 'Escalate delay', status: 'At Risk', date: '24-08-2026' },
+      { po: 'PO-2026-0130', vendor: 'CleanCare Supplies', item: 'ORS Sachets', qty: '0.9 L', eta: '07-09-2026', facility: 'CHC Sehore', mlScore: 91, recommendation: 'Expedite GRN', status: 'On Track', date: '04-09-2026' },
+      { po: 'PO-2026-0133', vendor: 'MediSupply India', item: 'Iron Folic Acid', qty: '1.1 L', eta: '11-09-2026', facility: 'District Hospital Satna', mlScore: 83, recommendation: 'Offset MCH demand', status: 'On Track', date: '23-08-2026' }
     ]
   },
   redistributable: {
@@ -216,10 +272,18 @@ const STOCK_CHECK_API = {
     confidence: '87%',
     status: 'Action Ready',
     rows: [
-      { item: 'Paracetamol 500mg Tab', from: 'Central Warehouse — Bhopal', to: 'GMC Bhopal', qty: '1.2 L packs', savings: '₹42 L', mlScore: 96, recommendation: 'Auto-allocate', status: 'High Confidence' },
-      { item: 'Surgical Gloves (pair)', from: 'Regional Store — Indore', to: 'District Hospital Rewa', qty: '0.8 L', savings: '₹18 L', mlScore: 91, recommendation: 'Auto-allocate', status: 'High Confidence' },
-      { item: 'Insulin 40 IU Vial', from: 'M.Y. Hospital Indore', to: 'District Hospital Rewa', qty: '6,200', savings: '₹28 L', mlScore: 94, recommendation: 'Cold-chain transfer', status: 'High Confidence' },
-      { item: 'ORS Sachets', from: 'NSCB Jabalpur', to: 'CHC Sehore', qty: '18,000', savings: '₹6 L', mlScore: 86, recommendation: 'Batch transfer', status: 'Medium Confidence' }
+      { item: 'Paracetamol 500mg Tab', from: 'Central Warehouse — Bhopal', to: 'GMC Bhopal', qty: '1.2 L packs', savings: '₹42 L', mlScore: 96, recommendation: 'Auto-allocate', status: 'High Confidence', date: '03-09-2026' },
+      { item: 'Surgical Gloves (pair)', from: 'Regional Store — Indore', to: 'District Hospital Rewa', qty: '0.8 L', savings: '₹18 L', mlScore: 91, recommendation: 'Auto-allocate', status: 'High Confidence', date: '02-09-2026' },
+      { item: 'Insulin 40 IU Vial', from: 'M.Y. Hospital Indore', to: 'District Hospital Rewa', qty: '6,200', savings: '₹28 L', mlScore: 94, recommendation: 'Cold-chain transfer', status: 'High Confidence', date: '01-09-2026' },
+      { item: 'ORS Sachets', from: 'NSCB Jabalpur', to: 'CHC Sehore', qty: '18,000', savings: '₹6 L', mlScore: 86, recommendation: 'Batch transfer', status: 'Medium Confidence', date: '31-08-2026' },
+      { item: 'Amoxicillin 250mg', from: 'Civil Hospital Sagar', to: 'District Hospital Satna', qty: '12,000', savings: '₹9 L', mlScore: 89, recommendation: 'Auto-allocate', status: 'High Confidence', date: '30-08-2026' },
+      { item: 'PPE Kit', from: 'Regional Store — Rewa', to: 'GMC Bhopal', qty: '2,000', savings: '₹14 L', mlScore: 92, recommendation: 'Auto-allocate', status: 'High Confidence', date: '29-08-2026' },
+      { item: 'IV Fluids (NS)', from: 'District Hospital Ujjain', to: 'CHC Hoshangabad', qty: '3,500', savings: '₹7 L', mlScore: 80, recommendation: 'Batch transfer', status: 'Medium Confidence', date: '28-08-2026' },
+      { item: 'Metformin 500mg', from: 'Regional Store — Indore', to: 'District Hospital Ujjain', qty: '0.9 L', savings: '₹11 L', mlScore: 87, recommendation: 'Auto-allocate', status: 'High Confidence', date: '27-08-2026' },
+      { item: 'Iron Folic Acid', from: 'Central Warehouse — Bhopal', to: 'District Hospital Satna', qty: '0.7 L', savings: '₹5 L', mlScore: 90, recommendation: 'Auto-allocate', status: 'High Confidence', date: '26-08-2026' },
+      { item: 'Hospital Linen', from: 'GR Medical Gwalior', to: 'Civil Hospital Sagar', qty: '900', savings: '₹4 L', mlScore: 73, recommendation: 'Review logistics', status: 'Medium Confidence', date: '25-08-2026' },
+      { item: 'Ceftriaxone 1g', from: 'M.Y. Hospital Indore', to: 'District Hospital Ujjain', qty: '1,800', savings: '₹12 L', mlScore: 88, recommendation: 'Auto-allocate', status: 'High Confidence', date: '04-09-2026' },
+      { item: 'Rabies Vaccine', from: 'Regional Store — Gwalior', to: 'CHC Sehore', qty: '420', savings: '₹3 L', mlScore: 77, recommendation: 'Cold-chain transfer', status: 'Medium Confidence', date: '24-08-2026' }
     ]
   }
 };
@@ -745,7 +809,16 @@ const INDENT_LIST_SEED = [
   { id: 'IND-2026-0041', item: 'Paracetamol 500mg Tab', quantity: '6.3 L packs', unit: 'Packs', facility: 'Gandhi Medical College', district: 'Bhopal', category: 'Drugs', priority: 'High', status: 'Submitted', source: 'Manual', date: '02-09-2026', requiredBy: '20-09-2026', raisedBy: 'Store Manager — Bhopal', approvingAuthority: 'CMO / Competent Authority', justification: 'Critical shortfall vs reorder; open PO insufficient for monsoon ARI load.', remarks: 'Escalate if not approved by 10-09-2026' },
   { id: 'IND-2026-0038', item: 'IV Normal Saline 500ml', quantity: '1.3 L units', unit: 'Units', facility: 'M.Y. Hospital Indore', district: 'Indore', category: 'Drugs', priority: 'High', status: 'Under review', source: 'Automated', date: '01-09-2026', requiredBy: '15-09-2026', raisedBy: 'System — AI/ML indent', approvingAuthority: 'CMO / Competent Authority', justification: 'Gap analysis residual after stock & open PO netting.', remarks: '' },
   { id: 'IND-2026-0032', item: 'Insulin 40 IU Vial', quantity: '18,800', unit: 'Vials', facility: 'District Hospital Rewa', district: 'Rewa', category: 'Drugs', priority: 'Critical', status: 'Submitted', source: 'Automated', date: '28-08-2026', requiredBy: '12-09-2026', raisedBy: 'System — AI/ML indent', approvingAuthority: 'CMO / Competent Authority', justification: 'Rate-contract top-up required for NCD programme buffer.', remarks: 'Cold-chain transfer preferred if surplus found' },
-  { id: 'IND-2026-0029', item: 'Surgical Gloves (pair)', quantity: '1.3 L', unit: 'Pairs', facility: 'NSCB Jabalpur', district: 'Jabalpur', category: 'Consumables', priority: 'Medium', status: 'Approved', source: 'Manual', date: '25-08-2026', requiredBy: '05-09-2026', raisedBy: 'Store Manager — Jabalpur', approvingAuthority: 'CMO / Competent Authority', justification: 'Redistribution incomplete; residual indent for PPE buffer.', remarks: '' }
+  { id: 'IND-2026-0029', item: 'Surgical Gloves (pair)', quantity: '1.3 L', unit: 'Pairs', facility: 'NSCB Jabalpur', district: 'Jabalpur', category: 'Consumables', priority: 'Medium', status: 'Approved', source: 'Manual', date: '25-08-2026', requiredBy: '05-09-2026', raisedBy: 'Store Manager — Jabalpur', approvingAuthority: 'CMO / Competent Authority', justification: 'Redistribution incomplete; residual indent for PPE buffer.', remarks: '' },
+  { id: 'IND-2026-0027', item: 'Amoxicillin 250mg Cap', quantity: '2.5 L packs', unit: 'Packs', facility: 'Civil Hospital Sagar', district: 'Sagar', category: 'Drugs', priority: 'High', status: 'Submitted', source: 'Manual', date: '24-08-2026', requiredBy: '10-09-2026', raisedBy: 'Store Manager — Sagar', approvingAuthority: 'CMO / Competent Authority', justification: 'Antibiotic buffer for monsoon infections.', remarks: '' },
+  { id: 'IND-2026-0025', item: 'ORS Sachets', quantity: '1.3 L', unit: 'Sachets', facility: 'CHC Sehore', district: 'Sehore', category: 'Drugs', priority: 'Medium', status: 'Under review', source: 'Automated', date: '23-08-2026', requiredBy: '08-09-2026', raisedBy: 'System — AI/ML indent', approvingAuthority: 'CMO / Competent Authority', justification: 'Diarrhoea season uplift.', remarks: '' },
+  { id: 'IND-2026-0022', item: 'Ceftriaxone 1g Inj', quantity: '14,500', unit: 'Vials', facility: 'District Hospital Ujjain', district: 'Ujjain', category: 'Drugs', priority: 'Critical', status: 'Submitted', source: 'Manual', date: '22-08-2026', requiredBy: '05-09-2026', raisedBy: 'Store Manager — Ujjain', approvingAuthority: 'CMO / Competent Authority', justification: 'Injectable antibiotic critical shortfall.', remarks: '' },
+  { id: 'IND-2026-0020', item: 'PPE Kit', quantity: '10,300', unit: 'Kits', facility: 'GMC Bhopal — Stores', district: 'Bhopal', category: 'Consumables', priority: 'High', status: 'Approved', source: 'Automated', date: '21-08-2026', requiredBy: '01-09-2026', raisedBy: 'System — AI/ML indent', approvingAuthority: 'CMO / Competent Authority', justification: 'Infection-control buffer.', remarks: '' },
+  { id: 'IND-2026-0018', item: 'Metformin 500mg', quantity: '1.7 L packs', unit: 'Packs', facility: 'District Hospital Satna', district: 'Satna', category: 'Drugs', priority: 'Medium', status: 'Submitted', source: 'Manual', date: '20-08-2026', requiredBy: '15-09-2026', raisedBy: 'Store Manager — Satna', approvingAuthority: 'CMO / Competent Authority', justification: 'NCD programme top-up.', remarks: '' },
+  { id: 'IND-2026-0015', item: 'Iron Folic Acid Tab', quantity: '2.0 L', unit: 'Packs', facility: 'CHC Hoshangabad', district: 'Hoshangabad', category: 'Drugs', priority: 'High', status: 'Under review', source: 'Automated', date: '19-08-2026', requiredBy: '10-09-2026', raisedBy: 'System — AI/ML indent', approvingAuthority: 'CMO / Competent Authority', justification: 'MCH programme demand.', remarks: '' },
+  { id: 'IND-2026-0012', item: 'Rabies Vaccine', quantity: '3,100', unit: 'Vials', facility: 'District Hospital Mandla', district: 'Mandla', category: 'Drugs', priority: 'Critical', status: 'Submitted', source: 'Manual', date: '18-08-2026', requiredBy: '28-08-2026', raisedBy: 'Store Manager — Mandla', approvingAuthority: 'CMO / Competent Authority', justification: 'Emergency ASV/ARV buffer.', remarks: '' },
+  { id: 'IND-2026-0010', item: 'Hospital Linen sets', quantity: '4,500', unit: 'Sets', facility: 'PHC Berasia', district: 'Bhopal', category: 'Consumables', priority: 'Medium', status: 'Approved', source: 'Manual', date: '17-08-2026', requiredBy: '05-09-2026', raisedBy: 'Store Manager — Berasia', approvingAuthority: 'CMO / Competent Authority', justification: 'Facility linen replenishment.', remarks: '' }
+
 ];
 
 /** Stage 4 — Demand approval list */
@@ -753,7 +826,16 @@ const DEMAND_APPROVAL_LIST = [
   { id: 'DEM-2026-0112', district: 'Bhopal', category: 'Drugs', items: 47, facilities: 12, valueLow: '₹14.6 Cr', valueHigh: '₹17.8 Cr', status: 'Pending Review', date: '03-09-2026', indentRef: 'IND-2026-0041', notes: 'Awaiting duplicate check clearance for antipyretics pack.' },
   { id: 'DEM-2026-0108', district: 'Indore', category: 'Equipment', items: 18, facilities: 6, valueLow: '₹8.4 Cr', valueHigh: '₹11.2 Cr', status: 'Verified', date: '01-09-2026', indentRef: 'IND-2026-0035', notes: 'Optimization sources reviewed — warehouse release preferred.' },
   { id: 'DEM-2026-0101', district: 'Jabalpur', category: 'Consumables', items: 22, facilities: 8, valueLow: '₹2.2 Cr', valueHigh: '₹3.4 Cr', status: 'Clarification Sought', date: '28-08-2026', indentRef: 'IND-2026-0029', notes: 'Clarification issued on PPE quantity uplift.' },
-  { id: 'DEM-2026-0094', district: 'Gwalior', category: 'Drugs', items: 31, facilities: 9, valueLow: '₹9.1 Cr', valueHigh: '₹11.5 Cr', status: 'Approved', date: '20-08-2026', indentRef: 'IND-2026-0021', notes: 'Approved for PR & budget sanction path.' }
+  { id: 'DEM-2026-0094', district: 'Gwalior', category: 'Drugs', items: 31, facilities: 9, valueLow: '₹9.1 Cr', valueHigh: '₹11.5 Cr', status: 'Approved', date: '20-08-2026', indentRef: 'IND-2026-0021', notes: 'Approved for PR & budget sanction path.' },
+  { id: 'DEM-2026-0090', district: 'Rewa', category: 'Drugs', items: 26, facilities: 7, valueLow: '₹6.2 Cr', valueHigh: '₹7.8 Cr', status: 'Pending Review', date: '19-08-2026', indentRef: 'IND-2026-0032', notes: 'Insulin cold-chain lines pending verification.' },
+  { id: 'DEM-2026-0086', district: 'Sagar', category: 'Consumables', items: 14, facilities: 5, valueLow: '₹1.1 Cr', valueHigh: '₹1.6 Cr', status: 'Verified', date: '18-08-2026', indentRef: 'IND-2026-0027', notes: 'Gloves & linen consolidated.' },
+  { id: 'DEM-2026-0082', district: 'Ujjain', category: 'Drugs', items: 19, facilities: 6, valueLow: '₹4.8 Cr', valueHigh: '₹6.1 Cr', status: 'Clarification Sought', date: '17-08-2026', indentRef: 'IND-2026-0022', notes: 'Ceftriaxone quantity clarification open.' },
+  { id: 'DEM-2026-0078', district: 'Sehore', category: 'Drugs', items: 11, facilities: 4, valueLow: '₹0.9 Cr', valueHigh: '₹1.3 Cr', status: 'Approved', date: '16-08-2026', indentRef: 'IND-2026-0025', notes: 'ORS seasonal pack approved.' },
+  { id: 'DEM-2026-0074', district: 'Satna', category: 'Equipment', items: 9, facilities: 3, valueLow: '₹2.4 Cr', valueHigh: '₹3.1 Cr', status: 'Pending Review', date: '15-08-2026', indentRef: 'IND-2026-0018', notes: 'Monitor accessories under review.' },
+  { id: 'DEM-2026-0070', district: 'Hoshangabad', category: 'Drugs', items: 16, facilities: 5, valueLow: '₹3.2 Cr', valueHigh: '₹4.0 Cr', status: 'Verified', date: '14-08-2026', indentRef: 'IND-2026-0015', notes: 'MCH iron/folic demand verified.' },
+  { id: 'DEM-2026-0066', district: 'Mandla', category: 'Drugs', items: 8, facilities: 3, valueLow: '₹0.7 Cr', valueHigh: '₹1.0 Cr', status: 'Approved', date: '13-08-2026', indentRef: 'IND-2026-0012', notes: 'Emergency rabies vaccine pack approved.' },
+  { id: 'DEM-2026-0062', district: 'Bhopal', category: 'Services', items: 5, facilities: 2, valueLow: '₹1.6 Cr', valueHigh: '₹2.0 Cr', status: 'Pending Review', date: '12-08-2026', indentRef: 'IND-2026-0008', notes: 'HMIS support package pending finance note.' }
+
 ];
 
 const RENEWAL_STAGE_DATA = {
@@ -825,6 +907,69 @@ const RENEWAL_STAGE_DATA = {
         { id: 'DOC-REN-0034-A', name: 'Fresh Tender — Telemedicine Platform', type: 'Fresh tender', file: 'REN-0034-Fresh-Tender.pdf' },
         { id: 'DOC-REN-0034-B', name: 'Addendum — SLA KPIs', type: 'Addendum', file: 'REN-0034-Addendum-SLA.pdf' },
         { id: 'DOC-REN-0034-C', name: 'Corrigendum — Uptime clause', type: 'Corrigendum', file: 'REN-0034-Corrigendum-Uptime.pdf' }
+      ]
+    },
+    {
+      id: 'REN-2026-0038', vendorId: 'VND-MP-001901', vendorName: 'OncoCare Pharma', category: 'Drugs',
+      renewalFrom: '01-11-2026', renewalTo: '31-10-2027', renewalDate: '02-09-2026',
+      renewalType: 'Fresh renewal', status: 'Pending finalization', contractId: 'CNT-2025-0510', value: '₹3.4 Cr',
+      contact: 'renewals@oncocare.in · +91 761 222 4455', gstin: '23AABCO1901G1Z3',
+      remarks: 'Oncology supportive care RC — cold-chain clause review.',
+      documents: [
+        { id: 'DOC-REN-0038-A', name: 'Fresh Tender — Oncology Support', type: 'Fresh tender', file: 'REN-0038-Fresh-Tender.pdf' }
+      ]
+    },
+    {
+      id: 'REN-2026-0042', vendorId: 'VND-MP-002134', vendorName: 'ImageMed Systems', category: 'Equipment',
+      renewalFrom: '01-06-2026', renewalTo: '31-05-2027', renewalDate: '18-08-2026',
+      renewalType: 'Extra quality order', status: 'Under review', contractId: 'CNT-2025-0555', value: '₹72 L',
+      contact: 'amc@imagemed.in · +91 731 400 9988', gstin: '23AABCI2134H1Z6',
+      remarks: 'AMC uplift for digital X-Ray — spare kits EQO.',
+      documents: [
+        { id: 'DOC-REN-0042-A', name: 'EQO — Spares list', type: 'Extra quality order', file: 'REN-0042-EQO.pdf' },
+        { id: 'DOC-REN-0042-B', name: 'Corrigendum — Response time', type: 'Corrigendum', file: 'REN-0042-Corrigendum.pdf' }
+      ]
+    },
+    {
+      id: 'REN-2026-0046', vendorId: 'VND-MP-002367', vendorName: 'SafeHands Consumables', category: 'Consumables',
+      renewalFrom: '01-08-2026', renewalTo: '31-07-2027', renewalDate: '12-08-2026',
+      renewalType: 'Fresh renewal', status: 'Finalized', contractId: 'CNT-2025-0601', value: '₹38 L',
+      contact: 'contracts@safehands.in · +91 755 311 6677', gstin: '23AABCS2367I1Z0',
+      remarks: 'Gloves & PPE rate contract renewed.',
+      documents: [
+        { id: 'DOC-REN-0046-A', name: 'Signed renewal LOA', type: 'Fresh tender', file: 'REN-0046-LOA.pdf' }
+      ]
+    },
+    {
+      id: 'REN-2026-0050', vendorId: 'VND-MP-002590', vendorName: 'SecureHealth Services', category: 'Services',
+      renewalFrom: '01-09-2026', renewalTo: '31-08-2027', renewalDate: '25-08-2026',
+      renewalType: 'Fresh renewal', status: 'Pending finalization', contractId: 'CNT-2025-0660', value: '₹68 L',
+      contact: 'ops@securehealth.in · +91 755 500 1212', gstin: '23AABCS2590J1Z7',
+      remarks: 'Hospital security manpower SLA renewal.',
+      documents: [
+        { id: 'DOC-REN-0050-A', name: 'Fresh Tender — Security SLA', type: 'Fresh tender', file: 'REN-0050-Fresh-Tender.pdf' },
+        { id: 'DOC-REN-0050-B', name: 'Addendum — Manpower rates', type: 'Addendum', file: 'REN-0050-Addendum.pdf' }
+      ]
+    },
+    {
+      id: 'REN-2026-0054', vendorId: 'VND-MP-002813', vendorName: 'GreenMed Waste', category: 'Others',
+      renewalFrom: '01-05-2026', renewalTo: '30-04-2027', renewalDate: '08-07-2026',
+      renewalType: 'Fresh renewal', status: 'Under review', contractId: 'CNT-2025-0712', value: '₹29 L',
+      contact: 'tenders@greenmed.in · +91 731 266 3344', gstin: '23AABCG2813K1Z2',
+      remarks: 'Biomedical waste contract — PCB authorization check.',
+      documents: [
+        { id: 'DOC-REN-0054-A', name: 'Fresh Tender — BMW services', type: 'Fresh tender', file: 'REN-0054-Fresh-Tender.pdf' }
+      ]
+    },
+    {
+      id: 'REN-2026-0058', vendorId: 'VND-MP-003036', vendorName: 'Apex Surgical India', category: 'Equipment',
+      renewalFrom: '01-12-2026', renewalTo: '30-11-2027', renewalDate: '30-08-2026',
+      renewalType: 'Fresh renewal', status: 'Pending finalization', contractId: 'CNT-2025-0788', value: '₹55 L',
+      contact: 'renewals@apexsurg.in · +91 755 277 9090', gstin: '23AABCA3036L1Z5',
+      remarks: 'Surgical instruments RC — BIS certification refresh.',
+      documents: [
+        { id: 'DOC-REN-0058-A', name: 'Fresh Tender — Surgical Kits', type: 'Fresh tender', file: 'REN-0058-Fresh-Tender.pdf' },
+        { id: 'DOC-REN-0058-B', name: 'Addendum — Sterility norms', type: 'Addendum', file: 'REN-0058-Addendum.pdf' }
       ]
     }
   ]
@@ -916,10 +1061,10 @@ const VENDOR_RESOURCE_DETAILS = {
 };
 
 const VENDOR_WORKFLOW = [
-  { id: 1, name: 'Registration', desc: 'Submit company profile and mandatory registration documents on the vendor portal.', status: 'done' },
-  { id: 2, name: 'KYC Verification', desc: 'Complete KYC, bank account verification, and regulatory compliance checks.', status: 'done' },
-  { id: 3, name: 'Vendor Approval', desc: 'Department reviews and approves vendor registration; vendor code is activated for bidding.', status: 'done' },
-  { id: 4, name: 'Bid Submission', desc: 'Submit technical and financial bids with EMD before the tender deadline.', status: 'active' },
+  { id: 1, name: 'Registration', desc: 'Submit company profile and mandatory registration documents on the vendor portal.', status: 'pending' },
+  { id: 2, name: 'KYC Verification', desc: 'Complete KYC, bank account verification, and regulatory compliance checks.', status: 'pending' },
+  { id: 3, name: 'Vendor Approval', desc: 'Department reviews and approves vendor registration; vendor code is activated for bidding.', status: 'pending' },
+  { id: 4, name: 'Bid Submission', desc: 'Submit technical and financial bids with EMD before the tender deadline.', status: 'pending' },
   { id: 5, name: 'Award Notification', desc: 'Receive Letter of Award (LOA) and review award terms on the portal.', status: 'pending' },
   { id: 6, name: 'Contract Execution', desc: 'Submit PBG, sign the contract agreement, and activate delivery terms.', status: 'pending' },
   { id: 7, name: 'Delivery', desc: 'Dispatch goods with challans, batch records, and required documentation.', status: 'pending' },
