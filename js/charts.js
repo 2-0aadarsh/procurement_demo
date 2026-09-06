@@ -672,7 +672,14 @@ function initVendorReportCharts(category = 'All') {
           borderRadius: 6
         }]
       },
-      options: chartOptions('Count')
+      options: {
+        ...chartOptions('Count'),
+        onClick: (e, elements) => {
+          if (!elements.length) return;
+          const label = e.chart.data.labels[elements[0].index];
+          if (typeof openVendorReportChartDetail === 'function') openVendorReportChartDetail('tender', label);
+        }
+      }
     });
   }
 
@@ -701,7 +708,12 @@ function initVendorReportCharts(category = 'All') {
           legend: { position: 'right', labels: { font: { size: 11, weight: '600' }, padding: 10 } },
           tooltip: { backgroundColor: '#1e293b', padding: 12, cornerRadius: 8 }
         },
-        cutout: '58%'
+        cutout: '58%',
+        onClick: (e, elements) => {
+          if (!elements.length) return;
+          const label = e.chart.data.labels[elements[0].index];
+          if (typeof openVendorReportChartDetail === 'function') openVendorReportChartDetail('bid', label);
+        }
       }
     });
   }
@@ -743,7 +755,7 @@ function initVendorReportCharts(category = 'All') {
   destroyChart('vendorLifecycle');
   const lifeCtx = document.getElementById('chartVendorLifecycle');
   if (lifeCtx) {
-    const labels = ['Reg', 'KYC', 'Approval', 'Bid', 'Award', 'Contract', 'Delivery', 'Invoice', 'Payment'];
+    const labels = ['Reg', 'KYC', 'Approval', 'Bid', 'Award', 'Contract', 'Delivery', 'Invoice', 'Payment', 'Renewal'];
     const data = labels.map((_, i) => (completed[i + 1] ? 100 : (i + 1 === (typeof getVendorActiveStageId === 'function' ? getVendorActiveStageId() : 4) ? 45 : 0)));
     charts.vendorLifecycle = new Chart(lifeCtx, {
       type: 'bar',
