@@ -7961,6 +7961,26 @@ body {
   text-underline-offset: 2px;
 }
 
+.empanel-submitted-summary {
+  margin-top: 0.75rem;
+  padding: 0.75rem 0.9rem;
+  background: #ecfdf5;
+  border: 1px solid #a7f3d0;
+  border-radius: 8px;
+  color: #065f46;
+  font-size: 0.9rem;
+}
+.empanel-submitted-summary p {
+  margin: 0;
+}
+.empanel-payment-modal .empanel-panel-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+}
+
 /* Vendor Document Repository */
 .vendor-repository .repo-filters {
   display: grid;

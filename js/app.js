@@ -3747,7 +3747,7 @@ function openConsolidationClarificationForm() {
         <div class="form-group full"><label>${reqLabel('Clarification sought')}</label>
           <textarea id="clrBody" rows="4" placeholder="State the specific points requiring clarification (quantity mismatch, stock certificate, duplicate indent, priority justification, etc.)"></textarea>
         </div>
-        <div class="form-group"><label>${reqLabel('Response due by (DD-MM-YYYY)')}</label><input id="clrDue" type="text" placeholder="e.g. 10-09-2026"></div>
+        ${datePickerHTML('clrDue', '', reqLabel('Response due by (DD-MM-YYYY)'), false)}
         <div class="form-group"><label>Priority</label>
           <select id="clrPriority" class="form-native-select">
             <option>Routine</option>
@@ -8060,7 +8060,7 @@ function renderWorkflowDetail(step, canEdit = true) {
         <div class="form-group"><label>${reqLabel('Account Number')}</label><input id="wf-kyc-acct" type="text" value="****4567"${readonly}></div>
         <div class="form-group"><label>${reqLabel('IFSC Code')}</label><input id="wf-kyc-ifsc" type="text" value="HDFC0001234"${readonly}></div>
         <div class="form-group"><label>${reqLabel('Drug / Trade License No.')}</label><input id="wf-kyc-license" type="text" value="DL-MH-2024-0892"${readonly}></div>
-        <div class="form-group"><label>${reqLabel('License Expiry')}</label><input id="wf-kyc-expiry" type="text" value="15-03-2027" placeholder="DD-MM-YYYY"${readonly}></div>
+        ${datePickerHTML('wf-kyc-expiry', '15-03-2027', reqLabel('License Expiry'), !canEdit)}
         <div class="form-group"><label>KYC Status</label><span class="badge ${kycDone ? 'badge-success' : 'badge-warning'}">${kycDone ? 'Documents Uploaded' : 'Pending Documents'}</span></div>
         <div class="form-group"><label>Uploaded Documents</label><span class="wf-upload-count">${kycDocs.length ? kycDocs.map(d => d.name).join(', ') : 'None yet'}</span></div>
       </div>
@@ -8077,7 +8077,7 @@ function renderWorkflowDetail(step, canEdit = true) {
     return `<div class="form-grid wf-form-grid">
       <div class="form-group"><label>${reqLabel('Vendor Code')}</label><input type="text" value="VND-MP-000123" readonly></div>
       <div class="form-group"><label>Approval Status</label><span class="badge badge-success">Approved</span></div>
-      <div class="form-group"><label>${reqLabel('Approved On')}</label><input type="text" value="28-08-2026" readonly></div>
+      ${datePickerHTML('wf-approval-on', '28-08-2026', reqLabel('Approved On'), true)}
       <div class="form-group"><label>${reqLabel('Approving Authority')}</label><input type="text" value="Vendor Registry, MP Health" readonly></div>
       <div class="form-group full"><label>${reqLabel('Linked Categories')}</label><input type="text" value="Drugs, Consumables" readonly></div>
       <div class="form-group full"><label>${reqLabel('Approval Letter')}</label>
@@ -8375,12 +8375,50 @@ function renderEmpanelmentFeeBlock(canEdit) {
         </button>
       </div>`;
 
-  let panel = '';
+  let summary = '';
+  if (submitted && mode === 'online') {
+    const o = e.online || {};
+    summary = `<div class="empanel-submitted-summary">
+      <p><i class="fa-solid fa-circle-check"></i> Online <strong>${o.method || 'NEFT'}</strong> recorded · UTR <strong>${o.utr || '—'}</strong> · ${o.paidOn || '—'}</p>
+    </div>`;
+  } else if (submitted && mode === 'offline') {
+    const f = e.offline || {};
+    summary = `<div class="empanel-submitted-summary">
+      <p><i class="fa-solid fa-circle-check"></i> Offline proof <strong>${f.fileName || '—'}</strong>${f.receiptNo ? ` · Receipt ${f.receiptNo}` : ''} · ${f.uploadedOn || '—'}</p>
+    </div>`;
+  } else if (!lock && !mode) {
+    summary = `<p class="empanel-panel-lead empanel-panel-lead--hint"><i class="fa-solid fa-circle-info"></i> Select Online or Offline — the payment form opens in a modal.</p>`;
+  } else if (!lock && mode) {
+    summary = `<div class="wf-actions mt-2" style="margin-bottom:0">
+      <button type="button" class="btn btn-outline btn-sm" onclick="openEmpanelmentPaymentModal('${mode}')">
+        <i class="fa-solid fa-window-maximize"></i> Open ${mode === 'online' ? 'online' : 'offline'} payment form
+      </button>
+    </div>`;
+  }
+
+  return `<div class="empanel-fee-block">
+    <div class="need-section-head">
+      <h4><i class="fa-solid fa-indian-rupee-sign"></i> Empanelment fee</h4>
+      ${statusBadge}
+    </div>
+    <div class="form-grid wf-form-grid">
+      <div class="form-group"><label>Fee amount</label><input type="text" value="${e.amount}" readonly></div>
+      <div class="form-group"><label>${reqLabel('Payment mode')}</label>${modePicker}</div>
+    </div>
+    ${summary}
+  </div>`;
+}
+
+function renderEmpanelmentPaymentModalBody(mode) {
+  const e = ensureEmpanelmentState();
+  const lock = e.status === 'submitted';
+
   if (mode === 'online') {
     const o = e.online || {};
-    panel = `<div class="empanel-panel">
-      <div class="empanel-panel-head">
-        <h5><i class="fa-solid fa-building-columns"></i> Online payment — NEFT / RTGS</h5>
+    return `<div class="consol-detail-modal empanel-payment-modal">
+      <p class="consol-detail-lead">Transfer <strong>${e.amount}</strong> via NEFT / RTGS using the bank details below, then enter your UTR and payment date.</p>
+      <div class="empanel-panel-head" style="margin-bottom:0.75rem">
+        <h5 style="margin:0"><i class="fa-solid fa-building-columns"></i> Online payment — NEFT / RTGS</h5>
         <button type="button" class="btn btn-outline btn-sm" onclick="copyEmpanelmentBankDetails()"><i class="fa-solid fa-copy"></i> Copy bank details</button>
       </div>
       <div class="label-grid empanel-payee">
@@ -8394,48 +8432,53 @@ function renderEmpanelmentFeeBlock(canEdit) {
       <div class="form-grid wf-form-grid mt-2">
         ${customSelectHTML('Transfer method', 'empMethod', ['NEFT', 'RTGS'], o.method || 'NEFT', true)}
         <div class="form-group"><label>${reqLabel('UTR / Reference No.')}</label><input id="empUtr" type="text" placeholder="Bank UTR number" value="${o.utr || ''}"${lock ? ' readonly' : ''}></div>
-        <div class="form-group"><label>${reqLabel('Payment date')}</label><input id="empPaidOn" type="text" placeholder="DD-MM-YYYY" value="${o.paidOn || ''}"${lock ? ' readonly' : ''}></div>
+        ${datePickerHTML('empPaidOn', o.paidOn || '', reqLabel('Payment date'), lock)}
         <div class="form-group"><label>Remitter bank</label><input id="empRemitter" type="text" placeholder="Your bank name" value="${o.remitterBank || ''}"${lock ? ' readonly' : ''}></div>
       </div>
-      ${!lock ? `<div class="wf-actions mt-2">
-        <button type="button" class="btn btn-primary" onclick="confirmEmpanelmentOnline()"><i class="fa-solid fa-check"></i> Confirm online payment</button>
-      </div>` : ''}
-    </div>`;
-  } else if (mode === 'offline') {
-    const f = e.offline || {};
-    panel = `<div class="empanel-panel">
-      <div class="empanel-panel-head">
-        <h5><i class="fa-solid fa-file-arrow-up"></i> Offline payment — upload proof</h5>
+      <div class="wf-actions mt-2">
+        <button type="button" class="btn btn-outline" onclick="closeModal()">Cancel</button>
+        ${!lock ? `<button type="button" class="btn btn-primary" onclick="confirmEmpanelmentOnline()"><i class="fa-solid fa-check"></i> Confirm online payment</button>` : ''}
       </div>
-      <p class="empanel-panel-lead">Upload challan / receipt / DD or pay-order scan (PDF, JPG, PNG).</p>
-      <div class="form-grid wf-form-grid">
-        <div class="form-group"><label>Receipt / challan no.</label><input id="empReceiptNo" type="text" placeholder="Optional reference" value="${f.receiptNo || ''}"${lock ? ' readonly' : ''}></div>
-        <div class="form-group"><label>${reqLabel('Payment proof')}</label>
-          ${lock
-            ? `<div class="wf-file-status">${f.fileName ? `<i class="fa-solid fa-file"></i> ${f.fileName}` : '—'}</div>`
-            : `<input id="empOfflineFile" type="file" accept=".pdf,.jpg,.jpeg,.png,application/pdf,image/*">`}
-        </div>
-        ${f.fileName && !lock ? `<div class="form-group full"><div class="wf-file-status"><i class="fa-solid fa-paperclip"></i> Selected: ${f.fileName}</div></div>` : ''}
-      </div>
-      ${!lock ? `<div class="wf-actions mt-2">
-        <button type="button" class="btn btn-primary" onclick="submitEmpanelmentOffline()"><i class="fa-solid fa-upload"></i> Upload &amp; submit proof</button>
-      </div>` : `<div class="wf-file-status mt-2"><i class="fa-solid fa-file"></i> ${f.fileName || 'Proof on file'} ${f.uploadedOn ? `· ${f.uploadedOn}` : ''}</div>`}
     </div>`;
-  } else if (canEdit && !submitted) {
-    panel = `<p class="empanel-panel-lead empanel-panel-lead--hint"><i class="fa-solid fa-circle-info"></i> Select Online or Offline to continue empanelment fee payment.</p>`;
   }
 
-  return `<div class="empanel-fee-block">
-    <div class="need-section-head">
-      <h4><i class="fa-solid fa-indian-rupee-sign"></i> Empanelment fee</h4>
-      ${statusBadge}
-    </div>
+  const f = e.offline || {};
+  return `<div class="consol-detail-modal empanel-payment-modal">
+    <p class="consol-detail-lead">Upload challan / receipt / DD or pay-order scan (PDF, JPG, PNG) to complete offline empanelment fee payment.</p>
     <div class="form-grid wf-form-grid">
-      <div class="form-group"><label>Fee amount</label><input type="text" value="${e.amount}" readonly></div>
-      <div class="form-group"><label>${reqLabel('Payment mode')}</label>${modePicker}</div>
+      <div class="form-group"><label>Receipt / challan no.</label><input id="empReceiptNo" type="text" placeholder="Optional reference" value="${f.receiptNo || ''}"${lock ? ' readonly' : ''}></div>
+      <div class="form-group" style="grid-column:1/-1">
+        <label>${reqLabel('Payment proof')}</label>
+        ${lock
+          ? `<div class="wf-file-status">${f.fileName ? `<i class="fa-solid fa-file"></i> ${f.fileName}` : '—'}</div>`
+          : renderInlineUpload({
+            id: 'empOfflineFile',
+            title: 'Upload payment proof',
+            hint: 'Challan / receipt / DD · PDF, JPG, PNG',
+            disabled: false,
+            fileName: f.fileName || null,
+            onChange: 'onEmpanelmentOfflineUpload'
+          })}
+      </div>
     </div>
-    ${panel}
+    <div class="wf-actions mt-2">
+      <button type="button" class="btn btn-outline" onclick="closeModal()">Cancel</button>
+      ${!lock ? `<button type="button" class="btn btn-primary" onclick="submitEmpanelmentOffline()"><i class="fa-solid fa-upload"></i> Upload &amp; submit proof</button>` : ''}
+    </div>
   </div>`;
+}
+
+function openEmpanelmentPaymentModal(mode) {
+  const e = ensureEmpanelmentState();
+  const m = mode === 'offline' ? 'offline' : mode === 'online' ? 'online' : (e.mode === 'offline' ? 'offline' : 'online');
+  e.mode = m;
+  persistVendorLifecycle();
+  openModal(
+    m === 'online' ? 'Online empanelment payment' : 'Offline empanelment payment',
+    renderEmpanelmentPaymentModalBody(m),
+    { wide: true, large: true, replace: true }
+  );
+  if (typeof initCustomSelects === 'function') initCustomSelects();
 }
 
 function setEmpanelmentMode(mode) {
@@ -8449,6 +8492,7 @@ function setEmpanelmentMode(mode) {
   e.status = 'pending';
   persistVendorLifecycle();
   refreshWorkflowUI();
+  openEmpanelmentPaymentModal(e.mode);
 }
 
 function copyEmpanelmentBankDetails() {
@@ -8461,10 +8505,7 @@ function copyEmpanelmentBankDetails() {
     `Amount: ${EMPANELMENT_FEE_AMOUNT}`,
     `Remark: ${EMPANELMENT_PAYEE.remark}`
   ].join('\n');
-  const done = () => openModal('Bank details copied', `<div class="wf-inline-alert wf-inline-alert--success">
-    <i class="fa-solid fa-circle-check"></i>
-    <div><p>Empanelment fee bank details copied. Use them for NEFT / RTGS transfer of <strong>${EMPANELMENT_FEE_AMOUNT}</strong>.</p></div>
-  </div>`);
+  const done = () => showWfAlert(`Bank details copied. Use them for NEFT / RTGS transfer of <strong>${EMPANELMENT_FEE_AMOUNT}</strong>.`, 'success');
   if (navigator.clipboard?.writeText) {
     navigator.clipboard.writeText(text).then(done).catch(done);
   } else {
@@ -8480,14 +8521,22 @@ function confirmEmpanelmentOnline() {
   const utr = document.getElementById('empUtr')?.value?.trim() || '';
   const paidOn = document.getElementById('empPaidOn')?.value?.trim() || '';
   const remitterBank = document.getElementById('empRemitter')?.value?.trim() || '';
+  e.online = { method: method || 'NEFT', utr, paidOn, remitterBank };
+  persistVendorLifecycle();
   if (!utr || !paidOn) {
-    showWfAlert('Enter UTR / Reference No. and Payment date to confirm online empanelment payment.');
+    openModal('Cannot proceed', `<div class="wf-inline-alert wf-inline-alert--error">
+      <i class="fa-solid fa-circle-exclamation"></i>
+      <div><p>Enter UTR / Reference No. and Payment date to confirm online empanelment payment.</p></div>
+    </div>
+    <div class="wf-actions mt-2">
+      <button type="button" class="btn btn-primary" onclick="openEmpanelmentPaymentModal('online')">Back to payment form</button>
+    </div>`, { replace: true });
     return;
   }
-  e.online = { method: method || 'NEFT', utr, paidOn, remitterBank };
   e.offline = { fileName: null, uploadedOn: '', receiptNo: '' };
   e.status = 'submitted';
   persistVendorLifecycle();
+  closeModal();
   refreshWorkflowUI();
   openModal('Empanelment fee submitted', `<div class="wf-inline-alert wf-inline-alert--success">
     <i class="fa-solid fa-circle-check"></i>
@@ -8495,18 +8544,41 @@ function confirmEmpanelmentOnline() {
   </div>`);
 }
 
+function onEmpanelmentOfflineUpload(input) {
+  const file = input?.files?.[0];
+  if (!file) return;
+  const e = ensureEmpanelmentState();
+  const receiptNo = document.getElementById('empReceiptNo')?.value?.trim() || e.offline?.receiptNo || '';
+  e.offline = {
+    fileName: file.name,
+    uploadedOn: e.offline?.uploadedOn || '',
+    receiptNo
+  };
+  openEmpanelmentPaymentModal('offline');
+}
+
 function submitEmpanelmentOffline() {
   const e = ensureEmpanelmentState();
   if (e.status === 'submitted') return;
   e.mode = 'offline';
-  const input = document.getElementById('empOfflineFile');
-  const file = input?.files?.[0];
-  const receiptNo = document.getElementById('empReceiptNo')?.value?.trim() || '';
-  if (!file && !e.offline?.fileName) {
-    showWfAlert('Upload the offline payment proof document before submitting.');
+  const receiptNo = document.getElementById('empReceiptNo')?.value?.trim() || e.offline?.receiptNo || '';
+  const fileName = e.offline?.fileName || document.getElementById('empOfflineFile')?.files?.[0]?.name || null;
+  e.offline = {
+    fileName: fileName || e.offline?.fileName || null,
+    uploadedOn: e.offline?.uploadedOn || '',
+    receiptNo
+  };
+  persistVendorLifecycle();
+  if (!fileName) {
+    openModal('Cannot proceed', `<div class="wf-inline-alert wf-inline-alert--error">
+      <i class="fa-solid fa-circle-exclamation"></i>
+      <div><p>Upload the offline payment proof document before submitting.</p></div>
+    </div>
+    <div class="wf-actions mt-2">
+      <button type="button" class="btn btn-primary" onclick="openEmpanelmentPaymentModal('offline')">Back to payment form</button>
+    </div>`, { replace: true });
     return;
   }
-  const fileName = file ? file.name : e.offline.fileName;
   e.offline = {
     fileName,
     uploadedOn: formatDateDMY(APP_TODAY),
@@ -8515,6 +8587,7 @@ function submitEmpanelmentOffline() {
   e.online = { method: 'NEFT', utr: '', paidOn: '', remitterBank: '' };
   e.status = 'submitted';
   persistVendorLifecycle();
+  closeModal();
   refreshWorkflowUI();
   openModal('Empanelment fee submitted', `<div class="wf-inline-alert wf-inline-alert--success">
     <i class="fa-solid fa-circle-check"></i>
@@ -11319,16 +11392,20 @@ function openVendorRenewalRequestModal() {
   const options = contracts.map(c => `${c.id} — ${c.title}`);
   const defaultOpt = options[0];
   vendorRenewalExecState.uploadName = vendorStageState.uploads.renewalSupport?.name || null;
+  const fromVal = vendorRenewalExecState.draftFrom || '01-04-2027';
+  const toVal = vendorRenewalExecState.draftTo || '31-03-2028';
+  const remarksVal = vendorRenewalExecState.draftRemarks
+    || 'Requesting continuation of rate contract / MSA under existing commercial terms.';
 
   openModal('Raise renewal request', `<div class="consol-detail-modal">
     <p class="consol-detail-lead">Select an eligible contract or MSA, choose request type, propose the renewal period, and optionally attach a supporting document.</p>
     <div class="form-grid wf-form-grid">
       ${customSelectHTML('Contract / MSA', 'vendorRenContract', options, defaultOpt, true)}
       ${customSelectHTML('Request type', 'vendorRenType', ['Fresh renewal', 'Extra quality order'], 'Fresh renewal', true)}
-      <div class="form-group"><label>Renewal from (DD-MM-YYYY)</label><input id="vendorRenFrom" type="text" placeholder="01-04-2027" value="01-04-2027"></div>
-      <div class="form-group"><label>Renewal to (DD-MM-YYYY)</label><input id="vendorRenTo" type="text" placeholder="31-03-2028" value="31-03-2028"></div>
+      ${datePickerHTML('vendorRenFrom', fromVal, 'Renewal from (DD-MM-YYYY)', false)}
+      ${datePickerHTML('vendorRenTo', toVal, 'Renewal to (DD-MM-YYYY)', false)}
       <div class="form-group" style="grid-column:1/-1"><label>Reason / remarks</label>
-        <textarea id="vendorRenRemarks" rows="3" placeholder="Briefly describe why renewal is required">Requesting continuation of rate contract / MSA under existing commercial terms.</textarea>
+        <textarea id="vendorRenRemarks" rows="3" placeholder="Briefly describe why renewal is required">${escapeHtmlLite(remarksVal)}</textarea>
       </div>
       <div class="form-group" style="grid-column:1/-1">
         <label>Supporting document (optional)</label>
@@ -11357,6 +11434,9 @@ function onVendorRenewalSupportUpload(input) {
   if (!file) return;
   vendorRenewalExecState.uploadName = file.name;
   vendorStageState.uploads.renewalSupport = { name: file.name, size: file.size || 0 };
+  vendorRenewalExecState.draftFrom = document.getElementById('vendorRenFrom')?.value?.trim() || vendorRenewalExecState.draftFrom;
+  vendorRenewalExecState.draftTo = document.getElementById('vendorRenTo')?.value?.trim() || vendorRenewalExecState.draftTo;
+  vendorRenewalExecState.draftRemarks = document.getElementById('vendorRenRemarks')?.value?.trim() || vendorRenewalExecState.draftRemarks;
   openVendorRenewalRequestModal();
 }
 
@@ -11413,6 +11493,9 @@ function submitVendorRenewalRequest() {
   vendorStageState.renewalRequests.unshift(row);
   vendorRenewalExecState.uploadName = null;
   vendorStageState.uploads.renewalSupport = null;
+  vendorRenewalExecState.draftFrom = null;
+  vendorRenewalExecState.draftTo = null;
+  vendorRenewalExecState.draftRemarks = null;
   vendorRenewalExecState.page = 1;
   completeVendorStage(10);
   closeModal();
@@ -12077,26 +12160,24 @@ function renderVendorRepository() {
             <th>Related ref</th>
             <th>Uploaded</th>
             <th>Size</th>
-            <th>Status</th>
             <th>Actions</th>
           </tr>
         </thead>
         <tbody>
-          ${paged.items.length ? paged.items.map(d => `<tr>
-            <td class="need-row-clickable" role="button" tabindex="0" onclick="openVendorRepositoryDetail('${d.id}')"><strong>${d.id}</strong></td>
-            <td class="need-row-clickable" role="button" tabindex="0" onclick="openVendorRepositoryDetail('${d.id}')">${d.name}${d.source === 'session' ? '<div class="table-sub">Session upload</div>' : ''}</td>
+          ${paged.items.length ? paged.items.map(d => `<tr class="need-row-clickable" role="button" tabindex="0" onclick="openVendorRepositoryDetail('${d.id}')" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();openVendorRepositoryDetail('${d.id}')}" title="View document details">
+            <td><strong>${d.id}</strong></td>
+            <td>${d.name}${d.source === 'session' ? '<div class="table-sub">Session upload</div>' : ''}</td>
             <td>${d.stage}. ${d.stageName}</td>
             <td>${d.docType}</td>
             <td>${d.relatedRef || '—'}</td>
             <td class="cell-date">${d.uploadedOn || '—'}</td>
             <td>${d.size || '—'}</td>
-            <td><span class="badge badge-${repositoryStatusBadge(d.status)}">${d.status}</span></td>
             <td>
               <button type="button" class="btn btn-outline btn-sm" onclick="event.stopPropagation(); downloadVendorRepositoryDoc('${d.id}')" title="Download or email">
                 <i class="fa-solid fa-download"></i>
               </button>
             </td>
-          </tr>`).join('') : `<tr><td colspan="9" style="text-align:center;color:#64748b;padding:1.25rem">No documents match the selected filters.</td></tr>`}
+          </tr>`).join('') : `<tr><td colspan="8" style="text-align:center;color:#64748b;padding:1.25rem">No documents match the selected filters.</td></tr>`}
         </tbody>
       </table>
       ${renderPaginationControls(paged.page, paged.totalPages, paged.total, paged.from, paged.to, 'setVendorRepositoryPage')}
