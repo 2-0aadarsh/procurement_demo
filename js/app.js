@@ -163,6 +163,8 @@ function createDefaultVendorStageState(profileType = 'new') {
     empanelment: defaultEmpanelmentState(onboardingDone),
     bid: {
       tenderId: '',
+      tenderTitle: '',
+      category: '',
       emdStatus: '',
       deadline: '',
       submitted: false,
@@ -826,10 +828,17 @@ function reqLabel(text) {
 }
 
 function showWfAlert(message, type = 'error') {
+  const tone = type === 'success' ? 'success' : type === 'info' ? 'info' : 'error';
+  const title = tone === 'error' ? 'Cannot proceed' : tone === 'info' ? 'Please wait' : 'Notice';
+  const icon = tone === 'error'
+    ? 'circle-exclamation'
+    : tone === 'info'
+      ? 'spinner fa-spin'
+      : 'circle-check';
   openModal(
-    type === 'error' ? 'Cannot proceed' : 'Notice',
-    `<div class="wf-inline-alert wf-inline-alert--${type}">
-      <i class="fa-solid fa-${type === 'error' ? 'circle-exclamation' : 'circle-check'}"></i>
+    title,
+    `<div class="wf-inline-alert wf-inline-alert--${tone}">
+      <i class="fa-solid fa-${icon}"></i>
       <div><p>${message}</p></div>
     </div>`,
     { wide: false }
@@ -3135,7 +3144,10 @@ function toggleDatePicker(id) {
   positionDatePickerPanel(id);
 }
 
-function shiftDatePickerMonth(delta) {
+function shiftDatePickerMonth(delta, ev) {
+  if (ev) {
+    try { ev.preventDefault(); ev.stopPropagation(); } catch (_) { /* ignore */ }
+  }
   if (!datePickerState.id) return;
   let { viewYear: y, viewMonth: m } = datePickerState;
   m += delta;
@@ -3166,13 +3178,19 @@ function renderDatePickerPanel(id) {
   }
   panel.innerHTML = `
     <div class="date-picker-head">
-      <button type="button" class="date-picker-nav" onclick="shiftDatePickerMonth(-1)" aria-label="Previous month"><i class="fa-solid fa-chevron-left"></i></button>
+      <button type="button" class="date-picker-nav" onclick="shiftDatePickerMonth(-1, event)" aria-label="Previous month"><i class="fa-solid fa-chevron-left"></i></button>
       <strong>${monthNames[m]} ${y}</strong>
-      <button type="button" class="date-picker-nav" onclick="shiftDatePickerMonth(1)" aria-label="Next month"><i class="fa-solid fa-chevron-right"></i></button>
+      <button type="button" class="date-picker-nav" onclick="shiftDatePickerMonth(1, event)" aria-label="Next month"><i class="fa-solid fa-chevron-right"></i></button>
     </div>
     <div class="date-picker-dow">${dow.map(x => `<span>${x}</span>`).join('')}</div>
     <div class="date-picker-grid">${cells}</div>
   `;
+  // Keep month navigation from bubbling as an "outside" click after the panel re-renders
+  if (!panel.dataset.navBound) {
+    panel.dataset.navBound = '1';
+    panel.addEventListener('click', (e) => e.stopPropagation());
+    panel.addEventListener('mousedown', (e) => e.stopPropagation());
+  }
 }
 
 function selectDatePickerDay(id, value) {
@@ -3186,8 +3204,25 @@ function selectDatePickerDay(id, value) {
   document.getElementById(`${id}Panel`)?.setAttribute('hidden', '');
 }
 
+function isDatePickerInteraction(e) {
+  if (e.target?.closest?.('.date-picker') || e.target?.closest?.('.date-picker-panel')) return true;
+  // Month arrows re-render the panel mid-click (target detaches). Use composedPath so we don't treat it as outside.
+  if (typeof e.composedPath === 'function') {
+    return e.composedPath().some((n) =>
+      n && n.classList && (
+        n.classList.contains('date-picker') ||
+        n.classList.contains('date-picker-panel') ||
+        n.classList.contains('date-picker-nav') ||
+        n.classList.contains('date-picker-day') ||
+        n.classList.contains('date-picker-head')
+      )
+    );
+  }
+  return false;
+}
+
 document.addEventListener('click', (e) => {
-  if (e.target.closest?.('.date-picker')) return;
+  if (isDatePickerInteraction(e)) return;
   document.querySelectorAll('.date-picker-panel').forEach(p => p.setAttribute('hidden', ''));
 });
 
@@ -5565,7 +5600,12 @@ function renderPurchaseOrderStage(canEdit = true) {
         <strong>Purchase order — post-contract generation</strong>
         <p>${data.meta.note}</p>
       </div>
-      <span class="badge badge-info"><i class="fa-solid fa-calendar-days"></i> ${periodLabel}</span>
+      <div class="indent-mode-banner-actions" style="display:flex;align-items:center;gap:0.65rem;flex-wrap:wrap;justify-content:flex-end">
+        <span class="badge badge-info"><i class="fa-solid fa-calendar-days"></i> ${periodLabel}</span>
+        <button type="button" class="btn btn-primary btn-sm" onclick="openGeneratePurchaseOrderForm()" title="Generate PO from tender, bidder and template">
+          <i class="fa-solid fa-file-circle-plus"></i> Generate Purchase Order
+        </button>
+      </div>
     </div>
 
     ${renderWorkflowPeriodFilter('po', govPoState)}
@@ -5663,6 +5703,7 @@ function openPurchaseOrderDetail(poId) {
             <tr><td>Status since</td><td><strong class="cell-date">${statusSince}</strong></td></tr>
             <tr><td>Acknowledgement</td><td><span class="badge badge-${needStatusBadge(r.ackStatus)}">${r.ackStatus}</span></td></tr>
             <tr><td>Line items</td><td><strong>${r.lines}</strong></td></tr>
+            ${r.templateLabel ? `<tr><td>PO template used</td><td><strong>${escapeHtmlLite(r.templateLabel)}</strong></td></tr>` : ''}
           </tbody>
         </table>
       </div>
@@ -5683,12 +5724,250 @@ function openPurchaseOrderDetail(poId) {
 
       <div class="modal-inline-actions">
         <button type="button" class="btn btn-outline" onclick="modalGoBack()"><i class="fa-solid fa-arrow-left"></i> Back</button>
+        ${(r.status === 'Draft PO' || r.status === 'Pending contract') ? `
+        <button type="button" class="btn btn-primary" onclick="openGeneratePurchaseOrderForm('${r.id}')">
+          <i class="fa-solid fa-file-circle-plus"></i> Generate Purchase Order
+        </button>
+        <button type="button" class="btn btn-outline" onclick="openStageFollowUpModal('po','row','${r.id}')">
+          <i class="fa-solid fa-envelope-open-text"></i> Take Follow-up
+        </button>` : `
         <button type="button" class="btn btn-primary" onclick="openStageFollowUpModal('po','row','${r.id}')">
           <i class="fa-solid fa-envelope-open-text"></i> Take Follow-up
-        </button>
+        </button>`}
       </div>
     </div>
   `, { wide: true, large: true, extraWide: true });
+}
+
+function getPoTemplatesList() {
+  return (typeof PO_TEMPLATES !== 'undefined' && PO_TEMPLATES.length)
+    ? PO_TEMPLATES
+    : [{ id: '1', label: 'Template 1 — MPPHCL Standard Purchase Order', hint: 'Standard MPPHCL PO layout.' }];
+}
+
+function getEligiblePoGenerateRows() {
+  const allow = new Set(['Draft PO', 'Pending contract']);
+  return (typeof PURCHASE_ORDER_DATA !== 'undefined' ? PURCHASE_ORDER_DATA.orders : [])
+    .filter(r => allow.has(r.status));
+}
+
+function fillGenPoFormFields(r) {
+  const set = (id, val) => {
+    const el = document.getElementById(id);
+    if (el) el.value = val ?? '';
+  };
+  const setDate = (id, val) => {
+    const v = (val && val !== '—') ? val : '';
+    const input = document.getElementById(id);
+    const label = document.getElementById(`${id}Value`);
+    if (input) input.value = v;
+    if (label) {
+      label.textContent = v || 'Select date';
+      label.classList.toggle('is-placeholder', !v);
+    }
+  };
+  if (!r) {
+    ['genPoTenderId', 'genPoTitle', 'genPoCategory', 'genPoDivision', 'genPoAwardId', 'genPoContractId',
+      'genPoVendor', 'genPoValue', 'genPoLines', 'genPoPayment', 'genPoShipTo', 'genPoTerms', 'genPoRemarks'
+    ].forEach(id => set(id, ''));
+    setDate('genPoDeliveryStart', '');
+    setDate('genPoDeliveryEnd', '');
+    return;
+  }
+  set('genPoTenderId', r.tenderId);
+  set('genPoTitle', r.title);
+  set('genPoCategory', r.category);
+  set('genPoDivision', `${r.state || 'Madhya Pradesh'} · ${r.division || '—'}`);
+  set('genPoAwardId', r.awardId);
+  set('genPoContractId', r.contractId && r.contractId !== '—' ? r.contractId : '—');
+  set('genPoVendor', r.vendor);
+  set('genPoValue', r.value);
+  set('genPoLines', String(r.lines ?? '—'));
+  set('genPoPayment', r.paymentTerms || '—');
+  set('genPoShipTo', r.shipTo || '—');
+  set('genPoTerms', r.terms || '—');
+  setDate('genPoDeliveryStart', r.deliveryStart);
+  setDate('genPoDeliveryEnd', r.deliveryEnd);
+  set('genPoRemarks', r.remarks || '');
+}
+
+const GEN_PO_SOURCE_PLACEHOLDER = 'Select draft / pending PO…';
+const GEN_PO_TEMPLATE_PLACEHOLDER = 'Select PO template…';
+
+function genPoSourceLabel(r) {
+  return `${r.id} — ${r.title} (${r.vendor})`;
+}
+
+function resolveGenPoFromSelect() {
+  const label = typeof getCustomSelectValue === 'function' ? getCustomSelectValue('genPoSource') : '';
+  if (!label || label === GEN_PO_SOURCE_PLACEHOLDER) return null;
+  const id = (label.split(' — ')[0] || '').trim();
+  return getEligiblePoGenerateRows().find(o => o.id === id) || null;
+}
+
+function resolveGenPoTemplateFromSelect() {
+  const label = typeof getCustomSelectValue === 'function' ? getCustomSelectValue('genPoTemplate') : '';
+  if (!label || label === GEN_PO_TEMPLATE_PLACEHOLDER) return null;
+  return getPoTemplatesList().find(t => t.label === label) || null;
+}
+
+function onGenPoSourceChange() {
+  fillGenPoFormFields(resolveGenPoFromSelect());
+}
+
+function onGenPoTemplateChange() {
+  const t = resolveGenPoTemplateFromSelect();
+  const hint = document.getElementById('genPoTemplateHint');
+  if (hint) hint.textContent = t?.hint || '';
+}
+
+function bindGenPoSelectListeners() {
+  const source = document.querySelector('.custom-select[data-select-id="genPoSource"]');
+  const template = document.querySelector('.custom-select[data-select-id="genPoTemplate"]');
+  source?.addEventListener('change', onGenPoSourceChange);
+  template?.addEventListener('change', onGenPoTemplateChange);
+}
+
+function openGeneratePurchaseOrderForm(preselectId) {
+  if (currentRole !== 'gov') return;
+  const eligible = getEligiblePoGenerateRows();
+  if (!eligible.length) {
+    showWfAlert('No draft or pending-contract purchase orders are available to generate right now.');
+    return;
+  }
+  const preselected = preselectId ? eligible.find(r => r.id === preselectId) : null;
+  const templates = getPoTemplatesList();
+  const sourceLabels = eligible.map(genPoSourceLabel);
+  const templateLabels = templates.map(t => t.label);
+  const sourceSelected = preselected ? genPoSourceLabel(preselected) : GEN_PO_SOURCE_PLACEHOLDER;
+  const sourceSelect = customSelectHTML('Draft / pending PO', 'genPoSource', sourceLabels, sourceSelected, true)
+    .replace('class="form-group"', 'class="form-group full"');
+  const templateSelect = customSelectHTML('PO template', 'genPoTemplate', templateLabels, GEN_PO_TEMPLATE_PLACEHOLDER, true)
+    .replace('class="form-group"', 'class="form-group full"');
+
+  openModal('Generate Purchase Order', `
+    <div class="indent-modal-form kpi-detail">
+      <p class="consol-detail-lead" style="margin-top:0">
+        Select a draft PO linked to an executed contract, review tender &amp; bidder details, choose a PO template
+        (same family vendors use when downloading POs for <strong>Active</strong> + <strong>Delivery Completed</strong> contracts), then issue the PO.
+      </p>
+
+      <h4 class="budget-subhead">1. Source PO / contract</h4>
+      <div class="form-grid wf-form-grid">
+        ${sourceSelect}
+      </div>
+
+      <h4 class="budget-subhead">2. Tender details</h4>
+      <div class="form-grid wf-form-grid">
+        <div class="form-group"><label>Tender / RC No.</label><input id="genPoTenderId" type="text" readonly placeholder="—"></div>
+        <div class="form-group"><label>Award ID</label><input id="genPoAwardId" type="text" readonly placeholder="—"></div>
+        <div class="form-group full"><label>Tender / item title</label><input id="genPoTitle" type="text" readonly placeholder="—"></div>
+        <div class="form-group"><label>Category</label><input id="genPoCategory" type="text" readonly placeholder="—"></div>
+        <div class="form-group"><label>State / Division</label><input id="genPoDivision" type="text" readonly placeholder="—"></div>
+        <div class="form-group"><label>Contract / LOA No.</label><input id="genPoContractId" type="text" readonly placeholder="—"></div>
+        <div class="form-group"><label>Est. value</label><input id="genPoValue" type="text" readonly placeholder="—"></div>
+        <div class="form-group"><label>Line items</label><input id="genPoLines" type="text" readonly placeholder="—"></div>
+      </div>
+
+      <h4 class="budget-subhead">3. Bidder / vendor details</h4>
+      <div class="form-grid wf-form-grid">
+        <div class="form-group"><label>Selected bidder (L1)</label><input id="genPoVendor" type="text" readonly placeholder="—"></div>
+        <div class="form-group"><label>Payment terms</label><input id="genPoPayment" type="text" readonly placeholder="—"></div>
+        <div class="form-group full"><label>Ship to / Consignee</label><input id="genPoShipTo" type="text" readonly placeholder="—"></div>
+        <div class="form-group full"><label>Contract terms</label><input id="genPoTerms" type="text" readonly placeholder="—"></div>
+      </div>
+
+      <h4 class="budget-subhead">4. PO template &amp; delivery</h4>
+      <div class="form-grid wf-form-grid">
+        ${templateSelect}
+        <p id="genPoTemplateHint" class="download-confirm-hint form-group full" style="margin:0"></p>
+        ${datePickerHTML('genPoDeliveryStart', '', 'Delivery start')}
+        ${datePickerHTML('genPoDeliveryEnd', '', 'Delivery end')}
+        <div class="form-group full"><label>Remarks</label>
+          <textarea id="genPoRemarks" rows="2" placeholder="Any conditions before vendor notification…"></textarea>
+        </div>
+      </div>
+
+      <div class="modal-inline-actions" style="margin-top:1rem">
+        <button type="button" class="btn btn-outline" onclick="closeModal()"><i class="fa-solid fa-xmark"></i> Cancel</button>
+        <button type="button" class="btn btn-primary" onclick="submitGeneratePurchaseOrder()">
+          <i class="fa-solid fa-file-signature"></i> Issue Purchase Order
+        </button>
+      </div>
+    </div>
+  `, { wide: true, large: true });
+
+  if (typeof initCustomSelects === 'function') initCustomSelects();
+  bindGenPoSelectListeners();
+  fillGenPoFormFields(preselected || null);
+}
+
+function submitGeneratePurchaseOrder() {
+  const r = resolveGenPoFromSelect();
+  const template = resolveGenPoTemplateFromSelect();
+  if (!r) {
+    showWfAlert('Please select a draft / pending purchase order first.');
+    return;
+  }
+  if (!template) {
+    showWfAlert('Please select a PO template before issuing.');
+    return;
+  }
+  if (!r.contractId || r.contractId === '—') {
+    showWfAlert('Contract / LOA is not linked yet. Complete contract execution before issuing this PO.');
+    return;
+  }
+
+  const templateId = template.id;
+  const today = formatDateDMY(APP_TODAY);
+  const deliveryStart = document.getElementById('genPoDeliveryStart')?.value?.trim() || today;
+  const deliveryEnd = document.getElementById('genPoDeliveryEnd')?.value?.trim() || r.deliveryEnd || '—';
+  const remarks = document.getElementById('genPoRemarks')?.value?.trim() || r.remarks || '';
+
+  r.status = 'PO issued';
+  r.vendorNotified = 'Notified';
+  r.ackStatus = 'Sent';
+  r.poDate = today;
+  r.date = today;
+  r.deliveryStart = deliveryStart;
+  r.deliveryEnd = deliveryEnd && deliveryEnd !== '—' ? deliveryEnd : deliveryStart;
+  r.schedule = r.schedule && r.schedule !== '—' ? r.schedule : 'As per issued PO delivery window';
+  r.remarks = remarks
+    ? `${remarks} · Issued on ${today} using ${template.label}.`
+    : `Issued on ${today} using ${template.label}.`;
+  r.templateId = templateId;
+  r.templateLabel = template.label;
+
+  if (typeof PURCHASE_ORDER_DATA !== 'undefined' && PURCHASE_ORDER_DATA.meta) {
+    PURCHASE_ORDER_DATA.meta.lastUpdated = `${today} (demo)`;
+  }
+
+  try { persistGovLifecycle?.(); } catch (_) { /* optional */ }
+  closeModal();
+  refreshWorkflowUI();
+  setTimeout(() => {
+    openModal('Purchase Order issued', `
+      <div class="sync-success-msg">
+        <div class="sync-success-icon"><i class="fa-solid fa-circle-check"></i></div>
+        <h4>PO generated successfully</h4>
+        <p>
+          <strong>${escapeHtmlLite(r.id)}</strong> issued for
+          <strong>${escapeHtmlLite(r.title)}</strong> · bidder
+          <strong>${escapeHtmlLite(r.vendor)}</strong>.
+        </p>
+        <p style="margin-top:0.5rem">
+          Template: <strong>${escapeHtmlLite(r.templateLabel)}</strong><br>
+          Vendor notification: <strong>Notified</strong> (demo) · Tender <strong>${escapeHtmlLite(r.tenderId)}</strong>
+        </p>
+      </div>
+      <div class="modal-inline-actions" style="margin-top:1rem;justify-content:center">
+        <button type="button" class="btn btn-outline" onclick="closeModal()"><i class="fa-solid fa-xmark"></i> Close</button>
+        <button type="button" class="btn btn-primary" onclick="openPurchaseOrderDetail('${r.id}')">
+          <i class="fa-solid fa-eye"></i> View PO details
+        </button>
+      </div>
+    `);
+  }, 80);
 }
 
 /* ========== Stage 11 GRN & Inspection ========== */
@@ -6577,18 +6856,37 @@ function completeDocumentDownload(mode) {
   pendingDocumentDownload = null;
   closeModal();
   if (!pending?.execute) return;
-  try {
-    pending.execute(mode === 'email' ? 'email' : 'download');
-  } catch (err) {
-    showWfAlert('Download could not be completed. Please try again.');
-    return;
-  }
+
   const email = getRegisteredDownloadEmail();
-  if (mode === 'email') {
-    showWfAlert(`${pending.docLabel} downloaded and sent to <strong>${email}</strong>.`, 'success');
-  } else {
-    showWfAlert(`${pending.docLabel} downloaded successfully.`, 'success');
-  }
+  const showSuccess = () => {
+    if (mode === 'email') {
+      showWfAlert(`${pending.docLabel} downloaded and sent to <strong>${email}</strong>.`, 'success');
+    } else {
+      showWfAlert(`${pending.docLabel} downloaded successfully.`, 'success');
+    }
+  };
+
+  const runExecute = () => {
+    try {
+      const result = pending.execute(mode === 'email' ? 'email' : 'download');
+      if (result && typeof result.then === 'function') {
+        return Promise.resolve(result)
+          .then(() => showSuccess())
+          .catch(() => {
+            showWfAlert('Download could not be completed. Please try again.');
+          });
+      }
+      showSuccess();
+    } catch (err) {
+      showWfAlert('Download could not be completed. Please try again.');
+    }
+  };
+
+  // Paint "Please wait" first, then start heavy PDF work (otherwise success appears before download).
+  showWfAlert(`Generating <strong>${escapeHtmlLite(pending.docLabel)}</strong>… Please wait.`, 'info');
+  requestAnimationFrame(() => {
+    setTimeout(runExecute, 60);
+  });
 }
 
 function escapeHtmlLite(str) {
@@ -8124,17 +8422,36 @@ function renderWorkflowDetail(step, canEdit = true) {
     const fin = s.uploads.financialDocs;
     const locked = s.bid.submitted;
     const btnDis = (!canEdit || locked) ? ' disabled' : '';
-    const ocr = s.bid.ocrReady;
+    const hasTender = !!s.bid.tenderId;
+    const tenderOpts = getVendorBidTenderSelectOptions();
+    const selectedLabel = hasTender
+      ? (tenderOpts.find(l => l.startsWith(s.bid.tenderId + ' —')) || `${s.bid.tenderId} — ${s.bid.tenderTitle || s.bid.tenderId}`)
+      : BID_TENDER_PLACEHOLDER;
+    const tenderSelect = locked
+      ? `<div class="form-group bid-tender-select"><label>Tender reference</label>
+          <input type="text" value="${escapeHtmlLite(s.bid.tenderId)}${s.bid.tenderTitle ? ' — ' + escapeHtmlLite(s.bid.tenderTitle) : ''}" readonly></div>`
+      : customSelectHTML('Tender reference', 'bidTenderRef', tenderOpts, selectedLabel, true)
+          .replace('class="form-group"', 'class="form-group bid-tender-select"');
+
     return `<div class="wf-stage-note"><i class="fa-solid fa-circle-info"></i>
-      <div>Upload technical and financial bid documents. Tender reference and related bid details are filled automatically after upload — no manual tender reference entry.</div>
+      <div><strong>Step 1:</strong> Select the open tender this bid belongs to.
+        <strong>Step 2:</strong> Upload technical &amp; financial documents.
+        <strong>Step 3:</strong> Submit the bid before the deadline.</div>
     </div>
+
+    <div class="bid-tender-select-row">
+      ${tenderSelect}
+    </div>
+
     <div class="label-grid">
-      <div class="label-item"><span class="label-key">Tender Reference</span><span class="label-val">${ocr && s.bid.tenderId ? s.bid.tenderId : 'Pending'}</span></div>
-      <div class="label-item"><span class="label-key">EMD Status</span><span class="label-val">${ocr && s.bid.emdStatus ? `<span class="badge badge-warning">${s.bid.emdStatus}</span>` : 'Pending'}</span></div>
-      <div class="label-item"><span class="label-key">Bid Deadline</span><span class="label-val${ocr ? ' text-danger' : ''}">${ocr && s.bid.deadline ? s.bid.deadline : 'Pending'}</span></div>
+      <div class="label-item"><span class="label-key">Tender ID</span><span class="label-val">${hasTender ? `<strong>${escapeHtmlLite(s.bid.tenderId)}</strong>` : '<span class="text-muted">Select a tender</span>'}</span></div>
+      <div class="label-item"><span class="label-key">Category</span><span class="label-val">${hasTender ? escapeHtmlLite(s.bid.category || '—') : '<span class="text-muted">—</span>'}</span></div>
+      <div class="label-item"><span class="label-key">EMD Status</span><span class="label-val">${hasTender && s.bid.emdStatus ? `<span class="badge badge-warning">${escapeHtmlLite(s.bid.emdStatus)}</span>` : '<span class="text-muted">—</span>'}</span></div>
+      <div class="label-item"><span class="label-key">Bid Deadline</span><span class="label-val${hasTender ? ' text-danger' : ''}">${hasTender && s.bid.deadline ? escapeHtmlLite(s.bid.deadline) : '<span class="text-muted">—</span>'}</span></div>
       <div class="label-item"><span class="label-key">Bid Submission Status</span><span class="label-val"><span class="badge ${locked ? 'badge-success' : 'badge-warning'}">${locked ? 'Submitted — Locked' : 'Draft — Not Submitted'}</span></span></div>
-      <div class="label-item"><span class="label-key">${reqLabel('Technical Documents')}</span><span class="label-val">${tech.length ? tech.map(d => d.name).join(', ') : '<span class="text-muted">Not uploaded</span>'}</span></div>
-      <div class="label-item"><span class="label-key">${reqLabel('Financial Documents')}</span><span class="label-val">${fin.length ? fin.map(d => d.name).join(', ') : '<span class="text-muted">Not uploaded</span>'}</span></div>
+      <div class="label-item"><span class="label-key">Tender title</span><span class="label-val">${hasTender ? escapeHtmlLite(s.bid.tenderTitle || '—') : '<span class="text-muted">—</span>'}</span></div>
+      <div class="label-item"><span class="label-key">${reqLabel('Technical Documents')}</span><span class="label-val">${tech.length ? tech.map(d => escapeHtmlLite(d.name)).join(', ') : '<span class="text-muted">Not uploaded</span>'}</span></div>
+      <div class="label-item"><span class="label-key">${reqLabel('Financial Documents')}</span><span class="label-val">${fin.length ? fin.map(d => escapeHtmlLite(d.name)).join(', ') : '<span class="text-muted">Not uploaded</span>'}</span></div>
     </div>
     ${locked ? '<div class="wf-lock-banner"><i class="fa-solid fa-lock"></i> Bid submitted successfully. Details are locked and cannot be changed.</div>' : ''}
     <div class="wf-actions mt-2 wf-actions--stacked">
@@ -8834,8 +9151,12 @@ function openTechDocUpload() {
     showWfAlert('Bid is already submitted and locked. Technical documents cannot be changed.');
     return;
   }
+  if (!vendorStageState.bid.tenderId) {
+    showWfAlert('Select the tender first (combobox at the top), then upload technical documents.');
+    return;
+  }
   openModal('Upload Technical Documents', renderUploadModalBody({
-    lead: `Upload technical bid documents for ${vendorStageState.bid.tenderId} as mandated in the RFP.`,
+    lead: `Upload technical bid documents for <strong>${escapeHtmlLite(vendorStageState.bid.tenderId)}</strong> — ${escapeHtmlLite(vendorStageState.bid.tenderTitle || 'selected tender')} as mandated in the RFP.`,
     inputId: 'wfUploadTech',
     requiredDocs: [
       'Technical compliance sheet / bid form',
@@ -8846,8 +9167,8 @@ function openTechDocUpload() {
   }), { wide: true });
   bindUploadModal('wfUploadTech', (files) => {
     vendorStageState.uploads.technicalDocs = files;
-    applyBidOcrFromUploads();
-    showWfAlert('Technical documents uploaded. Bid details update when both document packs are present.', 'success');
+    persistVendorLifecycle();
+    showWfAlert('Technical documents uploaded for the selected tender.', 'success');
   });
 }
 
@@ -8856,8 +9177,12 @@ function openFinDocUpload() {
     showWfAlert('Bid is already submitted and locked. Financial documents cannot be changed.');
     return;
   }
+  if (!vendorStageState.bid.tenderId) {
+    showWfAlert('Select the tender first (combobox at the top), then upload financial documents.');
+    return;
+  }
   openModal('Upload Financial Documents', renderUploadModalBody({
-    lead: `Upload financial / commercial bid documents. Tender reference and EMD details are filled automatically from your uploads.`,
+    lead: `Upload financial / commercial bid documents for <strong>${escapeHtmlLite(vendorStageState.bid.tenderId)}</strong>. EMD for this tender: <strong>${escapeHtmlLite(vendorStageState.bid.emdStatus || 'as per NIT')}</strong>.`,
     inputId: 'wfUploadFin',
     requiredDocs: [
       'Price bid / BoQ (as per RFP format)',
@@ -8868,25 +9193,88 @@ function openFinDocUpload() {
   }), { wide: true });
   bindUploadModal('wfUploadFin', (files) => {
     vendorStageState.uploads.financialDocs = files;
-    applyBidOcrFromUploads();
-    showWfAlert('Financial documents uploaded. Bid details update when both document packs are present.', 'success');
+    persistVendorLifecycle();
+    showWfAlert('Financial documents uploaded for the selected tender.', 'success');
   });
 }
 
-function applyBidOcrFromUploads() {
-  const tech = vendorStageState.uploads.technicalDocs;
-  const fin = vendorStageState.uploads.financialDocs;
-  if (!tech.length && !fin.length) return;
+const BID_TENDER_PLACEHOLDER = 'Select open tender for this bid…';
+
+function estimateBidEmdAmount(category) {
+  if (category === 'Drugs') return '₹3,20,000';
+  if (category === 'Equipment') return '₹2,50,000';
+  if (category === 'Consumables') return '₹1,50,000';
+  return '₹1,00,000';
+}
+
+function getVendorBidTenderSelectOptions() {
+  const list = (typeof TENDERS !== 'undefined' ? TENDERS : [])
+    .filter(t => t.status === 'Open' || t.status === 'Evaluation');
+  const labels = list.map(t => `${t.id} — ${t.title}`);
+  const currentId = vendorStageState.bid?.tenderId;
+  if (currentId && !labels.some(l => l.startsWith(currentId + ' —'))) {
+    const t = (typeof TENDERS !== 'undefined' ? TENDERS : []).find(x => x.id === currentId);
+    labels.unshift(t ? `${t.id} — ${t.title}` : `${currentId} — ${vendorStageState.bid.tenderTitle || currentId}`);
+  }
+  return labels;
+}
+
+function resolveBidTenderFromSelect() {
+  const label = typeof getCustomSelectValue === 'function' ? getCustomSelectValue('bidTenderRef') : '';
+  if (!label || label === BID_TENDER_PLACEHOLDER) return null;
+  const id = (label.split(' — ')[0] || '').trim();
+  return (typeof TENDERS !== 'undefined' ? TENDERS : []).find(t => t.id === id) || null;
+}
+
+function applyVendorBidTenderSelection(tenderId) {
+  const t = (typeof TENDERS !== 'undefined' ? TENDERS : []).find(x => x.id === tenderId);
+  if (!t) return false;
+  const bidRow = typeof getBidForTender === 'function' ? getBidForTender(t.id) : null;
+  const emdAmt = estimateBidEmdAmount(t.category);
+  const emdPaid = bidRow?.emd === 'Paid';
+  vendorStageState.bid.tenderId = t.id;
+  vendorStageState.bid.tenderTitle = t.title;
+  vendorStageState.bid.category = t.category;
+  vendorStageState.bid.emdStatus = emdPaid ? `Paid — ${emdAmt}` : `Pending — ${emdAmt}`;
+  vendorStageState.bid.deadline = `${formatDateDMY(t.deadline)} 17:00 IST`;
   vendorStageState.bid.ocrReady = true;
-  vendorStageState.bid.tenderId = 'TND-2026-MP-0055';
-  vendorStageState.bid.emdStatus = 'Pending - ₹3,20,000';
-  vendorStageState.bid.deadline = '05-09-2026 17:00 IST';
+  return true;
+}
+
+function onBidTenderSelectChange() {
+  if (vendorStageState.bid.submitted) return;
+  const t = resolveBidTenderFromSelect();
+  if (!t) {
+    vendorStageState.bid.tenderId = '';
+    vendorStageState.bid.tenderTitle = '';
+    vendorStageState.bid.category = '';
+    vendorStageState.bid.emdStatus = '';
+    vendorStageState.bid.deadline = '';
+    vendorStageState.bid.ocrReady = false;
+  } else {
+    applyVendorBidTenderSelection(t.id);
+  }
+  persistVendorLifecycle();
+  refreshWorkflowUI();
+}
+
+function bindBidTenderSelectListener() {
+  const wrap = document.querySelector('.custom-select[data-select-id="bidTenderRef"]');
+  if (!wrap || wrap.dataset.bidBound) return;
+  wrap.dataset.bidBound = '1';
+  wrap.addEventListener('change', onBidTenderSelectChange);
 }
 
 function openBidSubmissionGuide() {
+  const emdLine = vendorStageState.bid.emdStatus
+    ? `EMD / bid security (${escapeHtmlLite(vendorStageState.bid.emdStatus)})`
+    : 'EMD / bid security (amount as per selected tender NIT)';
+  const tenderLine = vendorStageState.bid.tenderId
+    ? `Selected tender: <strong>${escapeHtmlLite(vendorStageState.bid.tenderId)}</strong> — ${escapeHtmlLite(vendorStageState.bid.tenderTitle || '')}`
+    : 'Select a tender from the combobox on Bid Submission before uploading documents.';
   openModal('Bid Submission Guide — RFP Mandatory Documents', `
     <div class="doc-modal">
-      <p class="doc-modal-lead">Mandatory technical and financial documents for the active tender as circulated in the RFP by the procuring agency. Tender reference is filled automatically after you upload documents.</p>
+      <p class="doc-modal-lead">${tenderLine}</p>
       <h4 class="upload-section-title">Technical Bid (mandatory)</h4>
       <ul class="doc-checklist">
         <li><i class="fa-solid fa-check"></i> Signed technical bid form &amp; compliance matrix</li>
@@ -8898,11 +9286,11 @@ function openBidSubmissionGuide() {
       <h4 class="upload-section-title">Financial Bid (mandatory)</h4>
       <ul class="doc-checklist">
         <li><i class="fa-solid fa-check"></i> Price schedule / BoQ in prescribed format</li>
-        <li><i class="fa-solid fa-check"></i> EMD / bid security (₹3,20,000 for this tender)</li>
+        <li><i class="fa-solid fa-check"></i> ${emdLine}</li>
         <li><i class="fa-solid fa-check"></i> Commercial terms acceptance letter</li>
         <li><i class="fa-solid fa-check"></i> GSTIN &amp; PAN declarations</li>
       </ul>
-      <div class="resource-note mt-2"><i class="fa-solid fa-triangle-exclamation"></i> Incomplete technical or financial packs may lead to bid rejection. Upload both packs, then submit the bid before the deadline.</div>
+      <div class="resource-note mt-2"><i class="fa-solid fa-triangle-exclamation"></i> Incomplete technical or financial packs may lead to bid rejection. Select the tender, upload both packs, then submit before the deadline.</div>
     </div>
   `, { wide: true });
 }
@@ -8910,6 +9298,10 @@ function openBidSubmissionGuide() {
 function submitVendorBid() {
   if (vendorStageState.bid.submitted) {
     showWfAlert('Bid is already submitted and locked.');
+    return;
+  }
+  if (!vendorStageState.bid.tenderId) {
+    showWfAlert('Select which tender this bid belongs to before submitting.');
     return;
   }
   if (!vendorStageState.uploads.technicalDocs.length) {
@@ -8922,9 +9314,9 @@ function submitVendorBid() {
   }
   vendorStageState.bid.submitted = true;
   vendorStageState.locked[4] = true;
-  applyBidOcrFromUploads();
+  applyVendorBidTenderSelection(vendorStageState.bid.tenderId);
   completeVendorStage(4);
-  showWfAlert('Bid submitted successfully. Bid details are now locked. You may proceed to the next stage.', 'success');
+  showWfAlert(`Bid submitted successfully for <strong>${escapeHtmlLite(vendorStageState.bid.tenderId)}</strong>. Details are now locked.`, 'success');
   refreshWorkflowUI();
 }
 
@@ -9468,6 +9860,7 @@ function refreshWorkflowUI() {
   if (detail) {
     detail.innerHTML = renderWorkflowDetailPanel(step, progress, total);
     initCustomSelects();
+    if (currentRole === 'vendor' && viewId === 4) bindBidTenderSelectListener();
   }
   updateWorkflowSubtitle();
   updatePageMeta();
@@ -11834,6 +12227,12 @@ function openContractsPoDetail(contractId) {
   const followUpFooter = currentRole === 'gov'
     ? `<button type="button" class="btn btn-primary" onclick="openContractsFollowUp('${c.id}')"><i class="fa-solid fa-envelope-open-text"></i> Take Follow-up</button>`
     : '';
+  const canDownloadPo = canDownloadContractPurchaseOrder(c);
+  const downloadBtn = canDownloadPo
+    ? `<button type="button" class="btn btn-primary" onclick="downloadContractPurchaseOrder('${c.id}')">
+          <i class="fa-solid fa-file-pdf"></i> Download Purchase Order
+        </button>`
+    : '';
   openModal(`${c.id} — Contract details`, `<div class="kpi-detail need-row-detail">
     <p class="need-row-detail-lead">${c.title || 'Contract'} · <strong>${c.tenderId}</strong></p>
     <div class="tender-detail-stats tender-detail-stats--4">
@@ -11865,14 +12264,1754 @@ function openContractsPoDetail(contractId) {
         </table>
       </div>
       <p>${c.remarks || ''}</p>
+      ${canDownloadPo ? `<p class="report-footnote"><i class="fa-solid fa-circle-info"></i> Contract is <strong>Active</strong> with delivery <strong>Completed</strong> — Purchase Order (MPPHCL format) is available to download.</p>` : ''}
     </div>
     <div class="modal-inline-actions">
       <button type="button" class="btn btn-outline" onclick="closeModal()"><i class="fa-solid fa-xmark"></i> Close</button>
+      ${downloadBtn}
       ${followUpFooter}
     </div>
   </div>`, { wide: true, large: true });
 }
 
+function canDownloadContractPurchaseOrder(c) {
+  if (!c) return false;
+  const statusOk = String(c.status || '').trim().toLowerCase() === 'active';
+  const deliveryOk = String(c.delivery || '').trim().toLowerCase() === 'completed';
+  return statusOk && deliveryOk;
+}
+
+function downloadContractPurchaseOrder(contractId) {
+  const c = (typeof CONTRACTS !== 'undefined' ? CONTRACTS : []).find(x => x.id === contractId);
+  if (!c || !canDownloadContractPurchaseOrder(c)) {
+    showWfAlert('Purchase Order download is available only when Status is <strong>Active</strong> and Delivery is <strong>Completed</strong>.');
+    return;
+  }
+  const poNo = c.poId || c.id;
+  confirmDocumentDownload({
+    title: 'Confirm Purchase Order download',
+    docLabel: `Purchase Order ${poNo}`,
+    formatLabel: 'PDF · MPPHCL template',
+    fileHint: 'Filled MPPHCL Purchase Order for this Active / Completed contract',
+    execute: (mode) => performContractPurchaseOrderDownload(c, mode)
+  });
+}
+
+function getContractPoLineItems(c) {
+  const deliveries = (typeof DELIVERIES !== 'undefined' ? DELIVERIES : [])
+    .filter(d => d.po === c.poId || (c.poId && String(d.po) === String(c.poId)));
+  if (deliveries.length) {
+    return deliveries.map((d, i) => ({
+      no: (i + 1) * 10,
+      desc: d.items || c.title || 'Supply against rate contract',
+      hsn: c.category === 'Drugs' ? '3004' : c.category === 'Equipment' ? '9018' : c.category === 'Services' ? '9983' : '6307',
+      rev: '00',
+      qty: d.qty || '1',
+      uom: 'Lot',
+      unitPrice: d.amount || c.value,
+      per: 'Lot',
+      basic: d.amount || c.value,
+      deliveryDate: d.date || c.date || '',
+      freight: 'Inclusive',
+      discount: '—',
+      taxable: d.amount || c.value,
+      gst: 'As applicable'
+    }));
+  }
+  return [{
+    no: 10,
+    desc: `${c.title || 'Supply'} — against ${c.tenderId}`,
+    hsn: c.category === 'Drugs' ? '3004' : c.category === 'Equipment' ? '9018' : c.category === 'Services' ? '9983' : '6307',
+    rev: '00',
+    qty: '1',
+    uom: 'Lot',
+    unitPrice: c.value,
+    per: 'Lot',
+    basic: c.value,
+    deliveryDate: c.endDate || c.date || '',
+    freight: 'Inclusive',
+    discount: '—',
+    taxable: c.value,
+    gst: 'As applicable'
+  }];
+}
+
+function amountInWordsFromContract(c) {
+  const raw = String(c.value || '').replace(/[₹,\s]/g, '');
+  if (/cr/i.test(String(c.value))) return `Rupees ${raw.replace(/cr/i, '').trim()} Crore only`;
+  if (/l/i.test(String(c.value))) return `Rupees ${raw.replace(/l/i, '').trim()} Lakh only`;
+  return `Rupees ${c.value || '—'} only`;
+}
+
+function buildMpphclPurchaseOrderSheetHtml(c) {
+
+  const poNo = c.poId || c.id;
+  const lines = getContractPoLineItems(c);
+  const vendor = c.vendor || 'MediSupply India Pvt Ltd';
+  const division = c.division || 'Bhopal';
+  const poDate = c.date || formatDateDMY(APP_TODAY);
+  const requiredBy = c.endDate || c.date || '';
+  const email = getRegisteredDownloadEmail();
+  const netTotal = c.value || '—';
+  const words = amountInWordsFromContract(c);
+
+  const itemRows = [];
+
+  for (let i = 0; i < 3; i++) {
+
+    const n = (i + 1) * 10;
+    const r = lines[i];
+
+    if (r) {
+
+      itemRows.push(`
+        <tr>
+          <td class="c">${escapeHtmlLite(r.no)}</td>
+          <td class="l item-desc">${escapeHtmlLite(r.desc)}</td>
+          <td class="c">${escapeHtmlLite(r.hsn)}</td>
+          <td class="c">${escapeHtmlLite(r.rev)}</td>
+          <td class="c">${escapeHtmlLite(String(r.qty))}</td>
+          <td class="c">${escapeHtmlLite(r.uom)}</td>
+          <td class="r">${escapeHtmlLite(String(r.unitPrice))}</td>
+          <td class="c">${escapeHtmlLite(r.per)}</td>
+          <td class="r">${escapeHtmlLite(String(r.basic))}</td>
+          <td class="c">${escapeHtmlLite(r.deliveryDate)}</td>
+          <td class="c">${escapeHtmlLite(r.freight)}</td>
+          <td class="c">${escapeHtmlLite(r.discount)}</td>
+        </tr>
+      `);
+
+    } else {
+
+      itemRows.push(`
+        <tr class="empty">
+          <td class="c">${n}</td>
+          <td></td>
+          <td></td>
+          <td></td>
+          <td></td>
+          <td></td>
+          <td></td>
+          <td></td>
+          <td></td>
+          <td></td>
+          <td></td>
+          <td></td>
+        </tr>
+      `);
+
+    }
+  }
+
+  return `
+
+<style>
+
+/* =========================================================
+   MPPHCL PURCHASE ORDER
+   A4 PORTRAIT / PRINT DOCUMENT
+   ========================================================= */
+
+.po-sheet {
+  width: 794px;
+  min-height: 1123px;
+
+  margin: 0;
+  padding: 9px 10px 7px;
+
+  box-sizing: border-box;
+
+  background: #ffffff;
+  color: #111111;
+
+  font-family: Arial, Helvetica, sans-serif;
+  font-size: 8px;
+  line-height: 1.08;
+
+  border: 1px solid #222;
+
+  overflow: hidden;
+}
+
+.po-sheet *,
+.po-sheet *::before,
+.po-sheet *::after {
+  box-sizing: border-box;
+}
+
+
+/* =========================================================
+   HEADER
+   ========================================================= */
+
+.po-top {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+
+  min-height: 38px;
+
+  border-bottom: 1px solid #222;
+
+  padding-bottom: 4px;
+}
+
+.po-brand {
+  font-size: 15px;
+  line-height: 1;
+
+  font-weight: 800;
+
+  color: #244a78;
+
+  letter-spacing: 0.02em;
+}
+
+.po-brand-sub {
+  margin-top: 2px;
+
+  font-size: 7px;
+
+  font-weight: 600;
+
+  color: #222;
+
+  max-width: 430px;
+}
+
+.po-title {
+  padding-top: 1px;
+
+  font-size: 15px;
+
+  line-height: 1;
+
+  font-weight: 800;
+
+  letter-spacing: 0.04em;
+
+  text-align: right;
+
+  white-space: nowrap;
+}
+
+
+/* =========================================================
+   REGISTERED OFFICE
+   ========================================================= */
+
+.po-office {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+
+  min-height: 22px;
+
+  border-bottom: 1px solid #222;
+
+  padding: 3px 2px;
+
+  font-size: 6.8px;
+
+  white-space: nowrap;
+}
+
+.po-office .office-label {
+  font-weight: 700;
+}
+
+.po-office .u {
+  flex: 1;
+
+  border-bottom: 1px solid #555;
+
+  padding: 0 2px;
+
+  min-width: 0;
+}
+
+.po-office .gst-label {
+  font-weight: 700;
+}
+
+.po-office .u-sm {
+  flex: 0 0 105px;
+}
+
+
+/* =========================================================
+   COMMON SECTION HEADERS
+   ========================================================= */
+
+.po-section-title {
+  margin: 0;
+
+  font-size: 8px;
+
+  font-weight: 800;
+}
+
+
+/* =========================================================
+   INVOICE / SUPPLIER
+   ========================================================= */
+
+.po-2col {
+  display: flex;
+  width: 100%;
+  border: 1px solid #222;
+  margin-top: 4px;
+}
+
+.po-2col > div {
+  width: 50%;
+  padding: 4px 6px;
+  min-width: 0;
+}
+
+.po-2col > div + div {
+  border-left: 1px solid #222;
+}
+
+.po-2col h4 {
+  margin: 0 0 3px;
+
+  font-size: 8px;
+
+  font-weight: 800;
+}
+
+
+/* =========================================================
+   UNDERLINE FIELDS
+   ========================================================= */
+
+.po-line {
+  display: flex;
+
+  align-items: baseline;
+
+  min-height: 12px;
+
+  margin: 0;
+}
+
+.po-line .lbl {
+
+  flex: 0 0 auto;
+
+  font-weight: 700;
+
+  white-space: nowrap;
+
+  margin-right: 3px;
+}
+
+.po-line .val {
+
+  flex: 1;
+
+  min-width: 0;
+
+  min-height: 10px;
+
+  padding: 0 2px;
+
+  border-bottom: 1px solid #777;
+
+  font-weight: 500;
+
+  overflow: hidden;
+
+  white-space: nowrap;
+
+  text-overflow: ellipsis;
+}
+
+
+/* =========================================================
+   PO META
+   ========================================================= */
+
+.po-meta {
+  display: flex;
+  width: 100%;
+  border: 1px solid #222;
+  border-top: 0;
+}
+
+.po-meta-col {
+  width: 50%;
+  min-width: 0;
+}
+
+.po-meta-col + .po-meta-col {
+  border-left: 1px solid #222;
+}
+
+.po-kv {
+  display: flex;
+  align-items: center;
+  min-height: 14px;
+  padding: 1px 5px;
+  border-bottom: 1px solid #d0d0d0;
+}
+
+.po-kv:last-child {
+  border-bottom: 0;
+}
+
+.po-kv .k {
+  flex: 0 0 100px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.po-kv .v {
+  flex: 1;
+  min-width: 0;
+  min-height: 10px;
+  padding: 0 2px;
+  border-bottom: 1px solid #777;
+  font-weight: 500;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+
+/* =========================================================
+   SHIP TO / TERMS
+   ========================================================= */
+
+.po-terms {
+  display: flex;
+  width: 100%;
+  border: 1px solid #222;
+  border-top: 0;
+}
+
+.po-terms > div {
+  width: 50%;
+  min-width: 0;
+  padding: 4px 6px;
+}
+
+.po-terms > div + div {
+  border-left: 1px solid #222;
+}
+
+.po-terms h4 {
+
+  margin: 0 0 3px;
+
+  font-size: 8px;
+
+  font-weight: 800;
+}
+
+
+/* =========================================================
+   ITEMS TABLE
+   ========================================================= */
+
+.po-items {
+
+  width: 100%;
+
+  margin-top: 4px;
+
+  border-collapse: collapse;
+
+  table-layout: fixed;
+
+  font-size: 6.7px;
+
+  line-height: 1.05;
+}
+
+.po-items th,
+.po-items td {
+
+  border: 1px solid #222;
+
+  padding: 2px 2px;
+
+  vertical-align: middle;
+
+  word-break: break-word;
+
+  overflow: hidden;
+}
+
+.po-items th {
+
+  height: 29px;
+
+  background: #d5d9df;
+
+  font-weight: 800;
+
+  text-align: center;
+
+  line-height: 1.05;
+}
+
+.po-items td {
+
+  height: 21px;
+
+  background: #fff;
+}
+
+.po-items td.c {
+  text-align: center;
+}
+
+.po-items td.r {
+  text-align: right;
+
+  white-space: nowrap;
+}
+
+.po-items td.l {
+  text-align: left;
+}
+
+.po-items td.item-desc {
+
+  line-height: 1.1;
+
+  word-break: normal;
+}
+
+.po-items tr.empty td {
+
+  height: 22px;
+}
+
+
+/* Exact column proportions */
+
+.po-items col.c-no {
+  width: 5%;
+}
+
+.po-items col.c-desc {
+  width: 25%;
+}
+
+.po-items col.c-hsn {
+  width: 6.5%;
+}
+
+.po-items col.c-rev {
+  width: 5%;
+}
+
+.po-items col.c-qty {
+  width: 6%;
+}
+
+.po-items col.c-uom {
+  width: 5%;
+}
+
+.po-items col.c-price {
+  width: 8.5%;
+}
+
+.po-items col.c-per {
+  width: 4.5%;
+}
+
+.po-items col.c-basic {
+  width: 9%;
+}
+
+.po-items col.c-del {
+  width: 8%;
+}
+
+.po-items col.c-fr {
+  width: 7.5%;
+}
+
+.po-items col.c-disc {
+  width: 5.5%;
+}
+
+
+/* =========================================================
+   TOTALS
+   ========================================================= */
+
+.po-totals {
+
+  width: 100%;
+
+  border-collapse: collapse;
+
+  margin-top: -1px;
+
+  font-size: 7px;
+}
+
+.po-totals td {
+
+  height: 18px;
+
+  border: 1px solid #222;
+
+  padding: 2px 5px;
+}
+
+.po-totals td.lbl {
+
+  width: 22%;
+
+  font-weight: 700;
+}
+
+.po-totals td.amt {
+
+  width: 19.5%;
+
+  text-align: right;
+
+  font-weight: 600;
+}
+
+.po-totals tr.net td {
+
+  background: #d5d9df;
+
+  font-weight: 800;
+}
+
+
+/* =========================================================
+   AMOUNT IN WORDS
+   ========================================================= */
+
+.po-words {
+
+  display: flex;
+
+  align-items: baseline;
+
+  gap: 4px;
+
+  margin-top: 4px;
+
+  font-size: 7.5px;
+
+  min-height: 17px;
+}
+
+.po-words strong {
+
+  white-space: nowrap;
+
+  font-weight: 800;
+}
+
+.po-words .fill {
+
+  flex: 1;
+
+  min-width: 0;
+
+  border-bottom: 1px solid #555;
+
+  padding: 0 3px;
+
+  font-weight: 600;
+
+  white-space: nowrap;
+
+  overflow: hidden;
+
+  text-overflow: ellipsis;
+}
+
+
+/* =========================================================
+   SPECIAL INSTRUCTIONS
+   ========================================================= */
+
+.po-instr {
+
+  margin-top: 4px;
+
+  border: 1px solid #222;
+
+  padding: 4px 6px;
+
+  font-size: 7px;
+
+  line-height: 1.15;
+}
+
+.po-instr h4 {
+
+  margin: 0 0 3px;
+
+  font-size: 7.5px;
+
+  font-weight: 800;
+}
+
+.po-instr ol {
+
+  margin: 0 0 0 15px;
+
+  padding: 0;
+}
+
+.po-instr li {
+
+  margin: 1px 0;
+}
+
+
+/* =========================================================
+   SIGNATURE BLOCK
+   ========================================================= */
+
+.po-sign {
+  display: flex;
+  width: 100%;
+  margin-top: 4px;
+  border: 1px solid #222;
+}
+
+.po-sign > div {
+  width: 33.333%;
+  min-width: 0;
+  min-height: 91px;
+  padding-bottom: 3px;
+}
+
+.po-sign > div + div {
+  border-left: 1px solid #222;
+}
+
+.po-sign h4 {
+
+  margin: 0;
+
+  padding: 3px 5px;
+
+  background: #d5d9df;
+
+  border-bottom: 1px solid #222;
+
+  font-size: 7.5px;
+
+  font-weight: 800;
+}
+
+.po-sign .body {
+
+  padding: 3px 6px;
+
+  font-size: 7px;
+}
+
+.po-sign p {
+
+  margin: 5px 0;
+
+  white-space: nowrap;
+}
+
+
+/* =========================================================
+   AUTHORIZED SIGNATORY
+   ========================================================= */
+
+.po-auth {
+
+  margin-top: 2px;
+
+  padding-right: 3px;
+
+  text-align: right;
+
+  font-size: 7px;
+
+  font-weight: 800;
+}
+
+
+/* =========================================================
+   TEMPLATE WARNING
+   ========================================================= */
+
+.po-note {
+
+  margin-top: 3px;
+
+  text-align: center;
+
+  color: #b54b4b;
+
+  font-size: 5.8px;
+
+  line-height: 1.1;
+}
+
+
+/* =========================================================
+   PRINT
+   ========================================================= */
+
+@media print {
+
+  @page {
+
+    size: A4 portrait;
+
+    margin: 0;
+  }
+
+  html,
+  body {
+
+    margin: 0 !important;
+
+    padding: 0 !important;
+
+    background: #fff !important;
+  }
+
+  .po-sheet {
+
+    width: 794px;
+
+    min-height: 1123px;
+
+    margin: 0;
+
+    border: 1px solid #222;
+
+    box-shadow: none;
+  }
+}
+
+
+/* =========================================================
+   SCREEN PREVIEW
+   ========================================================= */
+
+@media screen {
+
+  .po-sheet {
+    box-shadow: none;
+  }
+}
+
+</style>
+
+
+<div class="po-sheet" id="mpphclPoSheet">
+
+
+  <!-- =====================================================
+       HEADER
+       ===================================================== -->
+
+  <div class="po-top">
+
+    <div>
+
+      <div class="po-brand">
+        MPPHCL
+      </div>
+
+      <div class="po-brand-sub">
+        Madhya Pradesh Public Health Services Corporation Limited
+      </div>
+
+    </div>
+
+    <div class="po-title">
+      PURCHASE ORDER
+    </div>
+
+  </div>
+
+
+  <!-- =====================================================
+       REGISTERED OFFICE
+       ===================================================== -->
+
+  <div class="po-office">
+
+    <span class="office-label">
+      Registered Office:
+    </span>
+
+    <span class="u">
+      First Floor, MP Oil Fed Premises, 01 Arera Hills, Bhopal 462011 (M.P.)
+    </span>
+
+    <span class="gst-label">
+      GSTIN:
+    </span>
+
+    <span class="u u-sm">
+      23AABCM3986N1ZS
+    </span>
+
+  </div>
+
+
+  <!-- =====================================================
+       INVOICE / SUPPLIER
+       ===================================================== -->
+
+  <div class="po-2col">
+
+    <!-- INVOICE TO -->
+
+    <div>
+
+      <h4>Invoice To:</h4>
+
+      <div class="po-line">
+        <span class="lbl">Company:</span>
+        <span class="val">MPPHCL</span>
+      </div>
+
+      <div class="po-line">
+        <span class="lbl">Address:</span>
+        <span class="val">
+          First Floor, MP Oil Fed Premises, 01 Arera Hills
+        </span>
+      </div>
+
+      <div class="po-line">
+        <span class="lbl"></span>
+        <span class="val">
+          Bhopal 462011 (M.P.)
+        </span>
+      </div>
+
+      <div class="po-line">
+
+        <span class="lbl">
+          GSTIN:
+        </span>
+
+        <span class="val" style="flex:0 0 37%;">
+          23AABCM3986N1ZS
+        </span>
+
+        <span class="lbl" style="margin-left:5px;">
+          State Code:
+        </span>
+
+        <span class="val" style="flex:0 0 15%;">
+          23
+        </span>
+
+      </div>
+
+      <div class="po-line">
+
+        <span class="lbl">
+          Contact:
+        </span>
+
+        <span class="val" style="flex:0 0 32%;">
+          Procurement Cell
+        </span>
+
+        <span class="lbl" style="margin-left:5px;">
+          Phone:
+        </span>
+
+        <span class="val">
+          0755-2578911
+        </span>
+
+      </div>
+
+      <div class="po-line">
+
+        <span class="lbl">
+          Email:
+        </span>
+
+        <span class="val">
+          itcell-mpphscl[AT]mp[DOT]gov[DOT]in
+        </span>
+
+      </div>
+
+    </div>
+
+
+    <!-- SUPPLIER -->
+
+    <div>
+
+      <h4>Supplier:</h4>
+
+      <div class="po-line">
+
+        <span class="lbl">
+          Supplier Code:
+        </span>
+
+        <span class="val">
+          VND-MP-000123
+        </span>
+
+      </div>
+
+      <div class="po-line">
+
+        <span class="lbl">
+          Name:
+        </span>
+
+        <span class="val">
+          ${escapeHtmlLite(vendor)}
+        </span>
+
+      </div>
+
+      <div class="po-line">
+
+        <span class="lbl">
+          Address:
+        </span>
+
+        <span class="val">
+          Registered vendor address on file
+        </span>
+
+      </div>
+
+      <div class="po-line">
+
+        <span class="lbl"></span>
+
+        <span class="val">
+          ${escapeHtmlLite(division)} Division, Madhya Pradesh
+        </span>
+
+      </div>
+
+      <div class="po-line">
+
+        <span class="lbl">
+          GSTIN:
+        </span>
+
+        <span class="val" style="flex:0 0 37%;">
+          23AABCM9988B1Z2
+        </span>
+
+        <span class="lbl" style="margin-left:5px;">
+          State Code:
+        </span>
+
+        <span class="val" style="flex:0 0 15%;">
+          23
+        </span>
+
+      </div>
+
+      <div class="po-line">
+
+        <span class="lbl">
+          Contact / Email:
+        </span>
+
+        <span class="val">
+          ${escapeHtmlLite(email)}
+        </span>
+
+      </div>
+
+    </div>
+
+  </div>
+
+
+  <!-- =====================================================
+       PO META
+       ===================================================== -->
+
+  <div class="po-meta">
+
+    <div class="po-meta-col">
+
+      <div class="po-kv">
+        <div class="k">PO No.</div>
+        <div class="v">${escapeHtmlLite(poNo)}</div>
+      </div>
+
+      <div class="po-kv">
+        <div class="k">Document Type</div>
+        <div class="v">Purchase Order</div>
+      </div>
+
+      <div class="po-kv">
+        <div class="k">Indent / PR No.</div>
+        <div class="v">—</div>
+      </div>
+
+      <div class="po-kv">
+        <div class="k">Buyer / Officer</div>
+        <div class="v">Resource Manager / Procurement Cell</div>
+      </div>
+
+      <div class="po-kv">
+        <div class="k">Department</div>
+        <div class="v">
+          MPPHCL · ${escapeHtmlLite(c.category)}
+        </div>
+      </div>
+
+      <div class="po-kv">
+        <div class="k">Project / Unit</div>
+        <div class="v">
+          ${escapeHtmlLite(division)} Division
+        </div>
+      </div>
+
+    </div>
+
+
+    <div class="po-meta-col">
+
+      <div class="po-kv">
+        <div class="k">PO Date</div>
+        <div class="v">
+          ${escapeHtmlLite(poDate)}
+        </div>
+      </div>
+
+      <div class="po-kv">
+        <div class="k">Tender / RC No.</div>
+        <div class="v">
+          ${escapeHtmlLite(c.tenderId)}
+        </div>
+      </div>
+
+      <div class="po-kv">
+        <div class="k">Contract / LOA No.</div>
+        <div class="v">
+          ${escapeHtmlLite(c.id)}
+        </div>
+      </div>
+
+      <div class="po-kv">
+        <div class="k">Phone</div>
+        <div class="v">
+          0755-2578911
+        </div>
+      </div>
+
+      <div class="po-kv">
+        <div class="k">Email</div>
+        <div class="v">
+          itcell-mpphscl[AT]mp[DOT]gov[DOT]in
+        </div>
+      </div>
+
+      <div class="po-kv">
+        <div class="k">Budget Head</div>
+        <div class="v">
+          DoPHFW / MPPHCL · ${escapeHtmlLite(c.category)}
+        </div>
+      </div>
+
+    </div>
+
+  </div>
+
+
+  <!-- =====================================================
+       SHIP TO / COMMERCIAL TERMS
+       ===================================================== -->
+
+  <div class="po-terms">
+
+    <div>
+
+      <h4>Ship To / Consignee:</h4>
+
+      <div class="po-line">
+
+        <span class="lbl">
+          Facility / Plant:
+        </span>
+
+        <span class="val">
+          Central / District Warehouse · ${escapeHtmlLite(division)}
+        </span>
+
+      </div>
+
+      <div class="po-line">
+
+        <span class="lbl">
+          Address:
+        </span>
+
+        <span class="val">
+          As per delivery schedule under contract ${escapeHtmlLite(c.id)}
+        </span>
+
+      </div>
+
+      <div class="po-line">
+
+        <span class="lbl"></span>
+
+        <span class="val">
+          ${escapeHtmlLite(division)}, Madhya Pradesh
+        </span>
+
+      </div>
+
+      <div class="po-line">
+
+        <span class="lbl">
+          GSTIN:
+        </span>
+
+        <span class="val" style="flex:0 0 37%;">
+          23AABCM3986N1ZS
+        </span>
+
+        <span class="lbl" style="margin-left:5px;">
+          State Code:
+        </span>
+
+        <span class="val" style="flex:0 0 15%;">
+          23
+        </span>
+
+      </div>
+
+      <div class="po-line">
+
+        <span class="lbl">
+          Contact Person:
+        </span>
+
+        <span class="val">
+          Stores Officer · ${escapeHtmlLite(division)}
+        </span>
+
+      </div>
+
+    </div>
+
+
+    <div>
+
+      <h4>Commercial &amp; Delivery Terms:</h4>
+
+      <div class="po-line">
+
+        <span class="lbl">
+          Currency:
+        </span>
+
+        <span class="val">
+          INR
+        </span>
+
+      </div>
+
+      <div class="po-line">
+
+        <span class="lbl">
+          Required Delivery Date:
+        </span>
+
+        <span class="val">
+          ${escapeHtmlLite(requiredBy)}
+        </span>
+
+      </div>
+
+      <div class="po-line">
+
+        <span class="lbl">
+          Payment Terms:
+        </span>
+
+        <span class="val">
+          As per contract / rate contract terms
+        </span>
+
+      </div>
+
+      <div class="po-line">
+
+        <span class="lbl">
+          Mode of Transport:
+        </span>
+
+        <span class="val">
+          Vendor arrangement
+        </span>
+
+      </div>
+
+      <div class="po-line">
+
+        <span class="lbl">
+          Freight / Insurance:
+        </span>
+
+        <span class="val">
+          Inclusive (unless otherwise stated)
+        </span>
+
+      </div>
+
+      <div class="po-line">
+
+        <span class="lbl">
+          Incoterms / Delivery Basis:
+        </span>
+
+        <span class="val">
+          Door delivery · GRN acceptance
+        </span>
+
+      </div>
+
+    </div>
+
+  </div>
+
+
+  <!-- =====================================================
+       ITEM TABLE
+       ===================================================== -->
+
+  <table class="po-items">
+
+    <colgroup>
+
+      <col class="c-no">
+      <col class="c-desc">
+      <col class="c-hsn">
+      <col class="c-rev">
+      <col class="c-qty">
+      <col class="c-uom">
+      <col class="c-price">
+      <col class="c-per">
+      <col class="c-basic">
+      <col class="c-del">
+      <col class="c-fr">
+      <col class="c-disc">
+
+    </colgroup>
+
+    <thead>
+
+      <tr>
+
+        <th>Item<br>No.</th>
+
+        <th>
+          Material / Equipment Description<br>
+          Specification / Drawing No.
+        </th>
+
+        <th>
+          HSN /<br>SAC
+        </th>
+
+        <th>
+          Rev.<br>No.
+        </th>
+
+        <th>Qty.</th>
+
+        <th>UOM</th>
+
+        <th>
+          Unit Price<br>(₹)
+        </th>
+
+        <th>Per</th>
+
+        <th>
+          Basic Amount<br>(₹)
+        </th>
+
+        <th>
+          Delivery<br>Date
+        </th>
+
+        <th>
+          Freight /<br>Packing
+        </th>
+
+        <th>
+          Discount
+        </th>
+
+      </tr>
+
+    </thead>
+
+    <tbody>
+
+      ${itemRows.join('')}
+
+    </tbody>
+
+  </table>
+
+
+  <!-- =====================================================
+       TOTALS
+       ===================================================== -->
+
+  <table class="po-totals">
+
+    <tr>
+
+      <td class="lbl">
+        Total
+      </td>
+
+      <td class="amt">
+        ${escapeHtmlLite(netTotal)}
+      </td>
+
+      <td class="amt"></td>
+      <td class="amt"></td>
+      <td class="amt"></td>
+
+    </tr>
+
+    <tr>
+
+      <td class="lbl">
+        Freight / Packing
+      </td>
+
+      <td class="amt">
+        Inclusive
+      </td>
+
+      <td class="amt"></td>
+      <td class="amt"></td>
+      <td class="amt"></td>
+
+    </tr>
+
+    <tr>
+
+      <td class="lbl">
+        Discount
+      </td>
+
+      <td class="amt">
+        —
+      </td>
+
+      <td class="amt"></td>
+      <td class="amt"></td>
+      <td class="amt"></td>
+
+    </tr>
+
+    <tr>
+
+      <td class="lbl">
+        Taxable Value / GST
+      </td>
+
+      <td class="amt">
+        As applicable
+      </td>
+
+      <td class="amt"></td>
+      <td class="amt"></td>
+      <td class="amt"></td>
+
+    </tr>
+
+    <tr class="net">
+
+      <td class="lbl">
+        Net Total
+      </td>
+
+      <td class="amt">
+        ${escapeHtmlLite(netTotal)}
+      </td>
+
+      <td class="amt"></td>
+      <td class="amt"></td>
+      <td class="amt"></td>
+
+    </tr>
+
+  </table>
+
+
+  <!-- =====================================================
+       AMOUNT IN WORDS
+       ===================================================== -->
+
+  <div class="po-words">
+
+    <strong>
+      Amount in Words:
+    </strong>
+
+    <span class="fill">
+      ${escapeHtmlLite(words)}
+    </span>
+
+  </div>
+
+
+  <!-- =====================================================
+       SPECIAL INSTRUCTIONS
+       ===================================================== -->
+
+  <div class="po-instr">
+
+    <h4>
+      Special Instructions / Terms:
+    </h4>
+
+    <ol>
+
+      <li>
+        ${escapeHtmlLite(
+          c.remarks ||
+          'Supply strictly as per approved tender / rate contract specifications.'
+        )}
+      </li>
+
+      <li>
+        Delivery:
+        ${escapeHtmlLite(c.delivery)}
+        · Status:
+        ${escapeHtmlLite(c.status)}
+        · PBG:
+        ${escapeHtmlLite(c.pbg)}
+        (${escapeHtmlLite(c.pbgAmount || '—')}).
+      </li>
+
+      <li>
+        Payment subject to GRN / invoice matching and contractual deductions, if any.
+      </li>
+
+      <li>
+        This Purchase Order is issued against Contract / LOA
+        ${escapeHtmlLite(c.id)}
+        / Tender
+        ${escapeHtmlLite(c.tenderId)}.
+      </li>
+
+    </ol>
+
+  </div>
+
+
+  <!-- =====================================================
+       SIGNATURES
+       ===================================================== -->
+
+  <div class="po-sign">
+
+    <!-- PREPARED BY -->
+
+    <div>
+
+      <h4>
+        Prepared By
+      </h4>
+
+      <div class="body">
+
+        <p>
+          Signature: __________________________
+        </p>
+
+        <p>
+          Name: Resource Manager
+        </p>
+
+        <p>
+          Designation: Procurement Cell
+        </p>
+
+        <p>
+          Date: ${escapeHtmlLite(formatDateDMY(APP_TODAY))}
+        </p>
+
+      </div>
+
+    </div>
+
+
+    <!-- FINANCE -->
+
+    <div>
+
+      <h4>
+        Checked / Finance Concurrence
+      </h4>
+
+      <div class="body">
+
+        <p>
+          Signature: __________________________
+        </p>
+
+        <p>
+          Name: _______________________________
+        </p>
+
+        <p>
+          Designation: Finance Wing
+        </p>
+
+        <p>
+          Date: ____ / ____ / __________
+        </p>
+
+      </div>
+
+    </div>
+
+
+    <!-- AUTHORITY -->
+
+    <div>
+
+      <h4>
+        For MPPHCL
+      </h4>
+
+      <div class="body">
+
+        <p>
+          Signature: __________________________
+        </p>
+
+        <p>
+          Name: _______________________________
+        </p>
+
+        <p>
+          Designation: Competent Authority
+        </p>
+
+        <p>
+          Date: ____ / ____ / __________
+        </p>
+
+      </div>
+
+    </div>
+
+  </div>
+
+
+  <div class="po-auth">
+    Authorized Signatory &amp; Seal
+  </div>
+
+
+  <div class="po-note">
+    Blank configurable template. Validate MPPHCL legal name, address,
+    logo, tax details, approval hierarchy and contractual clauses before official use.
+  </div>
+
+
+</div>
+
+`;
+}
+
+
+function performContractPurchaseOrderDownload(c, mode) {
+  const poNo = c.poId || c.id;
+  const filename = `${poNo}_MPPHCL_Purchase_Order.pdf`;
+
+  if (typeof html2pdf === 'undefined') {
+    return Promise.reject(new Error('html2pdf unavailable'));
+  }
+
+  return new Promise((resolve, reject) => {
+    const host = document.createElement('div');
+    host.setAttribute('aria-hidden', 'true');
+    host.style.cssText = [
+      'position:absolute',
+      'left:0',
+      'top:0',
+      'width:794px',
+      'background:#ffffff',
+      'z-index:-9999',
+      'pointer-events:none'
+    ].join(';');
+    host.innerHTML = buildMpphclPurchaseOrderSheetHtml(c);
+    document.body.appendChild(host);
+
+    const sheet = host.querySelector('#mpphclPoSheet') || host.firstElementChild;
+    const finish = () => { try { host.remove(); } catch (_) { /* ignore */ } };
+
+    const opt = {
+      margin: 0,
+      filename,
+      image: { type: 'jpeg', quality: 0.88 },
+      html2canvas: {
+        scale: 1.5,
+        useCORS: true,
+        logging: false,
+        backgroundColor: '#ffffff',
+        x: 0,
+        y: 0,
+        scrollX: 0,
+        scrollY: 0,
+        width: 794,
+        windowWidth: 794
+      },
+      jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' },
+      pagebreak: { mode: [] }
+    };
+
+    // Build blob first, then trigger download — only then resolve (success modal waits on this).
+    html2pdf()
+      .set(opt)
+      .from(sheet)
+      .outputPdf('blob')
+      .then((blob) => {
+        finish();
+        if (!blob) throw new Error('Empty PDF blob');
+        downloadBlobFile(blob, filename);
+        // Give the browser a beat to start the download before success UI
+        setTimeout(() => resolve(blob), 200);
+      })
+      .catch((err) => {
+        console.error(err);
+        finish();
+        reject(err);
+      });
+  });
+}
 function openContractsFollowUp(contractId) {
   if (currentRole !== 'gov') return;
   const c = (typeof CONTRACTS !== 'undefined' ? CONTRACTS : []).find(x => x.id === contractId);

@@ -724,6 +724,17 @@ const PURCHASE_ORDER_DATA = {
   ]
 };
 
+/** PO templates available to Resource Manager when generating a Purchase Order (demo).
+ *  Template 1 aligns with the MPPHCL sheet vendors download for Active + Delivery Completed contracts. */
+const PO_TEMPLATES = [
+  { id: '1', label: 'Template 1 — MPPHCL Standard Purchase Order', hint: 'Same layout vendors download when Status is Active and Delivery is Completed.' },
+  { id: '2', label: 'Template 2 — Rate Contract Call-off PO', hint: 'Short-form call-off against an active rate contract.' },
+  { id: '3', label: 'Template 3 — Equipment / Installation PO', hint: 'Includes install, training and warranty annexure blocks.' },
+  { id: '4', label: 'Template 4 — Service / Manpower PO', hint: 'Monthly billing and SLA schedule oriented.' },
+  { id: '5', label: 'Template 5 — Consumables Replenishment PO', hint: 'Quarterly / lot-wise replenishment schedule.' },
+  { id: '6', label: 'Template 6 — Emergency / Short-notice PO', hint: 'Expedited delivery terms with urgency clause.' }
+];
+
 /** Stage 11 — GRN & Inspection (Resource Manager view) */
 const GRN_INSPECTION_DATA = {
   meta: {

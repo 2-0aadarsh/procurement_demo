@@ -157,14 +157,18 @@ function renderAuthUI() {
       <div class="landing-hero-main">
         <div class="landing-hero-slides" id="landingHeroSlides">
           <article class="landing-hero-slide is-active" data-slide="0">
-            <h2>Drug and Vaccine <span>Supply Chain Management (DVDMS)</span></h2>
+            <h2>Drug and Vaccine Supply Chain Management <span>(DVDMS)</span></h2>
             <p>i-MCS (integrated Medical Corporation System) is a software platform to automate various activities of Madhya Pradesh Public Health Services Corporation Limited (MPPHSCL). It comprises of Drug and Vaccine Supply Chain Management, Equipment Maintenance and Management. e-Aushadhi deals with Purchase Order, Inventory Management &amp; Distribution of various drugs etc. EMMS manages equipment and its maintenance.</p>
-            <img src="assets/drugs-distribution.png" alt="Drug and vaccine supply chain warehouse illustration" class="landing-hero-art">
+            <div class="landing-hero-art-frame">
+              <img src="assets/drugs-distribution.png" alt="Drug and vaccine supply chain warehouse illustration" class="landing-hero-art">
+            </div>
           </article>
           <article class="landing-hero-slide" data-slide="1">
             <h2>Equipment Maintenance and Management System <span>(EMMS)</span></h2>
             <p>i-MCS (integrated Medical Corporation System) is a software platform to automate various activities of Madhya Pradesh Public Health Services Corporation Limited (MPPHSCL). It comprises of Drug and Vaccine Supply Chain Management, Equipment Maintenance and Management. e-Aushadhi deals with Purchase Order, Inventory Management &amp; Distribution of various drugs etc. EMMS manages equipment and its maintenance.</p>
-            <img src="assets/emms.png" alt="Equipment maintenance and clinical environment" class="landing-hero-art landing-hero-art--photo">
+            <div class="landing-hero-art-frame">
+              <img src="assets/emms.png" alt="Equipment maintenance and clinical environment" class="landing-hero-art landing-hero-art--photo">
+            </div>
           </article>
         </div>
         <div class="landing-hero-dots" role="tablist" aria-label="Hero slides">
@@ -292,9 +296,24 @@ function setLandingHeroSlide(index) {
   const slides = document.querySelectorAll('#landingHeroSlides .landing-hero-slide');
   const dots = document.querySelectorAll('[data-hero-dot]');
   if (!slides.length) return;
-  landingHeroIndex = ((index % slides.length) + slides.length) % slides.length;
-  slides.forEach((slide, i) => slide.classList.toggle('is-active', i === landingHeroIndex));
-  dots.forEach((dot, i) => dot.classList.toggle('is-active', i === landingHeroIndex));
+  const next = ((index % slides.length) + slides.length) % slides.length;
+  if (next === landingHeroIndex && slides[next]?.classList.contains('is-active')) {
+    dots.forEach((dot, i) => dot.classList.toggle('is-active', i === next));
+    return;
+  }
+  const prev = landingHeroIndex;
+  landingHeroIndex = next;
+  slides.forEach((slide, i) => {
+    slide.classList.remove('is-exit');
+    if (i === prev && prev !== next) slide.classList.add('is-exit');
+    slide.classList.toggle('is-active', i === next);
+  });
+  dots.forEach((dot, i) => dot.classList.toggle('is-active', i === next));
+  // Clear exit class after transition so inactive slides stay clean
+  window.clearTimeout(setLandingHeroSlide._exitTimer);
+  setLandingHeroSlide._exitTimer = window.setTimeout(() => {
+    slides.forEach(slide => slide.classList.remove('is-exit'));
+  }, 780);
 }
 
 function startLandingHeroCarousel() {
@@ -408,6 +427,7 @@ function renderLoginView() {
       <p>Sign in with your registered email or mobile number. OTP verification follows.</p>
     </div>
     <form id="authLoginForm" class="auth-form" novalidate>
+      ${customSelectHTML('Account Role', 'loginRole', AUTH_ROLE_OPTIONS, 'Vendor / Bidder')}
       <div class="form-group">
         <label for="loginIdentifier">Email or Mobile Number</label>
         <div class="auth-field">

@@ -3902,6 +3902,29 @@ body:has(#authPage:not([style*="display: none"])) {
   font-size: 0.85rem;
 }
 
+/* Bid Submission — tender combobox: narrower + taller */
+.bid-tender-select-row {
+  margin: 0 0 1rem;
+  max-width: 34rem;
+}
+
+.bid-tender-select-row .bid-tender-select {
+  margin: 0;
+}
+
+.wf-detail .bid-tender-select .custom-select-trigger {
+  min-height: 2.75rem;
+  padding: 0.75rem 1rem;
+  font-size: 0.92rem;
+  line-height: 1.35;
+}
+
+.wf-detail .bid-tender-select input[readonly] {
+  min-height: 2.75rem;
+  padding: 0.75rem 1rem;
+  font-size: 0.92rem;
+}
+
 .wf-checklist {
   padding: 0.75rem 1rem;
   margin-bottom: 1rem;
