@@ -31,7 +31,7 @@
 
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
-html { scroll-behavior: smooth; }
+html { scroll-behavior: smooth; width: 100%; max-width: 100%; }
 
 body {
   font-family: 'Plus Jakarta Sans', 'Segoe UI', system-ui, -apple-system, sans-serif;
@@ -39,7 +39,14 @@ body {
   color: var(--text);
   line-height: 1.6;
   min-height: 100vh;
+  width: 100%;
+  max-width: 100%;
+  margin: 0;
   overflow-x: hidden;
+}
+
+body:has(#authPage:not([style*="display: none"])) {
+  background: #fff;
 }
 
 /* Count & notification badges — refined, low-contrast */
@@ -125,11 +132,15 @@ body {
 .auth-page {
   min-height: 100vh;
   display: flex;
-  align-items: center;
-  justify-content: center;
+  flex-direction: column;
+  align-items: stretch;
+  justify-content: flex-start;
   position: relative;
-  padding: 2rem 1.25rem;
-  overflow: auto;
+  padding: 0;
+  width: 100%;
+  max-width: none;
+  overflow-x: hidden;
+  overflow-y: auto;
 }
 
 .auth-bg {
@@ -1876,6 +1887,7 @@ body {
   display: flex;
   align-items: center;
   justify-content: space-between;
+  gap: 0.75rem;
   margin-bottom: 1rem;
 }
 
@@ -6745,6 +6757,30 @@ body {
 .btn-sm {
   padding: 0.4rem 0.7rem;
   font-size: 0.8rem;
+}
+
+.report-widget-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+  flex-shrink: 0;
+  margin-left: auto;
+}
+
+.report-table-block {
+  margin-top: 1rem;
+}
+
+.report-table-block .table-header {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-bottom: 0;
+  border-radius: var(--radius) var(--radius) 0 0;
+}
+
+.report-table-wrap {
+  margin-bottom: 1.25rem;
+  border-radius: 0 0 var(--radius) var(--radius);
 }
 
 .chart-container--tall {

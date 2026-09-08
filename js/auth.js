@@ -115,9 +115,13 @@ function maskPhone(phone) {
   return `+91 ${'•'.repeat(6)}${p.slice(-4)}`;
 }
 
+let landingHeroTimer = null;
+let landingHeroIndex = 0;
+
 function initAuth() {
   renderAuthUI();
   bindAuthEvents();
+  initLandingInteractions();
 }
 
 function renderAuthUI() {
@@ -125,50 +129,239 @@ function renderAuthUI() {
   if (!page) return;
 
   page.innerHTML = `
-    <div class="auth-bg" aria-hidden="true"></div>
-    <div class="auth-center">
-      <header class="auth-top-brand">
-        <div class="auth-top-logo"><i class="fa-solid fa-hospital"></i></div>
-        <div>
-          <h1>MP Health Procurement</h1>
-          <p>Public-Sector Drug &amp; Medical Procurement Lifecycle</p>
+    <header class="landing-header" id="landing-home">
+      <div class="landing-header-wrap">
+        <div class="landing-header-top">
+          <a class="landing-brand" href="#landing-home" data-landing-scroll="landing-home">
+            <img src="assets/banner_in_login.png" alt="MPPHSCL" class="landing-brand-logo">
+            <div class="landing-brand-text">
+              <strong>MPPHSCL</strong>
+              <span>Madhya Pradesh Public Health <em>Services</em> Corporation Limited</span>
+            </div>
+          </a>
+          <nav class="landing-nav" id="landingNav" aria-label="Landing page">
+            <a href="#landing-home" data-landing-scroll="landing-home">Home</a>
+            <a href="#landing-services" data-landing-scroll="landing-services">Services</a>
+            <a href="#landing-gallery" data-landing-scroll="landing-gallery">Gallery</a>
+            <a href="#landing-contact" data-landing-scroll="landing-contact">Contact</a>
+          </nav>
+          <img src="assets/mp_admin.png" alt="Government of Madhya Pradesh" class="landing-emblem">
+          <button type="button" class="landing-nav-toggle" id="landingNavToggle" aria-label="Open menu" aria-expanded="false">
+            <i class="fa-solid fa-bars"></i>
+          </button>
         </div>
-      </header>
+      </div>
+    </header>
 
-      <div class="auth-card">
-        <nav class="auth-steps" id="authSteps" aria-label="Authentication progress">
-          <div class="auth-step auth-step--done" data-step="1">
-            <span class="auth-step-num">1</span>
-            <span class="auth-step-label">Credentials</span>
-          </div>
-          <div class="auth-step-line"></div>
-          <div class="auth-step" data-step="2">
-            <span class="auth-step-num">2</span>
-            <span class="auth-step-label">OTP Verification</span>
-          </div>
-        </nav>
-
-        <div class="auth-tabs" id="authTabs" role="tablist">
-          <button type="button" class="auth-tab ${authView === 'login' ? 'active' : ''}" data-tab="login" role="tab" aria-selected="${authView === 'login'}">Sign In</button>
-          <button type="button" class="auth-tab ${authView === 'signup' ? 'active' : ''}" data-tab="signup" role="tab" aria-selected="${authView === 'signup'}">Create Account</button>
+    <section class="landing-hero" aria-label="Portal introduction">
+      <div class="landing-hero-main">
+        <div class="landing-hero-slides" id="landingHeroSlides">
+          <article class="landing-hero-slide is-active" data-slide="0">
+            <h2>Drug and Vaccine <span>Supply Chain Management (DVDMS)</span></h2>
+            <p>i-MCS (integrated Medical Corporation System) is a software platform to automate various activities of Madhya Pradesh Public Health Services Corporation Limited (MPPHSCL). It comprises of Drug and Vaccine Supply Chain Management, Equipment Maintenance and Management. e-Aushadhi deals with Purchase Order, Inventory Management &amp; Distribution of various drugs etc. EMMS manages equipment and its maintenance.</p>
+            <img src="assets/drugs-distribution.png" alt="Drug and vaccine supply chain warehouse illustration" class="landing-hero-art">
+          </article>
+          <article class="landing-hero-slide" data-slide="1">
+            <h2>Equipment Maintenance and Management System <span>(EMMS)</span></h2>
+            <p>i-MCS (integrated Medical Corporation System) is a software platform to automate various activities of Madhya Pradesh Public Health Services Corporation Limited (MPPHSCL). It comprises of Drug and Vaccine Supply Chain Management, Equipment Maintenance and Management. e-Aushadhi deals with Purchase Order, Inventory Management &amp; Distribution of various drugs etc. EMMS manages equipment and its maintenance.</p>
+            <img src="assets/emms.png" alt="Equipment maintenance and clinical environment" class="landing-hero-art landing-hero-art--photo">
+          </article>
         </div>
-
-        <div id="authAlert" class="auth-alert hidden" role="alert"></div>
-        <div class="auth-form-body" id="authFormBody"></div>
+        <div class="landing-hero-dots" role="tablist" aria-label="Hero slides">
+          <button type="button" class="landing-hero-dot is-active" data-hero-dot="0" aria-label="DVDMS slide"></button>
+          <button type="button" class="landing-hero-dot" data-hero-dot="1" aria-label="EMMS slide"></button>
+        </div>
       </div>
 
-      <footer class="auth-center-footer">
-        <span>© 2026 MP Health Procurement · GFR 2017 Compliant</span>
-        <div class="auth-panel-links">
-          <a href="#" onclick="return false">Privacy</a>
-          <a href="#" onclick="return false">Terms</a>
-          <a href="#" onclick="return false">Help Desk</a>
+      <aside class="landing-login-col" id="landing-signin" aria-label="Sign in">
+        <div class="auth-card">
+          <nav class="auth-steps" id="authSteps" aria-label="Authentication progress">
+            <div class="auth-step auth-step--done" data-step="1">
+              <span class="auth-step-num">1</span>
+              <span class="auth-step-label">Credentials</span>
+            </div>
+            <div class="auth-step-line"></div>
+            <div class="auth-step" data-step="2">
+              <span class="auth-step-num">2</span>
+              <span class="auth-step-label">OTP Verification</span>
+            </div>
+          </nav>
+
+          <div class="auth-tabs" id="authTabs" role="tablist">
+            <button type="button" class="auth-tab ${authView === 'login' ? 'active' : ''}" data-tab="login" role="tab" aria-selected="${authView === 'login'}">Sign In</button>
+            <button type="button" class="auth-tab ${authView === 'signup' ? 'active' : ''}" data-tab="signup" role="tab" aria-selected="${authView === 'signup'}">Create Account</button>
+          </div>
+
+          <div id="authAlert" class="auth-alert hidden" role="alert"></div>
+          <div class="auth-form-body" id="authFormBody"></div>
         </div>
-      </footer>
-    </div>
+      </aside>
+    </section>
+
+    <section class="landing-services" id="landing-services">
+      <div class="landing-section-inner">
+        <header class="landing-section-head">
+          <h2>Our Services</h2>
+          <p>End-to-end digital support across procurement, quality, logistics, and reporting for public health supply chains.</p>
+        </header>
+        <div class="landing-service-grid">
+          <article class="landing-service-card">
+            <div class="landing-service-icon landing-service-icon--it"><i class="fa-solid fa-laptop-code"></i></div>
+            <h3>IT</h3>
+            <p>Statistical maintenance of data digitally</p>
+          </article>
+          <article class="landing-service-card">
+            <div class="landing-service-icon landing-service-icon--finance"><i class="fa-solid fa-indian-rupee-sign"></i></div>
+            <h3>Finance</h3>
+            <p>Financial management</p>
+          </article>
+          <article class="landing-service-card">
+            <div class="landing-service-icon landing-service-icon--quality"><i class="fa-solid fa-flask-vial"></i></div>
+            <h3>Quality</h3>
+            <p>To carry out quality checks for drugs, surgical &amp; reagents</p>
+          </article>
+          <article class="landing-service-card">
+            <div class="landing-service-icon landing-service-icon--procurement"><i class="fa-solid fa-cart-shopping"></i></div>
+            <h3>Procurement</h3>
+            <p>To facilitate the procurement of medicines that meet prescribed safety and health standards</p>
+          </article>
+          <article class="landing-service-card">
+            <div class="landing-service-icon landing-service-icon--logistics"><i class="fa-solid fa-truck"></i></div>
+            <h3>Logistics</h3>
+            <p>Plans the efficient flow and storage of drugs</p>
+          </article>
+          <article class="landing-service-card">
+            <div class="landing-service-icon landing-service-icon--reports"><i class="fa-solid fa-chart-column"></i></div>
+            <h3>Reports Section</h3>
+            <p>To generate reports based on user requirements</p>
+          </article>
+        </div>
+      </div>
+    </section>
+
+    <section class="landing-gallery" id="landing-gallery">
+      <div class="landing-section-inner">
+        <header class="landing-section-head landing-section-head--row">
+          <div>
+            <h2>Our Gallery</h2>
+            <p>Facilities and supply-chain operations across Madhya Pradesh.</p>
+          </div>
+          <div class="landing-gallery-nav">
+            <button type="button" class="landing-gallery-btn" id="landingGalleryPrev" aria-label="Previous gallery images">prev</button>
+            <button type="button" class="landing-gallery-btn" id="landingGalleryNext" aria-label="Next gallery images">next</button>
+          </div>
+        </header>
+        <div class="landing-gallery-track" id="landingGalleryTrack">
+          <figure class="landing-gallery-item"><img src="assets/img1.jpg" alt="Jai Prakash Hospital exterior"></figure>
+          <figure class="landing-gallery-item"><img src="assets/img2.jpg" alt="Patients waiting at a public health gynecology clinic"></figure>
+          <figure class="landing-gallery-item"><img src="assets/img3.jpg" alt="Drug warehouse storage racks"></figure>
+          <figure class="landing-gallery-item"><img src="assets/img4.jpg" alt="Janani Express ambulance at Community Health Center Indri, Sehore"></figure>
+          <figure class="landing-gallery-item"><img src="assets/img5.jpg" alt="Community Health Center Deori Kalan, Sagar"></figure>
+        </div>
+      </div>
+    </section>
+
+    <footer class="landing-footer" id="landing-contact">
+      <div class="landing-footer-inner">
+        <div class="landing-footer-col">
+          <h3>Schemes</h3>
+          <a href="https://www.nhm.gov.in/" target="_blank" rel="noopener noreferrer">Sardar Vallabh Bhai Patel Nishulk Aushadhi Vitaran Yojna</a>
+          <a href="https://www.nhm.gov.in/" target="_blank" rel="noopener noreferrer">सरदार वल्लभभाई पटेल नि:शुल्क औषधि वितरण योजना</a>
+        </div>
+        <div class="landing-footer-col">
+          <h3>Contact Us</h3>
+          <a href="tel:07552578911"><i class="fa-solid fa-phone"></i> Telephone No. — 0755-2578911, 4045264</a>
+          <a href="mailto:itcell-mpphscl@mp.gov.in"><i class="fa-solid fa-envelope"></i> itcell-mpphscl[AT]mp[DOT]gov[DOT]in</a>
+        </div>
+        <div class="landing-footer-col landing-footer-col--brand">
+          <h3>Designed &amp; Developed by</h3>
+          <img src="assets/cdaclogo.png" alt="C-DAC — Centre for Development of Advanced Computing" class="landing-cdac">
+        </div>
+      </div>
+      <div class="landing-footer-bar">
+        <span>© ${new Date().getFullYear()} MPPHSCL · MP Health Procurement Prototype</span>
+        <span>GFR 2017 Compliant</span>
+      </div>
+    </footer>
   `;
 
   updateAuthContent();
+}
+
+function setLandingHeroSlide(index) {
+  const slides = document.querySelectorAll('#landingHeroSlides .landing-hero-slide');
+  const dots = document.querySelectorAll('[data-hero-dot]');
+  if (!slides.length) return;
+  landingHeroIndex = ((index % slides.length) + slides.length) % slides.length;
+  slides.forEach((slide, i) => slide.classList.toggle('is-active', i === landingHeroIndex));
+  dots.forEach((dot, i) => dot.classList.toggle('is-active', i === landingHeroIndex));
+}
+
+function startLandingHeroCarousel() {
+  stopLandingHeroCarousel();
+  landingHeroTimer = setInterval(() => setLandingHeroSlide(landingHeroIndex + 1), 7000);
+}
+
+function stopLandingHeroCarousel() {
+  if (landingHeroTimer) {
+    clearInterval(landingHeroTimer);
+    landingHeroTimer = null;
+  }
+}
+
+function initLandingInteractions() {
+  const page = document.getElementById('authPage');
+  if (!page) return;
+
+  if (page.dataset.landingBound === '1') {
+    setLandingHeroSlide(0);
+    startLandingHeroCarousel();
+    return;
+  }
+  page.dataset.landingBound = '1';
+
+  page.addEventListener('click', e => {
+    const scrollLink = e.target.closest('[data-landing-scroll]');
+    if (scrollLink) {
+      e.preventDefault();
+      const id = scrollLink.getAttribute('data-landing-scroll');
+      const target = document.getElementById(id);
+      if (target) {
+        target.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      }
+      document.getElementById('landingNav')?.classList.remove('is-open');
+      document.getElementById('landingNavToggle')?.setAttribute('aria-expanded', 'false');
+      return;
+    }
+
+    const heroDot = e.target.closest('[data-hero-dot]');
+    if (heroDot) {
+      setLandingHeroSlide(Number(heroDot.getAttribute('data-hero-dot')) || 0);
+      startLandingHeroCarousel();
+      return;
+    }
+
+    if (e.target.closest('#landingNavToggle')) {
+      const nav = document.getElementById('landingNav');
+      const open = !nav?.classList.contains('is-open');
+      nav?.classList.toggle('is-open', open);
+      document.getElementById('landingNavToggle')?.setAttribute('aria-expanded', open ? 'true' : 'false');
+      return;
+    }
+
+    if (e.target.closest('#landingGalleryPrev')) {
+      const track = document.getElementById('landingGalleryTrack');
+      track?.scrollBy({ left: -320, behavior: 'smooth' });
+      return;
+    }
+    if (e.target.closest('#landingGalleryNext')) {
+      const track = document.getElementById('landingGalleryTrack');
+      track?.scrollBy({ left: 320, behavior: 'smooth' });
+    }
+  });
+
+  setLandingHeroSlide(0);
+  startLandingHeroCarousel();
 }
 
 function updateAuthContent() {
@@ -597,8 +790,13 @@ function handleOtpSubmit() {
   const role = authPending.role;
   authPending = null;
   stopOtpTimer();
+  stopLandingHeroCarousel();
 
-  document.getElementById('authPage').style.display = 'none';
+  const authPage = document.getElementById('authPage');
+  if (authPage) {
+    authPage.style.display = 'none';
+    authPage.classList.add('is-hidden');
+  }
   if (typeof completeAuthLogin === 'function') {
     completeAuthLogin(role, authSession);
   }

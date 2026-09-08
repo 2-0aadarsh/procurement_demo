@@ -963,7 +963,11 @@ function logout() {
   noticesShownThisSession = false;
   resetGovNoticesForDemo();
   document.getElementById('app').classList.remove('active', 'gov-app', 'vendor-app');
-  document.getElementById('authPage').style.display = 'flex';
+  const authPage = document.getElementById('authPage');
+  if (authPage) {
+    authPage.classList.remove('is-hidden');
+    authPage.style.display = 'flex';
+  }
   if (typeof clearAuthSession === 'function') clearAuthSession();
   if (typeof initAuth === 'function') initAuth();
   closeAlertPanel();
@@ -6453,20 +6457,44 @@ function escapePdfText(str) {
 }
 
 function buildSimplePdfBlob(lines) {
-  const safe = (lines || []).map(l => escapePdfText(l));
-  const contentParts = ['BT', '/F1 11 Tf', '50 800 Td', '14 TL'];
-  safe.forEach((line, i) => {
-    if (i === 0) contentParts.push(`(${line}) Tj`);
-    else contentParts.push(`T* (${line}) Tj`);
-  });
-  contentParts.push('ET');
-  const stream = contentParts.join('\n');
+  const safe = (lines || []).map(l => escapePdfText(String(l).slice(0, 108)));
+  const linesPerPage = 46;
+  const pages = [];
+  for (let i = 0; i < Math.max(safe.length, 1); i += linesPerPage) {
+    pages.push(safe.slice(i, i + linesPerPage));
+  }
+  if (!pages.length) pages.push(['(No data)']);
+
   const objs = [];
   objs.push('1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n');
-  objs.push('2 0 obj\n<< /Type /Pages /Kids [3 0 R] /Count 1 >>\nendobj\n');
-  objs.push('3 0 obj\n<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] /Contents 4 0 R /Resources << /Font << /F1 5 0 R >> >> >>\nendobj\n');
-  objs.push(`4 0 obj\n<< /Length ${stream.length} >>\nstream\n${stream}\nendstream\nendobj\n`);
-  objs.push('5 0 obj\n<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>\nendobj\n');
+
+  const pageObjNums = [];
+  const contentObjNums = [];
+  let nextId = 3;
+  pages.forEach(() => {
+    pageObjNums.push(nextId++);
+    contentObjNums.push(nextId++);
+  });
+  const fontId = nextId;
+
+  const kids = pageObjNums.map(n => `${n} 0 R`).join(' ');
+  objs.push(`2 0 obj\n<< /Type /Pages /Kids [${kids}] /Count ${pages.length} >>\nendobj\n`);
+
+  pages.forEach((pageLines, pi) => {
+    const pageId = pageObjNums[pi];
+    const contentId = contentObjNums[pi];
+    const contentParts = ['BT', '/F1 10 Tf', '40 800 Td', '15 TL'];
+    pageLines.forEach((line, i) => {
+      if (i === 0) contentParts.push(`(${line}) Tj`);
+      else contentParts.push(`T* (${line}) Tj`);
+    });
+    contentParts.push('ET');
+    const stream = contentParts.join('\n');
+    objs.push(`${pageId} 0 obj\n<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] /Contents ${contentId} 0 R /Resources << /Font << /F1 ${fontId} 0 R >> >> >>\nendobj\n`);
+    objs.push(`${contentId} 0 obj\n<< /Length ${stream.length} >>\nstream\n${stream}\nendstream\nendobj\n`);
+  });
+  objs.push(`${fontId} 0 obj\n<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>\nendobj\n`);
+
   let pdf = '%PDF-1.4\n';
   const offsets = [0];
   objs.forEach(o => {
@@ -10076,51 +10104,65 @@ function renderVendorReports() {
           <h3>Bid Participation &amp; Clarifications</h3>
           <p>Combines Tender Discovery, Bid Submission, and Clarifications across your bidder lifecycle.</p>
         </div>
-        <div class="report-section-actions">
-          <button type="button" class="btn btn-outline btn-sm" onclick="downloadVendorReport('bid','excel')"><i class="fa-solid fa-file-excel"></i> Excel</button>
-          <button type="button" class="btn btn-outline btn-sm" onclick="downloadVendorReport('bid','pdf')"><i class="fa-solid fa-file-pdf"></i> PDF</button>
-        </div>
       </div>
       <div class="chart-grid">
         <div class="chart-card">
-          <div class="chart-header"><h3>Tender Pipeline by Status</h3></div>
+          <div class="chart-header">
+            <h3>Tender Pipeline by Status</h3>
+            ${vendorWidgetDownloadBtns('tender-pipeline')}
+          </div>
           <p class="chart-help">Click a bar to view tenders in that status.</p>
           <div class="chart-container"><canvas id="chartVendorTenderStatus"></canvas></div>
         </div>
         <div class="chart-card">
-          <div class="chart-header"><h3>Bid Status Mix</h3></div>
+          <div class="chart-header">
+            <h3>Bid Status Mix</h3>
+            ${vendorWidgetDownloadBtns('bid-mix')}
+          </div>
           <p class="chart-help">Click a segment to view bids in that status.</p>
           <div class="chart-container"><canvas id="chartVendorBidMix"></canvas></div>
         </div>
       </div>
-      <div class="data-table-wrap mt-2">
-        <table class="data-table" id="tblBidParticipation">
-          <thead>
-            <tr><th>Tender</th><th>Category</th><th>Technical</th><th>Financial</th><th>EMD</th><th>Deadline</th><th>Status</th></tr>
-          </thead>
-          <tbody>
-            ${ds.bids.length ? ds.bids.map(b => `<tr>
-              <td><strong>${b.tenderId}</strong></td>
-              <td>${b.category}</td>
-              <td>${b.technical}</td>
-              <td>${b.financial}</td>
-              <td>${b.emd}</td>
-              <td>${formatDateDMY(b.deadline)}</td>
-              <td><span class="badge badge-${b.status === 'Draft' ? 'warning' : 'info'}">${b.status}</span></td>
-            </tr>`).join('') : emptyTableRow(7)}
-          </tbody>
-        </table>
+      <div class="report-table-block">
+        <div class="table-header">
+          <h3>Bid submissions</h3>
+          ${vendorWidgetDownloadBtns('bids')}
+        </div>
+        <div class="data-table-wrap report-table-wrap">
+          <table class="data-table" id="tblBidParticipation">
+            <thead>
+              <tr><th>Tender</th><th>Category</th><th>Technical</th><th>Financial</th><th>EMD</th><th>Deadline</th><th>Status</th></tr>
+            </thead>
+            <tbody>
+              ${ds.bids.length ? ds.bids.map(b => `<tr>
+                <td><strong>${b.tenderId}</strong></td>
+                <td>${b.category}</td>
+                <td>${b.technical}</td>
+                <td>${b.financial}</td>
+                <td>${b.emd}</td>
+                <td>${formatDateDMY(b.deadline)}</td>
+                <td><span class="badge badge-${b.status === 'Draft' ? 'warning' : 'info'}">${b.status}</span></td>
+              </tr>`).join('') : emptyTableRow(7)}
+            </tbody>
+          </table>
+        </div>
       </div>
-      <div class="data-table-wrap mt-2">
-        <table class="data-table" id="tblClarifications">
-          <thead><tr><th>Query ID</th><th>Tender</th><th>Category</th><th>Subject</th><th>Status</th></tr></thead>
-          <tbody>
-            ${ds.clarifications.length ? ds.clarifications.map(c => `<tr>
-              <td>${c.id}</td><td>${c.tenderId}</td><td>${c.category}</td><td>${c.subject}</td>
-              <td><span class="badge badge-${c.status === 'Answered' ? 'success' : c.status === 'Pending' ? 'warning' : 'info'}">${c.status}</span></td>
-            </tr>`).join('') : emptyTableRow(5)}
-          </tbody>
-        </table>
+      <div class="report-table-block">
+        <div class="table-header">
+          <h3>Clarification queries</h3>
+          ${vendorWidgetDownloadBtns('clarifications')}
+        </div>
+        <div class="data-table-wrap report-table-wrap">
+          <table class="data-table" id="tblClarifications">
+            <thead><tr><th>Query ID</th><th>Tender</th><th>Category</th><th>Subject</th><th>Status</th></tr></thead>
+            <tbody>
+              ${ds.clarifications.length ? ds.clarifications.map(c => `<tr>
+                <td>${c.id}</td><td>${c.tenderId}</td><td>${c.category}</td><td>${c.subject}</td>
+                <td><span class="badge badge-${c.status === 'Answered' ? 'success' : c.status === 'Pending' ? 'warning' : 'info'}">${c.status}</span></td>
+              </tr>`).join('') : emptyTableRow(5)}
+            </tbody>
+          </table>
+        </div>
       </div>
     </section>
 
@@ -10132,39 +10174,50 @@ function renderVendorReports() {
           <h3>Contract Execution &amp; Delivery Performance</h3>
           <p>Combines Contracts &amp; POs, Delivery &amp; Invoices, and payment outcomes.</p>
         </div>
-        <div class="report-section-actions">
-          <button type="button" class="btn btn-outline btn-sm" onclick="downloadVendorReport('execution','excel')"><i class="fa-solid fa-file-excel"></i> Excel</button>
-          <button type="button" class="btn btn-outline btn-sm" onclick="downloadVendorReport('execution','pdf')"><i class="fa-solid fa-file-pdf"></i> PDF</button>
-        </div>
       </div>
       <div class="chart-grid">
         <div class="chart-card full">
-          <div class="chart-header"><h3>Delivery &amp; Payment Outcomes</h3></div>
+          <div class="chart-header">
+            <h3>Delivery &amp; Payment Outcomes</h3>
+            ${vendorWidgetDownloadBtns('delivery-pay')}
+          </div>
           <div class="chart-container"><canvas id="chartVendorDeliveryPay"></canvas></div>
         </div>
       </div>
-      <div class="data-table-wrap mt-2">
-        <table class="data-table" id="tblContracts">
-          <thead><tr><th>Contract ID</th><th>Tender</th><th>Category</th><th>Value</th><th>PBG</th><th>Delivery</th><th>Status</th></tr></thead>
-          <tbody>
-            ${ds.contracts.length ? ds.contracts.map(c => `<tr>
-              <td><strong>${c.id}</strong></td><td>${c.tenderId}</td><td>${c.category}</td><td>${c.value}</td>
-              <td>${c.pbg}</td><td>${c.delivery}</td>
-              <td><span class="badge badge-${c.status === 'In Progress' ? 'warning' : 'success'}">${c.status}</span></td>
-            </tr>`).join('') : emptyTableRow(7)}
-          </tbody>
-        </table>
+      <div class="report-table-block">
+        <div class="table-header">
+          <h3>Contracts &amp; POs</h3>
+          ${vendorWidgetDownloadBtns('contracts')}
+        </div>
+        <div class="data-table-wrap report-table-wrap">
+          <table class="data-table" id="tblContracts">
+            <thead><tr><th>Contract ID</th><th>Tender</th><th>Category</th><th>Value</th><th>PBG</th><th>Delivery</th><th>Status</th></tr></thead>
+            <tbody>
+              ${ds.contracts.length ? ds.contracts.map(c => `<tr>
+                <td><strong>${c.id}</strong></td><td>${c.tenderId}</td><td>${c.category}</td><td>${c.value}</td>
+                <td>${c.pbg}</td><td>${c.delivery}</td>
+                <td><span class="badge badge-${c.status === 'In Progress' ? 'warning' : 'success'}">${c.status}</span></td>
+              </tr>`).join('') : emptyTableRow(7)}
+            </tbody>
+          </table>
+        </div>
       </div>
-      <div class="data-table-wrap mt-2">
-        <table class="data-table" id="tblDeliveries">
-          <thead><tr><th>Delivery Challan ID</th><th>PO</th><th>Category</th><th>Items</th><th>GRN</th><th>Invoice</th><th>Payment</th></tr></thead>
-          <tbody>
-            ${ds.deliveries.length ? ds.deliveries.map(d => `<tr>
-              <td><strong>${d.id}</strong></td><td>${d.po}</td><td>${d.category}</td><td>${d.items}</td>
-              <td>${d.grn}</td><td>${d.invoice}</td><td>${d.payment}</td>
-            </tr>`).join('') : emptyTableRow(7)}
-          </tbody>
-        </table>
+      <div class="report-table-block">
+        <div class="table-header">
+          <h3>Deliveries &amp; invoices</h3>
+          ${vendorWidgetDownloadBtns('deliveries')}
+        </div>
+        <div class="data-table-wrap report-table-wrap">
+          <table class="data-table" id="tblDeliveries">
+            <thead><tr><th>Delivery Challan ID</th><th>PO</th><th>Category</th><th>Items</th><th>GRN</th><th>Invoice</th><th>Payment</th></tr></thead>
+            <tbody>
+              ${ds.deliveries.length ? ds.deliveries.map(d => `<tr>
+                <td><strong>${d.id}</strong></td><td>${d.po}</td><td>${d.category}</td><td>${d.items}</td>
+                <td>${d.grn}</td><td>${d.invoice}</td><td>${d.payment}</td>
+              </tr>`).join('') : emptyTableRow(7)}
+            </tbody>
+          </table>
+        </div>
       </div>
       <p class="report-footnote"><i class="fa-solid fa-circle-info"></i> Paid deliveries in filter: <strong>${paidDeliveries}</strong> · Overall vendor score: <strong>${ds.vendor?.overall || 90.1}</strong></p>
     </section>
@@ -10311,43 +10364,194 @@ function downloadCsv(filename, headers, rows) {
   URL.revokeObjectURL(url);
 }
 
-function buildVendorReportTables(kind) {
+function vendorWidgetDownloadBtns(widgetId) {
+  return `<div class="report-widget-actions">
+    <button type="button" class="btn btn-outline btn-sm" onclick="downloadVendorWidget('${widgetId}','excel')" title="Download Excel"><i class="fa-solid fa-file-excel"></i> Excel</button>
+    <button type="button" class="btn btn-outline btn-sm" onclick="downloadVendorWidget('${widgetId}','pdf')" title="Download PDF"><i class="fa-solid fa-file-pdf"></i> PDF</button>
+  </div>`;
+}
+
+function countByField(items, getter) {
+  const map = {};
+  (items || []).forEach(item => {
+    const key = getter(item) || '—';
+    map[key] = (map[key] || 0) + 1;
+  });
+  return map;
+}
+
+function buildVendorWidgetSheet(widgetId) {
   const ds = getVendorReportDataset();
+  const vendorName = ds.vendor?.name || 'MediSupply India Pvt Ltd';
+
+  if (widgetId === 'tender-pipeline') {
+    const byStatus = countByField(ds.tenders, t => t.status);
+    const labels = Object.keys(byStatus);
+    return {
+      id: widgetId,
+      title: 'Tender Pipeline by Status',
+      fileSlug: 'Tender_Pipeline',
+      headers: ['Status', 'Count'],
+      rows: labels.length ? labels.map(l => [l, byStatus[l]]) : [],
+      detailHeaders: ['Tender ID', 'Title', 'Category', 'Value', 'Bids', 'Deadline', 'Status'],
+      detailRows: ds.tenders.map(t => [t.id, t.title, t.category, t.value, t.bids ?? '', formatDateDMY(t.deadline), t.status]),
+      meta: `${vendorName} · Category: ${ds.category}`
+    };
+  }
+  if (widgetId === 'bid-mix') {
+    const byStatus = countByField(ds.bids, b => b.status);
+    const labels = Object.keys(byStatus);
+    return {
+      id: widgetId,
+      title: 'Bid Status Mix',
+      fileSlug: 'Bid_Status_Mix',
+      headers: ['Status', 'Count'],
+      rows: labels.length ? labels.map(l => [l, byStatus[l]]) : [],
+      detailHeaders: ['Tender', 'Category', 'Technical', 'Financial', 'EMD', 'Deadline', 'Status'],
+      detailRows: ds.bids.map(b => [b.tenderId, b.category, b.technical, b.financial, b.emd, formatDateDMY(b.deadline), b.status]),
+      meta: `${vendorName} · Category: ${ds.category}`
+    };
+  }
+  if (widgetId === 'bids') {
+    return {
+      id: widgetId,
+      title: 'Bid submissions',
+      fileSlug: 'Bid_Submissions',
+      headers: ['Tender', 'Category', 'Technical', 'Financial', 'EMD', 'Deadline', 'Status'],
+      rows: ds.bids.map(b => [b.tenderId, b.category, b.technical, b.financial, b.emd, formatDateDMY(b.deadline), b.status]),
+      meta: `${vendorName} · Category: ${ds.category}`
+    };
+  }
+  if (widgetId === 'clarifications') {
+    return {
+      id: widgetId,
+      title: 'Clarification queries',
+      fileSlug: 'Clarification_Queries',
+      headers: ['Query ID', 'Tender', 'Category', 'Subject', 'Status'],
+      rows: ds.clarifications.map(c => [c.id, c.tenderId, c.category, c.subject, c.status]),
+      meta: `${vendorName} · Category: ${ds.category}`
+    };
+  }
+  if (widgetId === 'delivery-pay') {
+    const deliveries = ds.deliveries;
+    const rows = [
+      ['GRN Accepted', deliveries.filter(d => d.grn === 'Accepted').length],
+      ['GRN Pending', deliveries.filter(d => d.grn !== 'Accepted').length],
+      ['Payment Paid', deliveries.filter(d => d.payment === 'Paid').length],
+      ['Payment Processing', deliveries.filter(d => d.payment === 'Processing').length],
+      ['Payment Pending', deliveries.filter(d => d.payment === '—' || !d.payment || (d.payment !== 'Paid' && d.payment !== 'Processing')).length]
+    ];
+    return {
+      id: widgetId,
+      title: 'Delivery & Payment Outcomes',
+      fileSlug: 'Delivery_Payment_Outcomes',
+      headers: ['Metric', 'Count'],
+      rows,
+      detailHeaders: ['Delivery Challan ID', 'PO', 'Category', 'Items', 'GRN', 'Invoice', 'Payment'],
+      detailRows: deliveries.map(d => [d.id, d.po, d.category, d.items, d.grn, d.invoice, d.payment]),
+      meta: `${vendorName} · Category: ${ds.category}`
+    };
+  }
+  if (widgetId === 'contracts') {
+    return {
+      id: widgetId,
+      title: 'Contracts & POs',
+      fileSlug: 'Contracts_POs',
+      headers: ['Contract ID', 'Tender', 'Category', 'Value', 'PBG', 'Delivery', 'Status'],
+      rows: ds.contracts.map(c => [c.id, c.tenderId, c.category, c.value, c.pbg, c.delivery, c.status]),
+      meta: `${vendorName} · Category: ${ds.category}`
+    };
+  }
+  if (widgetId === 'deliveries') {
+    return {
+      id: widgetId,
+      title: 'Deliveries & invoices',
+      fileSlug: 'Deliveries_Invoices',
+      headers: ['Delivery Challan ID', 'PO', 'Category', 'Items', 'GRN', 'Invoice', 'Payment'],
+      rows: ds.deliveries.map(d => [d.id, d.po, d.category, d.items, d.grn, d.invoice, d.payment]),
+      meta: `${vendorName} · Category: ${ds.category}`
+    };
+  }
+  return buildVendorWidgetSheet('bids');
+}
+
+function buildVendorReportTables(kind) {
   if (kind === 'bid') {
     return {
       title: 'Bid Participation & Clarifications',
       sheets: [
-        {
-          name: 'Bids',
-          headers: ['Tender', 'Category', 'Technical', 'Financial', 'EMD', 'Deadline', 'Status'],
-          rows: ds.bids.map(b => [b.tenderId, b.category, b.technical, b.financial, b.emd, formatDateDMY(b.deadline), b.status])
-        },
-        {
-          name: 'Clarifications',
-          headers: ['Query ID', 'Tender', 'Category', 'Subject', 'Status'],
-          rows: ds.clarifications.map(c => [c.id, c.tenderId, c.category, c.subject, c.status])
-        }
-      ]
+        buildVendorWidgetSheet('tender-pipeline'),
+        buildVendorWidgetSheet('bid-mix'),
+        buildVendorWidgetSheet('bids'),
+        buildVendorWidgetSheet('clarifications')
+      ].map(s => ({ name: s.fileSlug, headers: s.headers, rows: s.rows, title: s.title }))
     };
   }
   if (kind === 'execution') {
     return {
       title: 'Contract Execution & Delivery Performance',
       sheets: [
-        {
-          name: 'Contracts',
-          headers: ['Contract ID', 'Tender', 'Category', 'Value', 'PBG', 'Delivery', 'Status'],
-          rows: ds.contracts.map(c => [c.id, c.tenderId, c.category, c.value, c.pbg, c.delivery, c.status])
-        },
-        {
-          name: 'Deliveries',
-          headers: ['Delivery Challan ID', 'PO', 'Category', 'Items', 'GRN', 'Invoice', 'Payment'],
-          rows: ds.deliveries.map(d => [d.id, d.po, d.category, d.items, d.grn, d.invoice, d.payment])
-        }
-      ]
+        buildVendorWidgetSheet('delivery-pay'),
+        buildVendorWidgetSheet('contracts'),
+        buildVendorWidgetSheet('deliveries')
+      ].map(s => ({ name: s.fileSlug, headers: s.headers, rows: s.rows, title: s.title }))
     };
   }
   return buildVendorReportTables('bid');
+}
+
+function vendorSheetToPdfLines(sheet) {
+  const lines = [
+    'MP Health Procurement',
+    sheet.title,
+    sheet.meta || '',
+    `Generated: ${formatDateDMY(APP_TODAY)}`,
+    '',
+    sheet.headers.join(' | ')
+  ];
+  if (!sheet.rows.length) {
+    lines.push('(No records)');
+  } else {
+    sheet.rows.forEach(r => lines.push(r.map(c => String(c ?? '')).join(' | ')));
+  }
+  if (sheet.detailHeaders && sheet.detailRows?.length) {
+    lines.push('');
+    lines.push('Underlying records');
+    lines.push(sheet.detailHeaders.join(' | '));
+    sheet.detailRows.forEach(r => lines.push(r.map(c => String(c ?? '')).join(' | ')));
+  }
+  return lines.filter((l, i) => !(i > 0 && l === '' && lines[i - 1] === ''));
+}
+
+function performVendorWidgetDownload(widgetId, format) {
+  const sheet = buildVendorWidgetSheet(widgetId);
+  const stamp = APP_TODAY.replace(/-/g, '');
+  const base = `MPHP_${sheet.fileSlug}_${stamp}`;
+  if (format === 'excel') {
+    downloadCsv(`${base}.csv`, sheet.headers, sheet.rows);
+    if (sheet.detailHeaders && sheet.detailRows?.length) {
+      setTimeout(() => {
+        downloadCsv(`${base}_details.csv`, sheet.detailHeaders, sheet.detailRows);
+      }, 220);
+    }
+    return;
+  }
+  downloadBlobFile(buildSimplePdfBlob(vendorSheetToPdfLines(sheet)), `${base}.pdf`);
+}
+
+function downloadVendorWidget(widgetId, format) {
+  const sheet = buildVendorWidgetSheet(widgetId);
+  confirmDocumentDownload({
+    title: 'Confirm download',
+    docLabel: sheet.title,
+    formatLabel: format === 'excel' ? 'Excel (CSV)' : 'PDF',
+    fileHint: format === 'excel'
+      ? (sheet.detailRows?.length
+        ? `Summary + ${sheet.detailRows.length} detail row(s) as CSV`
+        : `${sheet.rows.length} row(s) as Excel-compatible CSV`)
+      : `PDF with ${sheet.title} data only`,
+    execute: () => performVendorWidgetDownload(widgetId, format)
+  });
 }
 
 function performVendorReportDownload(kind, format) {
@@ -10361,7 +10565,20 @@ function performVendorReportDownload(kind, format) {
     });
     return;
   }
-  openVendorReportPdf(pack);
+  const lines = [
+    'MP Health Procurement',
+    pack.title,
+    `Generated: ${formatDateDMY(APP_TODAY)}`,
+    ''
+  ];
+  pack.sheets.forEach(sheet => {
+    lines.push(sheet.title || sheet.name);
+    lines.push(sheet.headers.join(' | '));
+    if (!sheet.rows.length) lines.push('(No records)');
+    else sheet.rows.forEach(r => lines.push(r.map(c => String(c ?? '')).join(' | ')));
+    lines.push('');
+  });
+  downloadBlobFile(buildSimplePdfBlob(lines), `MPHP_${kind}_pack_${stamp}.pdf`);
 }
 
 function downloadVendorReport(kind, format) {
@@ -10372,7 +10589,7 @@ function downloadVendorReport(kind, format) {
     formatLabel: format === 'excel' ? 'Excel (CSV)' : 'PDF',
     fileHint: format === 'excel'
       ? `${pack.sheets.length} sheet(s) as Excel-compatible CSV`
-      : 'Printable PDF report window',
+      : 'PDF report with this section data only',
     execute: () => performVendorReportDownload(kind, format)
   });
 }
@@ -10382,7 +10599,7 @@ function downloadVendorReportPack(format) {
     title: 'Confirm report pack download',
     docLabel: 'Vendor analytics pack (Bid + Execution)',
     formatLabel: format === 'excel' ? 'Excel (CSV)' : 'PDF',
-    fileHint: 'Includes Bid Participation and Contract Execution reports',
+    fileHint: 'Includes Bid Participation and Contract Execution widgets',
     execute: () => {
       ['bid', 'execution'].forEach((kind, i) => {
         setTimeout(() => performVendorReportDownload(kind, format), i * (format === 'excel' ? 500 : 350));
@@ -10543,40 +10760,22 @@ function openGovReportPdf(pack) {
 
 function openVendorReportPdf(pack) {
   const ds = getVendorReportDataset();
-  const tablesHtml = pack.sheets.map(sheet => `
-    <h3 style="margin:18px 0 8px;font-size:14px;color:#003D5D">${sheet.name}</h3>
-    <table style="width:100%;border-collapse:collapse;font-size:11px">
-      <thead>
-        <tr>${sheet.headers.map(h => `<th style="border:1px solid #cbd5e1;background:#f1f5f9;padding:6px 8px;text-align:left">${h}</th>`).join('')}</tr>
-      </thead>
-      <tbody>
-        ${sheet.rows.map(r => `<tr>${r.map(c => `<td style="border:1px solid #e2e8f0;padding:6px 8px">${c}</td>`).join('')}</tr>`).join('') || `<tr><td colspan="${sheet.headers.length}" style="padding:8px;color:#64748b">No records</td></tr>`}
-      </tbody>
-    </table>
-  `).join('');
-
-  const win = window.open('', '_blank', 'noopener,noreferrer,width=960,height=720');
-  if (!win) {
-    showWfAlert('Please allow pop-ups to download the PDF report.');
-    return;
-  }
-  win.document.write(`<!DOCTYPE html><html><head><title>${pack.title}</title>
-    <style>
-      body{font-family:'Segoe UI',Arial,sans-serif;color:#0f172a;padding:24px;margin:0}
-      h1{font-size:20px;margin:0 0 4px}
-      .meta{color:#64748b;font-size:12px;margin-bottom:16px}
-      .actions{margin:16px 0 20px}
-      .actions button{padding:8px 14px;border-radius:8px;border:1px solid #cbd5e1;background:#003D5D;color:#fff;cursor:pointer;font-weight:600}
-      @media print{.actions{display:none} body{padding:0}}
-    </style>
-  </head><body>
-    <h1>MP Health Procurement — ${pack.title}</h1>
-    <div class="meta">Vendor: ${ds.vendor?.name || 'MediSupply India Pvt Ltd'} · ID: VND-MP-000123 · Category: ${ds.category} · Generated: ${formatDateDMY(APP_TODAY)}</div>
-    <div class="actions"><button onclick="window.print()">Download / Print PDF</button></div>
-    ${tablesHtml}
-    <script>setTimeout(function(){ window.print(); }, 350);<\/script>
-  </body></html>`);
-  win.document.close();
+  const stamp = APP_TODAY.replace(/-/g, '');
+  const lines = [
+    'MP Health Procurement',
+    pack.title,
+    `Vendor: ${ds.vendor?.name || 'MediSupply India Pvt Ltd'}`,
+    `Category: ${ds.category} · Generated: ${formatDateDMY(APP_TODAY)}`,
+    ''
+  ];
+  (pack.sheets || []).forEach(sheet => {
+    lines.push(sheet.title || sheet.name);
+    lines.push((sheet.headers || []).join(' | '));
+    if (!sheet.rows?.length) lines.push('(No records)');
+    else sheet.rows.forEach(r => lines.push(r.map(c => String(c ?? '')).join(' | ')));
+    lines.push('');
+  });
+  downloadBlobFile(buildSimplePdfBlob(lines), `MPHP_${(pack.title || 'report').replace(/\s+/g, '_')}_${stamp}.pdf`);
 }
 
 function renderSettings() {
@@ -13989,8 +14188,14 @@ function isSlaDismissed(scope) {
   try { return sessionStorage.getItem(slaDismissKey(scope)) === '1'; } catch (_) { return false; }
 }
 
-function dismissSlaModal(scope) {
+/** Remember that this SLA scope was already shown (once per stage / day). */
+function markSlaShown(scope) {
+  if (!scope) return;
   try { sessionStorage.setItem(slaDismissKey(scope), '1'); } catch (_) { /* ignore */ }
+}
+
+function dismissSlaModal(scope) {
+  markSlaShown(scope);
   closeModal();
 }
 
@@ -14087,7 +14292,7 @@ function renderSlaAlertModalBody(items, opts = {}) {
     </div>
     ${channels.length ? `<p class="report-footnote mt-2"><i class="fa-solid fa-paper-plane"></i> Notify sent via <strong>${channels.join(' + ')}</strong> to mapped officials. Logged under Settings → Recent notifications.</p>` : ''}
     <div class="modal-inline-actions">
-      <button type="button" class="btn btn-outline" onclick="dismissSlaModal('${opts.dismissScope || scope}')"><i class="fa-solid fa-xmark"></i> Dismiss for today</button>
+      <button type="button" class="btn btn-outline" onclick="dismissSlaModal('${opts.dismissScope || scope}')"><i class="fa-solid fa-xmark"></i> Got it</button>
       ${!isExpiry && opts.stageId ? `<button type="button" class="btn btn-primary" onclick="closeModal()"><i class="fa-solid fa-list-check"></i> Review stage list</button>` : ''}
       <button type="button" class="btn btn-outline" onclick="navigateTo('work-queue');closeModal()"><i class="fa-solid fa-bell"></i> Open Alerts</button>
     </div>
@@ -14099,6 +14304,13 @@ function openSlaItemsModal(items, opts = {}) {
   pushSlaAlertsToQueue(items);
   const channels = notifySlaOfficials(items, opts.stageName || opts.scopeLabel || 'SLA');
   const titleIcon = items.some(i => i.severity === 'danger') ? 'SLA breach' : 'SLA warning';
+
+  // Stage SLA: show once per stage per day on first visit — not again on re-entry,
+  // Automated/Manual UI refreshes, or clicking elsewhere on the same step.
+  if (opts.scope === 'stage' && opts.dismissScope) {
+    markSlaShown(opts.dismissScope);
+  }
+
   openModal(
     `${titleIcon} — ${opts.stageName || opts.scopeLabel || 'Alert'}`,
     renderSlaAlertModalBody(items, { ...opts, channels }),
@@ -14168,7 +14380,11 @@ function previewExpirySlaModal() {
 
 // ========== INIT ==========
 document.addEventListener('DOMContentLoaded', () => {
-  document.getElementById('authPage').style.display = 'flex';
+  const authPage = document.getElementById('authPage');
+  if (authPage) {
+    authPage.classList.remove('is-hidden');
+    authPage.style.display = 'flex';
+  }
   initAuth();
   bindPageEvents();
   // Official gov notices appear on the login page as soon as the website loads
